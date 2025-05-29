@@ -32,8 +32,10 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "axios": "^1.9.0",
     "chalk": "^5.4.1",
     "commander": "^14.0.0",
-    "inquirer": "^12.6.3"
+    "inquirer": "^12.6.3",
+    "openai": "^4.103.0"
   }
 }
