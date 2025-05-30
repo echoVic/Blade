@@ -137,6 +137,10 @@ npx blade-ai chat 什么是人工智能
 npx blade-ai chat 解释一下微服务架构
 npx blade-ai chat 如何学习编程
 
+# 🔥 流式输出（实时显示回答）
+blade chat --stream "详细解释一下机器学习的原理"
+npx blade-ai chat --stream "详细解释一下机器学习的原理"
+
 # 智能代码审查
 blade chat "请审查我的JavaScript代码文件 app.js"
 npx blade-ai chat "请审查我的JavaScript代码文件 app.js"
@@ -189,13 +193,22 @@ blade tools call timestamp --params '{"operation": "now"}'
 blade chat
 blade chat --interactive
 
+# 🔥 流式输出交互式聊天
+blade chat --interactive --stream
+blade chat -i --stream
+
 # 场景化交互式聊天
 blade chat -i --scenario customer
 blade chat -i --scenario code
 blade chat -i --scenario assistant
 
+# 场景化 + 流式输出
+blade chat -i --scenario assistant --stream
+blade chat -i --scenario customer --stream
+
 # 指定提供商的交互式聊天
 blade chat -i --provider volcengine
+blade chat -i --provider volcengine --stream
 ```
 
 ### 🎭 场景演示
@@ -263,6 +276,7 @@ blade chat [question...] [options]
   -m, --model <model>        指定模型
   -s, --scenario <scenario>  选择场景 (customer|code|assistant) (默认: "assistant")
   -i, --interactive          启动交互式聊天模式
+  --stream                   启用流式输出（实时显示回答）
   --demo                     运行场景演示
   -h, --help                 显示帮助信息
 ```
@@ -477,7 +491,9 @@ blade chat --provider volcengine --model ep-20250530171222-q42h8 "你好"
 ### 🎯 选择合适的使用方式
 
 - **直接问答**：`chat 你的问题` - 适合快速获得答案，自动调用工具
+- **流式问答**：`chat --stream 你的问题` - 实时显示回答，体验更流畅
 - **交互式聊天**：`chat -i` - 适合持续对话和复杂任务
+- **流式交互**：`chat -i --stream` - 交互式 + 实时输出，最佳聊天体验
 - **工具直调**：`tools call tool_name` - 适合简单工具的快速调用
 - **场景演示**：`chat --demo` - 了解功能特性
 

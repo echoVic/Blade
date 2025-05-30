@@ -18,6 +18,7 @@ export function agentLlmCommand(program: Command) {
     .option('-m, --model <model>', '指定模型')
     .option('-s, --scenario <scenario>', '选择场景 (customer|code|assistant)', 'assistant')
     .option('-i, --interactive', '启动交互式聊天模式', false)
+    .option('--stream', '启用流式输出', false)
     .option('--demo', '运行场景演示', false)
     .action(async (questionArgs, options) => {
       try {
@@ -88,13 +89,13 @@ export function agentLlmCommand(program: Command) {
           await runScenarioDemo(agentConfig, options.scenario);
         } else if (question) {
           // 单次问答模式
-          await answerSingleQuestion(agentConfig, question, options.scenario);
+          await answerSingleQuestion(agentConfig, question, options.scenario, options.stream);
         } else if (options.interactive) {
           // 交互式聊天模式
-          await startInteractiveChat(agentConfig, options.scenario);
+          await startInteractiveChat(agentConfig, options.scenario, options.stream);
         } else {
           // 默认：启动交互式聊天
-          await startInteractiveChat(agentConfig, options.scenario);
+          await startInteractiveChat(agentConfig, options.scenario, options.stream);
         }
       } catch (error) {
         console.error(chalk.red('❌ 启动失败:'), error);
@@ -105,39 +106,89 @@ export function agentLlmCommand(program: Command) {
 /**
  * 单次问答
  */
-async function answerSingleQuestion(config: AgentConfig, question: string, scenario: string) {
+async function answerSingleQuestion(
+  config: AgentConfig,
+  question: string,
+  scenario: string,
+  useStream: boolean = false
+) {
   const agent = new Agent(config);
   await agent.init();
 
   try {
     let response: string;
 
-    switch (scenario) {
-      case 'customer':
-        const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-        response = await agent.chatWithSystem(systemPrompt, question);
-        break;
-      case 'code':
-        response = await agent.reviewCode(question, 'auto-detect');
-        break;
-      case 'assistant':
-      default:
-        // 使用智能聊天，支持工具调用
-        const smartResponse = await agent.smartChat(question);
-        response = smartResponse.content;
+    if (useStream) {
+      // 流式输出模式
+      console.log(chalk.green('\n💬 AI: '), { newline: false });
 
-        // 如果使用了工具，显示额外信息
-        if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-          const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-          console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-          if (smartResponse.reasoning) {
-            console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+      switch (scenario) {
+        case 'customer':
+          const messages: LLMMessage[] = [
+            { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
+            { role: 'user', content: question },
+          ];
+          response = await agent.streamChat(messages, chunk => {
+            process.stdout.write(chunk);
+          });
+          break;
+        case 'code':
+          // 代码场景直接使用非流式，因为需要工具调用
+          response = await agent.reviewCode(question, 'auto-detect');
+          console.log(response);
+          break;
+        case 'assistant':
+        default:
+          // 智能助手模式的流式输出
+          const smartResponse = await agent.smartChat(question);
+
+          if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+            // 如果使用了工具，先显示工具信息，再流式输出结果
+            const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+            console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+            if (smartResponse.reasoning) {
+              console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+            }
+            console.log(chalk.green('\n💬 AI: '));
+            console.log(smartResponse.content);
+          } else {
+            // 没有工具调用，尝试流式输出
+            const messages: LLMMessage[] = [{ role: 'user', content: question }];
+            response = await agent.streamChat(messages, chunk => {
+              process.stdout.write(chunk);
+            });
           }
-        }
-        break;
-    }
+          break;
+      }
+      console.log('\n'); // 流式输出后换行
+    } else {
+      // 普通输出模式（原有逻辑）
+      switch (scenario) {
+        case 'customer':
+          const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
+          response = await agent.chatWithSystem(systemPrompt, question);
+          break;
+        case 'code':
+          response = await agent.reviewCode(question, 'auto-detect');
+          break;
+        case 'assistant':
+        default:
+          // 使用智能聊天，支持工具调用
+          const smartResponse = await agent.smartChat(question);
+          response = smartResponse.content;
 
-    console.log(chalk.green(`\n💬 AI: ${response}`));
+          // 如果使用了工具，显示额外信息
+          if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+            const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+            console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+            if (smartResponse.reasoning) {
+              console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+            }
+          }
+          break;
+      }
+      console.log(chalk.green(`\n💬 AI: ${response}`));
+    }
   } catch (error) {
     console.error(chalk.red('❌ 回答失败:'), error);
   } finally {
@@ -148,7 +199,11 @@ async function answerSingleQuestion(config: AgentConfig, question: string, scena
 /**
  * 交互式聊天
  */
-async function startInteractiveChat(config: AgentConfig, scenario: string) {
+async function startInteractiveChat(
+  config: AgentConfig,
+  scenario: string,
+  useStream: boolean = false
+) {
   console.log(chalk.cyan(`\n=== 🤖 ${getScenarioName(scenario)} ===`));
   console.log(chalk.gray('输入 "quit" 或 "exit" 退出聊天\n'));
 
@@ -177,40 +232,97 @@ async function startInteractiveChat(config: AgentConfig, scenario: string) {
       try {
         let response: string;
 
-        switch (scenario) {
-          case 'customer':
-            const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-            response = await agent.chatWithSystem(systemPrompt, message);
-            break;
-          case 'code':
-            if (
-              message.includes('```') ||
-              message.includes('function') ||
-              message.includes('class')
-            ) {
-              response = await agent.reviewCode(message, 'auto-detect');
-            } else {
-              response = await agent.ask(`作为代码助手，${message}`);
-            }
-            break;
-          case 'assistant':
-          default:
-            // 使用智能聊天，支持工具调用
-            const smartResponse = await agent.smartChat(message);
-            response = smartResponse.content;
+        if (useStream) {
+          // 流式输出模式
+          console.log(chalk.green('AI: '), { newline: false });
 
-            // 如果使用了工具，显示额外信息
-            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-              if (smartResponse.reasoning) {
-                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+          switch (scenario) {
+            case 'customer':
+              const customerMessages: LLMMessage[] = [
+                { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
+                { role: 'user', content: message },
+              ];
+              response = await agent.streamChat(customerMessages, chunk => {
+                process.stdout.write(chunk);
+              });
+              break;
+            case 'code':
+              if (
+                message.includes('```') ||
+                message.includes('function') ||
+                message.includes('class')
+              ) {
+                response = await agent.reviewCode(message, 'auto-detect');
+                console.log(response);
+              } else {
+                const codeMessages: LLMMessage[] = [
+                  { role: 'user', content: `作为代码助手，${message}` },
+                ];
+                response = await agent.streamChat(codeMessages, chunk => {
+                  process.stdout.write(chunk);
+                });
               }
-            }
-            break;
-        }
+              break;
+            case 'assistant':
+            default:
+              // 智能助手模式的流式输出
+              const smartResponse = await agent.smartChat(message);
 
-        console.log(chalk.green(`AI: ${response}\n`));
+              if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                // 如果使用了工具，先显示工具信息，再显示结果
+                const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                if (smartResponse.reasoning) {
+                  console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                }
+                console.log(chalk.green('AI: '));
+                console.log(smartResponse.content);
+              } else {
+                // 没有工具调用，使用流式输出
+                const assistantMessages: LLMMessage[] = [{ role: 'user', content: message }];
+                response = await agent.streamChat(assistantMessages, chunk => {
+                  process.stdout.write(chunk);
+                });
+              }
+              break;
+          }
+          console.log('\n'); // 流式输出后换行
+        } else {
+          // 普通输出模式（原有逻辑）
+          switch (scenario) {
+            case 'customer':
+              const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
+              response = await agent.chatWithSystem(systemPrompt, message);
+              break;
+            case 'code':
+              if (
+                message.includes('```') ||
+                message.includes('function') ||
+                message.includes('class')
+              ) {
+                response = await agent.reviewCode(message, 'auto-detect');
+              } else {
+                response = await agent.ask(`作为代码助手，${message}`);
+              }
+              break;
+            case 'assistant':
+            default:
+              // 使用智能聊天，支持工具调用
+              const smartResponse = await agent.smartChat(message);
+              response = smartResponse.content;
+
+              // 如果使用了工具，显示额外信息
+              if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                if (smartResponse.reasoning) {
+                  console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                }
+              }
+              break;
+          }
+          console.log(chalk.green(`AI: ${response}\n`));
+        }
       } catch (error) {
         console.error(chalk.red('❌ 聊天错误:'), error);
       }
