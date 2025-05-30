@@ -57,13 +57,14 @@
 ### 安装依赖
 
 ```bash
+# 从源码安装
 npm install
 npm run build
 
-# 安装为全局命令（可选）
-npm install -g .
+# 全局安装（推荐）
+npm install -g blade-ai
 
-# 或者创建软链接
+# 或者创建软链接（开发模式）
 npm link
 ```
 
@@ -376,8 +377,11 @@ blade tools call git_smart_commit
 
 ### 1. 环境准备
 ```bash
-# 克隆项目
-git clone <repository>
+# 全局安装（推荐）
+npm install -g blade-ai
+
+# 或从源码安装
+git clone https://github.com/echoVic/Blade.git
 cd blade
 
 # 安装依赖
@@ -386,8 +390,8 @@ npm install
 # 构建项目
 npm run build
 
-# 安装为全局命令
-npm install -g .
+# 创建本地链接
+npm link
 ```
 
 ### 2. 配置API密钥 ⚠️ 必需步骤
@@ -526,7 +530,7 @@ npm run format
 ### Agent 使用示例
 
 ```typescript
-import { Agent, AgentConfig } from 'blade';
+import { Agent, AgentConfig } from 'blade-ai';
 
 // 创建 Agent 配置
 const config: AgentConfig = {
@@ -572,7 +576,7 @@ await agent.destroy();
 ### 工具管理器使用示例
 
 ```typescript
-import { createToolManager } from 'blade';
+import { createToolManager } from 'blade-ai';
 
 // 创建工具管理器
 const toolManager = await createToolManager();
@@ -597,7 +601,7 @@ const smartTools = toolManager.getToolsByCategory('smart');
 ### 纯 LLM 使用示例
 
 ```typescript
-import { QwenLLM, getProviderConfig } from 'blade';
+import { QwenLLM, getProviderConfig } from 'blade-ai';
 
 const config = getProviderConfig('qwen');
 const llm = new QwenLLM(config.apiKey, config.defaultModel);

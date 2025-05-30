@@ -1,5 +1,5 @@
 {
-  "name": "blade",
+  "name": "blade-ai",
   "version": "1.1.0",
   "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
@@ -9,7 +9,9 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "config.env.example",
+    "README.md"
   ],
   "scripts": {
     "dev": "tsup --watch",
@@ -30,10 +32,27 @@
     "assistant",
     "agent",
     "llm",
-    "tool"
+    "tool",
+    "qwen",
+    "volcengine",
+    "smart-tools",
+    "code-review",
+    "documentation",
+    "git-tools"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "echoVic",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/echoVic/Blade.git"
+  },
+  "homepage": "https://github.com/echoVic/Blade",
+  "bugs": {
+    "url": "https://github.com/echoVic/Blade/issues"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "devDependencies": {
     "@types/inquirer": "^9.0.8",
     "@types/node": "^22.15.24",
