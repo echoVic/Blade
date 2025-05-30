@@ -55,6 +55,10 @@ export function agentLlmCommand(program: Command) {
             apiKey: apiKey,
             model: model,
           },
+          tools: {
+            enabled: true,
+            includeBuiltinTools: true,
+          },
         };
 
         console.log(chalk.green(`✅ 使用 ${options.provider} (${model})`));
@@ -102,7 +106,18 @@ async function answerSingleQuestion(config: AgentConfig, question: string, scena
         break;
       case 'assistant':
       default:
-        response = await agent.ask(question);
+        // 使用智能聊天，支持工具调用
+        const smartResponse = await agent.smartChat(question);
+        response = smartResponse.content;
+
+        // 如果使用了工具，显示额外信息
+        if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+          const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+          console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+          if (smartResponse.reasoning) {
+            console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+          }
+        }
         break;
     }
 
@@ -164,7 +179,18 @@ async function startInteractiveChat(config: AgentConfig, scenario: string) {
             break;
           case 'assistant':
           default:
-            response = await agent.ask(message);
+            // 使用智能聊天，支持工具调用
+            const smartResponse = await agent.smartChat(message);
+            response = smartResponse.content;
+
+            // 如果使用了工具，显示额外信息
+            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+              if (smartResponse.reasoning) {
+                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+              }
+            }
             break;
         }
 

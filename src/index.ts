@@ -2,11 +2,13 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { agentLlmCommand } from './commands/agent-llm.js';
 import { llmCommand } from './commands/llm.js';
+import { toolsCommand } from './commands/tools.js';
 
 // 导出 Agent 和 LLM 相关模块
-export { Agent, AgentConfig } from './agent/Agent.js';
+export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
 export { BaseComponent } from './agent/BaseComponent.js';
 export { LoggerComponent } from './agent/LoggerComponent.js';
+export { ToolComponent, ToolComponentConfig } from './agent/ToolComponent.js';
 
 // LLM 模块
 export { BaseLLM } from './llm/BaseLLM.js';
@@ -14,27 +16,57 @@ export { QwenLLM } from './llm/QwenLLM.js';
 export { VolcEngineLLM } from './llm/VolcEngineLLM.js';
 
 // 配置模块
-export { DEFAULT_CONFIG, getProviderConfig, getSupportedProviders, isProviderSupported, loadConfigFromEnv } from './config/defaults.js';
+export {
+  DEFAULT_CONFIG,
+  getProviderConfig,
+  getSupportedProviders,
+  isProviderSupported,
+  loadConfigFromEnv,
+} from './config/defaults.js';
 export type { DefaultConfig, LLMProviderConfig } from './config/defaults.js';
 
-// 类型定义
+// 工具模块
+export {
+  createToolManager,
+  fileSystemTools,
+  getAllBuiltinTools,
+  getBuiltinToolsByCategory,
+  networkTools,
+  textProcessingTools,
+  ToolExecutionError,
+  ToolManager,
+  ToolRegistrationError,
+  ToolValidationError,
+  ToolValidator,
+  utilityTools,
+} from './tools/index.js';
+
 export type {
-  LLMMessage,
-  LLMRequest,
-  LLMResponse
-} from './llm/BaseLLM.js';
+  ToolCallRequest,
+  ToolCallResponse,
+  ToolDefinition,
+  ToolExecutionContext,
+  ToolExecutionHistory,
+  ToolExecutionResult,
+  ToolManagerConfig,
+  ToolParameterSchema,
+  ToolRegistrationOptions,
+} from './tools/index.js';
+
+// 类型定义
+export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
 
 const program = new Command();
 
 // 设置基本信息
-program
-  .name('agent')
-  .description('🤖 智能 LLM CLI Agent - 你的 AI 助手')
-  .version('1.0.0');
+program.name('agent').description('🤖 智能 LLM CLI Agent - 你的 AI 助手').version('1.0.0');
 
 // 注册 LLM 相关命令
 agentLlmCommand(program);
 llmCommand(program);
+
+// 注册工具相关命令
+toolsCommand(program);
 
 // 添加帮助信息
 program.on('--help', () => {
@@ -62,6 +94,12 @@ program.on('--help', () => {
   console.log('  $ agent models --provider qwen');
   console.log('  $ agent models --provider volcengine');
   console.log('');
+  console.log(chalk.green('  🔧 工具管理:'));
+  console.log('  $ agent tools list');
+  console.log('  $ agent tools info text_length');
+  console.log('  $ agent tools call uuid');
+  console.log('  $ agent tools docs');
+  console.log('');
   console.log(chalk.yellow('💡 提示: 直接使用 "agent chat 你的问题" 开始对话'));
 });
 
@@ -73,4 +111,4 @@ if (!process.argv.slice(2).length) {
 }
 
 // 解析命令行参数
-program.parse(process.argv); 
+program.parse(process.argv);

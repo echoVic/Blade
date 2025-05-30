@@ -3,7 +3,9 @@ import { getProviderConfig } from '../config/defaults.js';
 import type { LLMMessage, LLMRequest } from '../llm/BaseLLM.js';
 import { QwenLLM } from '../llm/QwenLLM.js';
 import { VolcEngineLLM } from '../llm/VolcEngineLLM.js';
+import type { ToolCallRequest, ToolDefinition } from '../tools/index.js';
 import { BaseComponent } from './BaseComponent.js';
+import { ToolComponent } from './ToolComponent.js';
 
 /**
  * Agent 配置接口
@@ -16,6 +18,32 @@ export interface AgentConfig {
     model?: string;
     baseURL?: string;
   };
+  tools?: {
+    enabled?: boolean;
+    includeBuiltinTools?: boolean;
+    excludeTools?: string[];
+    includeCategories?: string[];
+  };
+}
+
+/**
+ * 工具调用结果
+ */
+export interface ToolCallResult {
+  toolName: string;
+  success: boolean;
+  result: any;
+  error?: string;
+  duration?: number;
+}
+
+/**
+ * Agent 聊天响应
+ */
+export interface AgentResponse {
+  content: string;
+  toolCalls?: ToolCallResult[];
+  reasoning?: string;
 }
 
 /**
@@ -33,10 +61,28 @@ export class Agent extends EventEmitter {
     super();
     this.config = {
       debug: false,
+      tools: {
+        enabled: true,
+        includeBuiltinTools: true,
+        ...config.tools,
+      },
       ...config,
     };
 
     this.log('Agent 实例已创建');
+
+    // 如果启用了工具，自动注册工具组件
+    if (this.config.tools?.enabled) {
+      const toolComponent = new ToolComponent('tools', {
+        debug: this.config.debug,
+        includeBuiltinTools: this.config.tools.includeBuiltinTools,
+        excludeTools: this.config.tools.excludeTools,
+        includeCategories: this.config.tools.includeCategories,
+      });
+
+      this.registerComponent(toolComponent);
+      this.log('工具组件已自动注册');
+    }
   }
 
   /**
@@ -338,6 +384,247 @@ ${code}
     const response = await this.chat(question);
     this.log(`生成回答: ${response.substring(0, 50)}...`);
     return response;
+  }
+
+  // ======================== 智能工具调用 ========================
+
+  /**
+   * 智能聊天 - 支持工具调用的完整流程
+   * 用户提问 -> 模型识别 -> 调用工具 -> 工具返回模型 -> 模型返回给用户
+   */
+  public async smartChat(message: string): Promise<AgentResponse> {
+    if (!this.llm) {
+      throw new Error('LLM 未配置');
+    }
+
+    this.log(`开始智能聊天: ${message.substring(0, 50)}...`);
+
+    // 第一步：分析用户意图，判断是否需要工具调用
+    const toolAnalysis = await this.analyzeToolNeed(message);
+
+    if (!toolAnalysis.needsTool) {
+      // 不需要工具，直接回答
+      const content = await this.chat(message);
+      return {
+        content,
+        reasoning: '无需工具调用，直接回答',
+      };
+    }
+
+    // 第二步：识别并调用工具
+    const toolResults: ToolCallResult[] = [];
+
+    for (const toolCall of toolAnalysis.toolCalls) {
+      try {
+        this.log(`调用工具: ${toolCall.toolName}`);
+        const result = await this.callToolSmart(toolCall);
+        toolResults.push(result);
+      } catch (error) {
+        const errorResult: ToolCallResult = {
+          toolName: toolCall.toolName,
+          success: false,
+          result: null,
+          error: (error as Error).message,
+        };
+        toolResults.push(errorResult);
+      }
+    }
+
+    // 第三步：基于工具结果生成最终回答
+    const finalAnswer = await this.generateAnswerWithToolResults(message, toolResults);
+
+    return {
+      content: finalAnswer,
+      toolCalls: toolResults,
+      reasoning: `使用了 ${toolResults.length} 个工具协助回答`,
+    };
+  }
+
+  /**
+   * 分析用户消息是否需要工具调用
+   */
+  private async analyzeToolNeed(message: string): Promise<{
+    needsTool: boolean;
+    toolCalls: Array<{ toolName: string; parameters: Record<string, any> }>;
+    reasoning: string;
+  }> {
+    const toolComponent = this.getComponent<ToolComponent>('tools');
+    if (!toolComponent) {
+      return { needsTool: false, toolCalls: [], reasoning: '工具组件未启用' };
+    }
+
+    // 获取可用工具列表
+    const availableTools = toolComponent.getTools();
+    const toolDescriptions = availableTools
+      .map(tool => `${tool.name}: ${tool.description}`)
+      .join('\n');
+
+    // 构造分析提示
+    const analysisPrompt = `
+分析以下用户消息，判断是否需要调用工具来回答问题。
+
+用户消息: "${message}"
+
+可用工具:
+${toolDescriptions}
+
+请分析：
+1. 这个问题是否需要使用工具？
+2. 如果需要，应该使用哪些工具？
+3. 工具的参数是什么？
+
+请按以下JSON格式回答（只返回JSON，不要其他内容）：
+{
+  "needsTool": boolean,
+  "toolCalls": [
+    {
+      "toolName": "工具名称",
+      "parameters": { "参数名": "参数值" }
+    }
+  ],
+  "reasoning": "分析理由"
+}
+
+示例：
+- 如果用户问"现在是几点？"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "timestamp", "parameters": {"operation": "now", "format": "local"}}], "reasoning": "需要获取当前时间"}
+- 如果用户问"你好吗？"，应该返回：{"needsTool": false, "toolCalls": [], "reasoning": "这是普通问候，无需工具"}
+`;
+
+    try {
+      const response = await this.chat(analysisPrompt);
+
+      // 尝试解析JSON响应
+      const cleanResponse = response.replace(/```json\n?|\n?```/g, '').trim();
+      const analysis = JSON.parse(cleanResponse);
+
+      this.log(`工具需求分析: ${analysis.reasoning}`);
+      return analysis;
+    } catch (error) {
+      this.log(`工具需求分析失败: ${error}`);
+      return { needsTool: false, toolCalls: [], reasoning: '分析失败' };
+    }
+  }
+
+  /**
+   * 智能调用工具
+   */
+  private async callToolSmart(toolCall: {
+    toolName: string;
+    parameters: Record<string, any>;
+  }): Promise<ToolCallResult> {
+    const toolComponent = this.getComponent<ToolComponent>('tools');
+    if (!toolComponent) {
+      throw new Error('工具组件未启用');
+    }
+
+    const startTime = Date.now();
+
+    try {
+      const request: ToolCallRequest = {
+        toolName: toolCall.toolName,
+        parameters: toolCall.parameters,
+      };
+
+      const response = await toolComponent.callTool(request);
+      const duration = Date.now() - startTime;
+
+      return {
+        toolName: toolCall.toolName,
+        success: response.result.success,
+        result: response.result.data,
+        error: response.result.error,
+        duration,
+      };
+    } catch (error) {
+      return {
+        toolName: toolCall.toolName,
+        success: false,
+        result: null,
+        error: (error as Error).message,
+        duration: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * 基于工具结果生成最终回答
+   */
+  private async generateAnswerWithToolResults(
+    originalMessage: string,
+    toolResults: ToolCallResult[]
+  ): Promise<string> {
+    // 构造包含工具结果的上下文
+    const toolResultsText = toolResults
+      .map(result => {
+        if (result.success) {
+          return `工具 ${result.toolName} 执行成功，结果: ${JSON.stringify(result.result)}`;
+        } else {
+          return `工具 ${result.toolName} 执行失败，错误: ${result.error}`;
+        }
+      })
+      .join('\n');
+
+    const contextPrompt = `
+用户问题: "${originalMessage}"
+
+我已经使用以下工具获取了信息：
+${toolResultsText}
+
+请基于这些工具返回的数据，给用户一个完整、准确且友好的回答。
+回答应该：
+1. 直接回答用户的问题
+2. 整合工具返回的数据
+3. 使用自然的语言表达
+4. 不要提及技术细节（如工具名称、JSON格式等）
+
+回答:`;
+
+    const finalAnswer = await this.chat(contextPrompt);
+    return finalAnswer;
+  }
+
+  /**
+   * 获取工具组件
+   */
+  public getToolComponent(): ToolComponent | undefined {
+    return this.getComponent<ToolComponent>('tools');
+  }
+
+  /**
+   * 手动调用工具
+   */
+  public async callTool(
+    toolName: string,
+    parameters: Record<string, any>
+  ): Promise<ToolCallResult> {
+    const toolComponent = this.getToolComponent();
+    if (!toolComponent) {
+      throw new Error('工具组件未启用');
+    }
+
+    return await this.callToolSmart({ toolName, parameters });
+  }
+
+  /**
+   * 获取可用工具列表
+   */
+  public getAvailableTools(): ToolDefinition[] {
+    const toolComponent = this.getToolComponent();
+    if (!toolComponent) {
+      return [];
+    }
+    return toolComponent.getTools();
+  }
+
+  /**
+   * 搜索工具
+   */
+  public searchTools(query: string): ToolDefinition[] {
+    const toolComponent = this.getToolComponent();
+    if (!toolComponent) {
+      return [];
+    }
+    return toolComponent.searchTools(query);
   }
 
   // ======================== 工具方法 ========================
