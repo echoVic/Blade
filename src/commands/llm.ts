@@ -116,7 +116,7 @@ export function llmCommand(program: Command) {
  */
 async function startChatLoop(llm: BaseLLM, useStream: boolean = false) {
   console.log(chalk.cyan('\n🤖 LLM 聊天开始！输入 "quit" 或 "exit" 退出'));
-  console.log(chalk.gray('支持多行输入，按两次回车发送消息\n'));
+  console.log(chalk.gray('�� 直接在终端输入消息即可\n'));
 
   const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
@@ -125,10 +125,9 @@ async function startChatLoop(llm: BaseLLM, useStream: boolean = false) {
       // 获取用户输入
       const answers = await inquirer.prompt([
         {
-          type: 'editor',
+          type: 'input',
           name: 'message',
           message: '你:',
-          postfix: '.md',
         },
       ]);
 
