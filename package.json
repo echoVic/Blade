@@ -1,7 +1,7 @@
 {
   "name": "agent-cli",
-  "version": "1.0.0",
-  "description": "命令行工具",
+  "version": "1.1.0",
+  "description": "一个智能 AI 助手命令行工具",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
