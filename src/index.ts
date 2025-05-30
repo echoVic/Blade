@@ -59,7 +59,7 @@ export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
 const program = new Command();
 
 // 设置基本信息
-program.name('agent').description('🤖 智能 LLM CLI Agent - 你的 AI 助手').version('1.0.0');
+program.name('blade').description('🗡️ Blade - 智能 AI 助手命令行工具').version('1.1.0');
 
 // 注册 LLM 相关命令
 agentLlmCommand(program);
@@ -71,40 +71,40 @@ toolsCommand(program);
 // 添加帮助信息
 program.on('--help', () => {
   console.log('');
-  console.log(chalk.blue('🚀 LLM CLI Agent 使用示例:'));
+  console.log(chalk.blue('🚀 Blade 使用示例:'));
   console.log('');
   console.log(chalk.green('  💬 直接问答:'));
-  console.log('  $ agent chat 什么是 agent');
-  console.log('  $ agent chat 解释一下微服务架构');
-  console.log('  $ agent chat --scenario customer 怎么退货');
+  console.log('  $ blade chat 什么是人工智能');
+  console.log('  $ blade chat 解释一下微服务架构');
+  console.log('  $ blade chat --scenario customer 怎么退货');
   console.log('');
   console.log(chalk.green('  🔄 交互式聊天:'));
-  console.log('  $ agent chat --interactive');
-  console.log('  $ agent chat -i --scenario code');
+  console.log('  $ blade chat --interactive');
+  console.log('  $ blade chat -i --scenario code');
   console.log('');
   console.log(chalk.green('  🎭 场景演示:'));
-  console.log('  $ agent chat --demo --scenario assistant');
-  console.log('  $ agent chat --demo --scenario customer');
+  console.log('  $ blade chat --demo --scenario assistant');
+  console.log('  $ blade chat --demo --scenario customer');
   console.log('');
   console.log(chalk.green('  🤖 纯 LLM 模式:'));
-  console.log('  $ agent llm --stream');
-  console.log('  $ agent llm --provider volcengine');
+  console.log('  $ blade llm --stream');
+  console.log('  $ blade llm --provider volcengine');
   console.log('');
   console.log(chalk.green('  📋 模型管理:'));
-  console.log('  $ agent models --provider qwen');
-  console.log('  $ agent models --provider volcengine');
+  console.log('  $ blade models --provider qwen');
+  console.log('  $ blade models --provider volcengine');
   console.log('');
   console.log(chalk.green('  🔧 工具管理:'));
-  console.log('  $ agent tools list');
-  console.log('  $ agent tools info text_length');
-  console.log('  $ agent tools call uuid');
-  console.log('  $ agent tools docs');
+  console.log('  $ blade tools list');
+  console.log('  $ blade tools info text_length');
+  console.log('  $ blade tools call uuid');
+  console.log('  $ blade tools docs');
   console.log('');
-  console.log(chalk.yellow('💡 提示: 直接使用 "agent chat 你的问题" 开始对话'));
+  console.log(chalk.yellow('💡 提示: 直接使用 "blade chat 你的问题" 开始对话'));
 });
 
 if (!process.argv.slice(2).length) {
-  console.log(chalk.cyan('🤖 欢迎使用 LLM CLI Agent！'));
+  console.log(chalk.cyan('🗡️ 欢迎使用 Blade！'));
   console.log('');
   program.outputHelp();
   process.exit(0);

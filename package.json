@@ -1,11 +1,11 @@
 {
-  "name": "agent-cli",
+  "name": "blade",
   "version": "1.1.0",
-  "description": "一个智能 AI 助手命令行工具",
+  "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "agent": "bin/agent.js"
+    "blade": "bin/blade.js"
   },
   "files": [
     "dist",
@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "tsup --watch",
     "build": "tsup",
-    "start": "node bin/agent.js",
+    "start": "node bin/blade.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
@@ -25,7 +25,11 @@
   },
   "keywords": [
     "cli",
+    "blade",
+    "ai",
+    "assistant",
     "agent",
+    "llm",
     "tool"
   ],
   "author": "",

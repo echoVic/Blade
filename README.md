@@ -1,4 +1,4 @@
-# 🤖 LLM CLI Agent
+# 🗡️ Blade
 
 一个专注于 LLM 的智能 CLI Agent 工具，提供便捷的命令行 AI 交互体验和强大的工具生态。
 
@@ -59,11 +59,17 @@
 ```bash
 npm install
 npm run build
+
+# 安装为全局命令（可选）
+npm install -g .
+
+# 或者创建软链接
+npm link
 ```
 
 ### 🔐 配置 API 密钥
 
-**重要提示：为了安全起见，Agent CLI 不包含硬编码的API密钥。您需要通过以下方式之一提供API密钥：**
+**重要提示：为了安全起见，Blade 不包含硬编码的API密钥。您需要通过以下方式之一提供API密钥：**
 
 #### 方法1：环境变量（推荐）
 ```bash
@@ -87,7 +93,7 @@ cp config.env.example .env
 #### 方法3：命令行参数
 ```bash
 # 每次使用时通过 --api-key 参数提供
-node dist/index.js chat --api-key your-api-key "你好"
+blade chat --api-key your-api-key "你好"
 ```
 
 #### 📖 API密钥获取地址
@@ -108,29 +114,29 @@ node dist/index.js chat --api-key your-api-key "你好"
 
 ```bash
 # 基础问答
-node dist/index.js chat 什么是人工智能
-node dist/index.js chat 解释一下微服务架构
-node dist/index.js chat 如何学习编程
+blade chat 什么是人工智能
+blade chat 解释一下微服务架构
+blade chat 如何学习编程
 
 # 智能代码审查
-node dist/index.js chat "请审查我的JavaScript代码文件 app.js"
-node dist/index.js chat "检查这个文件的安全性问题: user.js"
+blade chat "请审查我的JavaScript代码文件 app.js"
+blade chat "检查这个文件的安全性问题: user.js"
 
 # 智能文档生成
-node dist/index.js chat "为我的项目生成README文档"
-node dist/index.js chat "分析src目录并生成API文档"
+blade chat "为我的项目生成README文档"
+blade chat "分析src目录并生成API文档"
 
 # Git智能操作
-node dist/index.js chat "查看当前的代码变更并智能提交"
-node dist/index.js chat "分析代码差异生成合适的commit信息"
+blade chat "查看当前的代码变更并智能提交"
+blade chat "分析代码差异生成合适的commit信息"
 
 # 场景化问答
-node dist/index.js chat --scenario customer 我想要退货
-node dist/index.js chat --scenario code 如何优化这个函数
-node dist/index.js chat --scenario assistant 什么是区块链
+blade chat --scenario customer 我想要退货
+blade chat --scenario code 如何优化这个函数
+blade chat --scenario assistant 什么是区块链
 
 # 指定提供商和模型
-node dist/index.js chat --provider volcengine --model ep-20250417144747-rgffm 你好
+blade chat --provider volcengine --model ep-20250417144747-rgffm 你好
 ```
 
 ### 🔧 工具管理
@@ -139,20 +145,20 @@ node dist/index.js chat --provider volcengine --model ep-20250417144747-rgffm �
 
 ```bash
 # 查看所有工具
-node dist/index.js tools list
+blade tools list
 
 # 按分类查看工具
-node dist/index.js tools list --category smart
-node dist/index.js tools list --category git
-node dist/index.js tools list --category filesystem
+blade tools list --category smart
+blade tools list --category git
+blade tools list --category filesystem
 
 # 查看工具详情
-node dist/index.js tools info smart_code_review
-node dist/index.js tools info git_smart_commit
+blade tools info smart_code_review
+blade tools info git_smart_commit
 
 # 直接调用工具（注意：智能工具需要通过Agent调用）
-node dist/index.js tools call uuid
-node dist/index.js tools call timestamp --params '{"operation": "now"}'
+blade tools call uuid
+blade tools call timestamp --params '{"operation": "now"}'
 ```
 
 ### 🔄 交互式聊天
@@ -161,16 +167,16 @@ node dist/index.js tools call timestamp --params '{"operation": "now"}'
 
 ```bash
 # 启动交互式聊天（默认智能助手）
-node dist/index.js chat
-node dist/index.js chat --interactive
+blade chat
+blade chat --interactive
 
 # 场景化交互式聊天
-node dist/index.js chat -i --scenario customer
-node dist/index.js chat -i --scenario code
-node dist/index.js chat -i --scenario assistant
+blade chat -i --scenario customer
+blade chat -i --scenario code
+blade chat -i --scenario assistant
 
 # 指定提供商的交互式聊天
-node dist/index.js chat -i --provider volcengine
+blade chat -i --provider volcengine
 ```
 
 ### 🎭 场景演示
@@ -179,13 +185,13 @@ node dist/index.js chat -i --provider volcengine
 
 ```bash
 # 智能助手演示
-node dist/index.js chat --demo --scenario assistant
+blade chat --demo --scenario assistant
 
 # 客服助手演示
-node dist/index.js chat --demo --scenario customer
+blade chat --demo --scenario customer
 
 # 代码助手演示
-node dist/index.js chat --demo --scenario code
+blade chat --demo --scenario code
 ```
 
 ### 🤖 纯 LLM 聊天
@@ -194,13 +200,13 @@ node dist/index.js chat --demo --scenario code
 
 ```bash
 # 启动纯 LLM 聊天
-node dist/index.js llm
+blade llm
 
 # 流式输出聊天
-node dist/index.js llm --stream
+blade llm --stream
 
 # 指定提供商
-node dist/index.js llm --provider volcengine
+blade llm --provider volcengine
 ```
 
 ### 📋 模型管理
@@ -209,10 +215,10 @@ node dist/index.js llm --provider volcengine
 
 ```bash
 # 查看千问模型
-node dist/index.js models --provider qwen
+blade models --provider qwen
 
 # 查看豆包模型  
-node dist/index.js models --provider volcengine
+blade models --provider volcengine
 ```
 
 ## 📋 命令参考
@@ -227,7 +233,7 @@ node dist/index.js models --provider volcengine
 ### Chat 命令详细参数
 
 ```bash
-node dist/index.js chat [question...] [options]
+blade chat [question...] [options]
 
 参数:
   question                   要问的问题（可选）
@@ -245,7 +251,7 @@ node dist/index.js chat [question...] [options]
 ### Tools 命令详细参数
 
 ```bash
-node dist/index.js tools <command> [options]
+blade tools <command> [options]
 
 命令:
   list [options]             📋 列出可用工具
@@ -265,9 +271,9 @@ node dist/index.js tools <command> [options]
 
 ```bash
 # 示例
-node dist/index.js chat 什么是机器学习
-node dist/index.js chat 审查我的代码文件并给出建议
-node dist/index.js chat 为这个项目生成文档
+blade chat 什么是机器学习
+blade chat 审查我的代码文件并给出建议
+blade chat 为这个项目生成文档
 ```
 
 ### 🎧 智能客服 (customer)
@@ -278,8 +284,8 @@ node dist/index.js chat 为这个项目生成文档
 
 ```bash
 # 示例  
-node dist/index.js chat --scenario customer 我想要退货
-node dist/index.js chat --scenario customer 产品质量有问题
+blade chat --scenario customer 我想要退货
+blade chat --scenario customer 产品质量有问题
 ```
 
 ### 💻 代码助手 (code)
@@ -291,9 +297,9 @@ node dist/index.js chat --scenario customer 产品质量有问题
 
 ```bash
 # 示例
-node dist/index.js chat --scenario code 如何优化这个函数
-node dist/index.js chat --scenario code 审查我的JavaScript代码
-node dist/index.js chat --scenario code 帮我提交当前的代码变更
+blade chat --scenario code 如何优化这个函数
+blade chat --scenario code 审查我的JavaScript代码
+blade chat --scenario code 帮我提交当前的代码变更
 ```
 
 ## 🤖 智能工具详解
@@ -304,9 +310,9 @@ node dist/index.js chat --scenario code 帮我提交当前的代码变更
 
 ```bash
 # 通过Agent智能聊天使用（推荐）
-node dist/index.js chat "请审查 src/utils.js 的代码质量"
-node dist/index.js chat "检查 app.ts 的安全性问题"
-node dist/index.js chat "分析 components/User.jsx 的性能问题"
+blade chat "请审查 src/utils.js 的代码质量"
+blade chat "检查 app.ts 的安全性问题"
+blade chat "分析 components/User.jsx 的性能问题"
 ```
 
 **功能特点：**
@@ -321,9 +327,9 @@ node dist/index.js chat "分析 components/User.jsx 的性能问题"
 
 ```bash
 # 通过Agent智能聊天使用（推荐）
-node dist/index.js chat "为 src/ 目录生成API文档"
-node dist/index.js chat "分析整个项目并生成README"
-node dist/index.js chat "为这个库生成用户指南"
+blade chat "为 src/ 目录生成API文档"
+blade chat "分析整个项目并生成README"
+blade chat "为这个库生成用户指南"
 ```
 
 **功能特点：**
@@ -338,11 +344,11 @@ node dist/index.js chat "为这个库生成用户指南"
 
 ```bash
 # 通过Agent智能聊天使用（推荐）
-node dist/index.js chat "查看当前变更并智能提交"
-node dist/index.js chat "分析diff生成commit信息"
+blade chat "查看当前变更并智能提交"
+blade chat "分析diff生成commit信息"
 
 # 也可以直接使用Git工具
-node dist/index.js tools call git_smart_commit
+blade tools call git_smart_commit
 ```
 
 **功能特点：**
@@ -372,13 +378,16 @@ node dist/index.js tools call git_smart_commit
 ```bash
 # 克隆项目
 git clone <repository>
-cd agent-cli
+cd blade
 
 # 安装依赖
 npm install
 
 # 构建项目
 npm run build
+
+# 安装为全局命令
+npm install -g .
 ```
 
 ### 2. 配置API密钥 ⚠️ 必需步骤
@@ -401,16 +410,16 @@ cp config.env.example .env
 
 ```bash
 # 检查配置（如果没有配置API密钥会有友好提示）
-node dist/index.js chat 你好
+blade chat 你好
 
 # 智能代码审查
-node dist/index.js chat "审查我的代码文件"
+blade chat "审查我的代码文件"
 
 # 查看所有工具
-node dist/index.js tools list
+blade tools list
 
 # 查看帮助
-node dist/index.js --help
+blade --help
 ```
 
 ### 4. 常见问题
@@ -423,7 +432,7 @@ A: 请确保已正确配置API密钥：
 echo $QWEN_API_KEY
 
 # 或使用命令行参数
-node dist/index.js chat --api-key your-api-key "测试"
+blade chat --api-key your-api-key "测试"
 ```
 
 **Q: 如何更换不同的模型？**
@@ -431,10 +440,10 @@ node dist/index.js chat --api-key your-api-key "测试"
 A: 使用 --model 参数：
 ```bash
 # 千问模型
-node dist/index.js chat --model qwen-max-latest "你好"
+blade chat --model qwen-max-latest "你好"
 
 # 火山引擎模型  
-node dist/index.js chat --provider volcengine --model ep-20250530171222-q42h8 "你好"
+blade chat --provider volcengine --model ep-20250530171222-q42h8 "你好"
 ```
 
 ## 💡 使用技巧
@@ -517,7 +526,7 @@ npm run format
 ### Agent 使用示例
 
 ```typescript
-import { Agent, AgentConfig } from 'agent-cli';
+import { Agent, AgentConfig } from 'blade';
 
 // 创建 Agent 配置
 const config: AgentConfig = {
@@ -563,7 +572,7 @@ await agent.destroy();
 ### 工具管理器使用示例
 
 ```typescript
-import { createToolManager } from 'agent-cli';
+import { createToolManager } from 'blade';
 
 // 创建工具管理器
 const toolManager = await createToolManager();
@@ -588,7 +597,7 @@ const smartTools = toolManager.getToolsByCategory('smart');
 ### 纯 LLM 使用示例
 
 ```typescript
-import { QwenLLM, getProviderConfig } from 'agent-cli';
+import { QwenLLM, getProviderConfig } from 'blade';
 
 const config = getProviderConfig('qwen');
 const llm = new QwenLLM(config.apiKey, config.defaultModel);
@@ -633,7 +642,7 @@ MIT License
 
 ## Git 工具支持
 
-Agent CLI 现在包含了完整的 Git 工具集合，支持：
+Blade 现在包含了完整的 Git 工具集合，支持：
 
 - 📊 `git_status` - 查看仓库状态
 - 📜 `git_log` - 查看提交历史  
