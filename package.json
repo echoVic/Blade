@@ -1,6 +1,6 @@
 {
   "name": "blade-ai",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
   "main": "dist/index.js",
@@ -44,7 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/echoVic/Blade.git"
+    "url": "git+https://github.com/echoVic/Blade.git"
   },
   "homepage": "https://github.com/echoVic/Blade",
   "bugs": {
