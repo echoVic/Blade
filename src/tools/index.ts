@@ -21,6 +21,7 @@ export { ToolExecutionError, ToolRegistrationError, ToolValidationError } from '
 // 内置工具
 export {
   fileSystemTools,
+  gitTools,
   networkTools,
   textProcessingTools,
   utilityTools,
@@ -30,6 +31,7 @@ export {
 import { ToolManager } from './ToolManager.js';
 import {
   fileSystemTools,
+  gitTools,
   networkTools,
   textProcessingTools,
   utilityTools,
@@ -52,6 +54,7 @@ export async function createToolManager(
       ...fileSystemTools,
       ...networkTools,
       ...utilityTools,
+      ...gitTools,
     ];
 
     for (const tool of allBuiltinTools) {
@@ -71,6 +74,7 @@ export function getBuiltinToolsByCategory(): Record<string, ToolDefinition[]> {
     filesystem: fileSystemTools,
     network: networkTools,
     utility: utilityTools,
+    git: gitTools,
   };
 }
 
@@ -78,6 +82,11 @@ export function getBuiltinToolsByCategory(): Record<string, ToolDefinition[]> {
  * 获取所有内置工具
  */
 export function getAllBuiltinTools(): ToolDefinition[] {
-  return [...textProcessingTools, ...fileSystemTools, ...networkTools, ...utilityTools];
+  return [
+    ...textProcessingTools,
+    ...fileSystemTools,
+    ...networkTools,
+    ...utilityTools,
+    ...gitTools,
+  ];
 }
- 
