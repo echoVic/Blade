@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { agentLlmCommand } from './commands/agent-llm.js';
+import { configCommand } from './commands/config.js';
 import { llmCommand } from './commands/llm.js';
 import { toolsCommand } from './commands/tools.js';
 
@@ -78,6 +79,9 @@ program.name('blade').description('🗡️ Blade - 智能 AI 助手命令行工�
 agentLlmCommand(program);
 llmCommand(program);
 
+// 注册配置相关命令
+configCommand(program);
+
 // 注册工具相关命令
 toolsCommand(program);
 
@@ -112,6 +116,14 @@ program.on('--help', () => {
   console.log(chalk.green('  📋 模型管理:'));
   console.log('  $ blade models --provider qwen');
   console.log('  $ blade models --provider volcengine');
+  console.log('');
+
+  console.log(chalk.green('  ⚙️ 配置管理:'));
+  console.log('  $ blade config show');
+  console.log('  $ blade config set-provider volcengine');
+  console.log('  $ blade config set-model ep-20250530171222-q42h8');
+  console.log('  $ blade config switch');
+  console.log('  $ blade config wizard');
   console.log('');
 
   console.log(chalk.green('  🔧 工具管理:'));

@@ -2,7 +2,8 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { Agent, AgentConfig } from '../agent/Agent.js';
-import { getProviderConfig, isProviderSupported } from '../config/defaults.js';
+import { getModelDescription, getProviderConfig, isProviderSupported } from '../config/defaults.js';
+import { getCurrentModel, getCurrentProvider } from '../config/user-config.js';
 import { LLMMessage } from '../llm/BaseLLM.js';
 
 /**
@@ -13,7 +14,7 @@ export function agentLlmCommand(program: Command) {
     .command('chat')
     .description('🤖 智能 Agent 聊天')
     .argument('[question...]', '要问的问题（可选）')
-    .option('-p, --provider <provider>', '选择 LLM 提供商 (volcengine|qwen)', 'qwen')
+    .option('-p, --provider <provider>', '选择 LLM 提供商 (volcengine|qwen)')
     .option('-k, --api-key <key>', 'API 密钥')
     .option('-m, --model <model>', '指定模型')
     .option('-s, --scenario <scenario>', '选择场景 (customer|code|assistant)', 'assistant')
@@ -22,20 +23,28 @@ export function agentLlmCommand(program: Command) {
     .option('--demo', '运行场景演示', false)
     .action(async (questionArgs, options) => {
       try {
+        // 使用用户配置作为默认值
+        const provider = options.provider || getCurrentProvider();
+
         // 验证提供商
-        if (!isProviderSupported(options.provider)) {
-          console.log(chalk.red(`❌ 不支持的提供商: ${options.provider}`));
+        if (!isProviderSupported(provider)) {
+          console.log(chalk.red(`❌ 不支持的提供商: ${provider}`));
           console.log(chalk.gray('支持的提供商: qwen, volcengine'));
           return;
         }
+
+        // 获取模型（优先级：命令行 > 用户配置 > 默认）
+        const userModel = getCurrentModel(provider);
+        const defaultModel = getProviderConfig(provider).defaultModel;
+        const model = options.model || userModel || defaultModel;
 
         // 创建 Agent 配置
         const agentConfig: AgentConfig = {
           debug: false,
           llm: {
-            provider: options.provider,
+            provider: provider,
             apiKey: options.apiKey,
-            model: options.model,
+            model: model,
           },
           tools: {
             enabled: true,
@@ -63,9 +72,9 @@ export function agentLlmCommand(program: Command) {
             );
             console.log(chalk.gray('3. .env 文件: 复制 config.env.example 为 .env 并填入密钥'));
             console.log(chalk.gray('\n📖 获取API密钥:'));
-            if (options.provider === 'qwen') {
+            if (provider === 'qwen') {
               console.log(chalk.gray('千问: https://dashscope.console.aliyun.com/apiKey'));
-            } else if (options.provider === 'volcengine') {
+            } else if (provider === 'volcengine') {
               console.log(
                 chalk.gray(
                   '火山引擎: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey'
@@ -77,8 +86,8 @@ export function agentLlmCommand(program: Command) {
           throw error;
         }
 
-        const modelName = options.model || getProviderConfig(options.provider).defaultModel;
-        console.log(chalk.green(`✅ 使用 ${options.provider} (${modelName})`));
+        const modelDescription = getModelDescription(provider, model);
+        console.log(chalk.green(`✅ 使用 ${provider} (${modelDescription})`));
 
         // 判断聊天模式
         const question = questionArgs.join(' ');

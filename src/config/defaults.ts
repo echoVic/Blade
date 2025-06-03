@@ -8,6 +8,7 @@ export interface LLMProviderConfig {
   defaultModel: string;
   baseURL?: string;
   supportedModels: string[];
+  modelDescriptions?: Record<string, string>;
 }
 
 export interface DefaultConfig {
@@ -127,4 +128,54 @@ export function validateApiKey(provider: 'qwen' | 'volcengine', apiKey?: string)
       `2. 设置环境变量 ${provider.toUpperCase()}_API_KEY\n` +
       `3. 在 .env 文件中配置`
   );
+}
+
+/**
+ * 模型说明映射
+ */
+export const MODEL_DESCRIPTIONS = {
+  // Qwen 模型说明
+  qwen: {
+    'qwen3-235b-a22b': '通义千问3-235B-A22B (默认)',
+    'qwen-plus-latest': '通义千问-Plus-Latest (Qwen3)',
+    'qwen-turbo-latest': '通义千问-Turbo-Latest (Qwen3)',
+    'qwen-max-latest': '通义千问-Max-Latest (Qwen3)',
+    'qwen-max-longcontext': '通义千问-Max-长上下文',
+    'qwen-72b-chat': '通义千问-72B-Chat',
+    'qwen-14b-chat': '通义千问-14B-Chat',
+    'qwen-7b-chat': '通义千问-7B-Chat',
+    'qwen-1.8b-chat': '通义千问-1.8B-Chat',
+    'qwen-32b-chat': '通义千问-32B-Chat',
+    'qwen-vl-plus': '通义千问-VL-Plus (视觉)',
+    'qwen-vl-max': '通义千问-VL-Max (视觉)',
+    'qwen-audio-chat': '通义千问-Audio-Chat (音频)',
+    'qwen-coder-plus': '通义千问-Coder-Plus (代码)',
+  },
+  // VolcEngine 模型说明
+  volcengine: {
+    'ep-20250417144747-rgffm': 'Doubao-1.5-thinking-pro',
+    'ep-20250530171307-rrcc5': 'DeepSeek R1 250528',
+    'ep-20250530171222-q42h8': 'DeepSeek V3',
+  },
+} as const;
+
+/**
+ * 获取模型说明
+ */
+export function getModelDescription(provider: 'qwen' | 'volcengine', modelId: string): string {
+  const descriptions = MODEL_DESCRIPTIONS[provider];
+  return descriptions[modelId as keyof typeof descriptions] || modelId;
+}
+
+/**
+ * 获取所有模型及其说明
+ */
+export function getModelsWithDescriptions(
+  provider: 'qwen' | 'volcengine'
+): Array<{ id: string; description: string }> {
+  const config = getProviderConfig(provider);
+  return config.supportedModels.map(modelId => ({
+    id: modelId,
+    description: getModelDescription(provider, modelId),
+  }));
 }
