@@ -1,16 +1,17 @@
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
-import type {
-  ToolCallRequest,
-  ToolCallResponse,
-  ToolDefinition,
-  ToolExecutionContext,
-  ToolExecutionHistory,
-  ToolExecutionResult,
-  ToolManagerConfig,
-  ToolRegistrationOptions,
+import {
+  ToolExecutionError,
+  ToolRegistrationError,
+  type ToolCallRequest,
+  type ToolCallResponse,
+  type ToolDefinition,
+  type ToolExecutionContext,
+  type ToolExecutionHistory,
+  type ToolExecutionResult,
+  type ToolManagerConfig,
+  type ToolRegistrationOptions,
 } from './types.js';
-import { ToolExecutionError, ToolRegistrationError } from './types.js';
 import { ToolValidator } from './validator.js';
 
 /**
@@ -193,7 +194,7 @@ export class ToolManager extends EventEmitter {
       });
 
       // 执行工具
-      const executionPromise = this.executeToolWithTimeout(tool, processedParams, context);
+      const executionPromise = this.executeToolWithTimeout(tool, processedParams);
 
       this.runningExecutions.set(requestId, executionPromise);
 
@@ -332,28 +333,43 @@ export class ToolManager extends EventEmitter {
   }
 
   /**
-   * 带超时的工具执行
+   * 执行工具并设置超时
    */
   private async executeToolWithTimeout(
     tool: ToolDefinition,
-    parameters: Record<string, any>,
-    context: ToolExecutionContext
+    parameters: Record<string, any>
   ): Promise<ToolExecutionResult> {
+    const startTime = Date.now();
+
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         reject(
           new ToolExecutionError(`工具执行超时 (${this.config.executionTimeout}ms)`, tool.name)
         );
       }, this.config.executionTimeout);
 
-      tool
-        .execute(parameters)
+      Promise.resolve(tool.execute(parameters))
         .then(result => {
-          clearTimeout(timeout);
-          resolve(result);
+          clearTimeout(timeoutId);
+          const duration = Date.now() - startTime;
+
+          // 如果工具返回的已经是 ToolExecutionResult 格式，直接使用
+          if (result && typeof result === 'object' && 'success' in result) {
+            resolve({
+              ...result,
+              duration: result.duration || duration,
+            });
+          } else {
+            // 否则包装成标准格式
+            resolve({
+              success: true,
+              data: result,
+              duration,
+            });
+          }
         })
         .catch(error => {
-          clearTimeout(timeout);
+          clearTimeout(timeoutId);
           reject(new ToolExecutionError(`工具执行错误: ${error.message}`, tool.name, error));
         });
     });
@@ -380,4 +396,3 @@ export class ToolManager extends EventEmitter {
     }
   }
 }
- 

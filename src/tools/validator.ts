@@ -1,5 +1,4 @@
-import type { ToolParameterSchema } from './types.js';
-import { ToolValidationError } from './types.js';
+import { ToolValidationError, type ToolParameterSchema } from './types.js';
 
 /**
  * 工具参数验证器

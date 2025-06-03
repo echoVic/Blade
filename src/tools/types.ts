@@ -179,4 +179,3 @@ export class ToolRegistrationError extends Error {
     this.name = 'ToolRegistrationError';
   }
 }
- 

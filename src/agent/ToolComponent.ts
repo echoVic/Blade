@@ -379,4 +379,3 @@ export class ToolComponent extends BaseComponent {
     console.error(`[ToolComponent] ${message}`, error || '');
   }
 }
- 

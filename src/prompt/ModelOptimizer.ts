@@ -139,7 +139,7 @@ export class ModelOptimizer {
 
     // 添加少样本示例
     if (strategy.fewShotExamples) {
-      optimizedPrompt = this.addFewShotExamples(optimizedPrompt, provider);
+      optimizedPrompt = this.addFewShotExamples(optimizedPrompt);
     }
 
     // 根据响应格式要求
@@ -220,7 +220,7 @@ ${prompt}
   /**
    * 添加少样本示例
    */
-  private addFewShotExamples(prompt: string, provider: ModelProvider): string {
+  private addFewShotExamples(prompt: string): string {
     // 根据任务类型添加相关示例
     if (prompt.toLowerCase().includes('代码') || prompt.toLowerCase().includes('code')) {
       return this.addCodeExamples(prompt);

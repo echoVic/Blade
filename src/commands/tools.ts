@@ -1,7 +1,10 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
-import type { ToolDefinition } from '../tools/index.js';
-import { createToolManager, getBuiltinToolsByCategory } from '../tools/index.js';
+import {
+  createToolManager,
+  getBuiltinToolsByCategory,
+  type ToolDefinition,
+} from '../tools/index.js';
 
 /**
  * 工具相关命令
@@ -402,4 +405,3 @@ function generateTestParams(tool: ToolDefinition): Record<string, any> {
 
   return testParams;
 }
- 

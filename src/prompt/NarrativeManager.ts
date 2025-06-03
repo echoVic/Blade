@@ -263,8 +263,8 @@ ${
 
 **结果分析:**
 - 与预期对比: ${success ? '符合预期' : '存在偏差'}
-- 影响评估: ${this.assessImpact(success, actualOutcome)}
-- 后续建议: ${this.generateRecommendations(success, actualOutcome)}`;
+- 影响评估: ${this.assessImpact(success)}
+- 后续建议: ${this.generateRecommendations(success)}`;
 
     return this.addEntry('result', resultContent, context, {
       taskId,
@@ -574,7 +574,7 @@ ${entry.content}
   /**
    * 评估影响
    */
-  private assessImpact(success: boolean, outcome: string): string {
+  private assessImpact(success: boolean): string {
     if (success) {
       return '正面影响，目标达成';
     } else {
@@ -585,7 +585,7 @@ ${entry.content}
   /**
    * 生成建议
    */
-  private generateRecommendations(success: boolean, outcome: string): string {
+  private generateRecommendations(success: boolean): string {
     if (success) {
       return '继续当前策略，扩大成功经验';
     } else {
