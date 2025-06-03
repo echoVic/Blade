@@ -73,7 +73,7 @@ export function configCommand(program: Command) {
     .option('-p, --provider <provider>', '指定提供商')
     .argument('[model]', '模型名称')
     .action(async (model, options) => {
-      let provider = options.provider || getCurrentProvider();
+      const provider = options.provider || getCurrentProvider();
 
       if (!isProviderSupported(provider)) {
         console.log(chalk.red(`❌ 不支持的提供商: ${provider}`));
