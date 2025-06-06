@@ -40,12 +40,13 @@ export type { DefaultConfig, LLMProviderConfig } from './config/defaults.js';
 
 // 工具模块
 export {
-  commandConfirmationTools,
   createToolManager,
   fileSystemTools,
   getAllBuiltinTools,
   getBuiltinToolsByCategory,
+  gitTools,
   networkTools,
+  smartTools,
   textProcessingTools,
   ToolExecutionError,
   ToolManager,

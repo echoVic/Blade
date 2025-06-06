@@ -1,5 +1,11 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname, join, resolve } from 'path';
+import {
+  CommandPreCheckResult,
+  ConfirmableToolBase,
+  ConfirmationOptions,
+  RiskLevel,
+} from '../base/ConfirmableToolBase.js';
 import type { ToolDefinition } from '../types.js';
 
 /**
@@ -77,61 +83,238 @@ const fileReadTool: ToolDefinition = {
 };
 
 /**
- * 文件写入工具
+ * 文件写入工具 (基于 ConfirmableToolBase)
+ * 写入文件内容，带用户确认功能
  */
-const fileWriteTool: ToolDefinition = {
-  name: 'file_write',
-  description: '写入文件内容',
-  version: '1.0.0',
-  category: 'filesystem',
-  tags: ['file', 'write', 'create'],
-  parameters: {
+class FileWriteTool extends ConfirmableToolBase {
+  readonly name = 'file_write';
+  readonly description = '写入文件内容（需要用户确认）';
+  readonly category = 'filesystem';
+  readonly tags = ['file', 'write', 'create'];
+
+  readonly parameters = {
     path: {
-      type: 'string',
-      description: '文件路径',
+      type: 'string' as const,
       required: true,
+      description: '文件路径',
     },
     content: {
-      type: 'string',
-      description: '文件内容',
+      type: 'string' as const,
       required: true,
+      description: '文件内容',
     },
     encoding: {
-      type: 'string',
+      type: 'string' as const,
+      required: false,
       description: '文件编码',
-      enum: ['utf8', 'base64', 'hex'],
       default: 'utf8',
     },
     createDirectories: {
-      type: 'boolean',
+      type: 'boolean' as const,
+      required: false,
       description: '是否创建目录结构',
       default: true,
     },
     overwrite: {
-      type: 'boolean',
+      type: 'boolean' as const,
+      required: false,
       description: '是否覆盖已存在的文件',
       default: false,
     },
-  },
-  required: ['path', 'content'],
-  async execute(params) {
-    const { path, content, encoding, createDirectories, overwrite } = params;
+    skipConfirmation: {
+      type: 'boolean' as const,
+      required: false,
+      description: '跳过用户确认直接执行',
+      default: false,
+    },
+    riskLevel: {
+      type: 'string' as const,
+      required: false,
+      description: '风险级别：safe, moderate, high, critical',
+      default: 'moderate',
+    },
+  };
 
+  readonly required = ['path', 'content'];
+
+  /**
+   * 预处理参数
+   */
+  protected async preprocessParameters(params: Record<string, any>): Promise<Record<string, any>> {
+    const { path, content } = params;
+
+    // 验证路径安全性
+    if (path.includes('..') || path.startsWith('/') || path.includes('\\')) {
+      // 允许相对路径但需要确认
+      if (path.includes('..')) {
+        throw new Error('不允许使用相对路径（..）');
+      }
+    }
+
+    // 验证内容长度
+    if (content.length > 10 * 1024 * 1024) {
+      // 10MB
+      throw new Error('文件内容过大（超过10MB）');
+    }
+
+    return params;
+  }
+
+  /**
+   * 构建命令描述（非实际命令）
+   */
+  protected async buildCommand(params: Record<string, any>): Promise<string> {
+    const { path, content, encoding, overwrite } = params;
+
+    return `写入文件: ${path} (${content.length}字符, ${encoding}编码${overwrite ? ', 覆盖模式' : ''})`;
+  }
+
+  /**
+   * 获取确认选项
+   */
+  protected getConfirmationOptions(params: Record<string, any>): ConfirmationOptions {
+    const baseOptions = super.getConfirmationOptions(params);
+
+    let riskLevel = RiskLevel.MODERATE;
+    let confirmMessage = '';
+
+    if (params.overwrite) {
+      riskLevel = RiskLevel.HIGH;
+      confirmMessage = `⚠️  将覆盖文件 "${params.path}"，是否继续？`;
+    } else {
+      riskLevel = RiskLevel.MODERATE;
+      confirmMessage = `写入文件 "${params.path}"？`;
+    }
+
+    return {
+      ...baseOptions,
+      riskLevel,
+      confirmMessage,
+    };
+  }
+
+  /**
+   * 预检查命令
+   */
+  protected async preCheckCommand(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _command: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _workingDirectory: string,
+    params: Record<string, any>
+  ): Promise<CommandPreCheckResult> {
     try {
-      const resolvedPath = resolve(path);
+      const resolvedPath = resolve(params.path);
 
       // 检查文件是否已存在
       try {
         await fs.access(resolvedPath);
-        if (!overwrite) {
+        if (!params.overwrite) {
           return {
-            success: false,
-            error: '文件已存在，使用 overwrite: true 强制覆盖',
+            valid: false,
+            message: `文件 "${params.path}" 已存在`,
+            suggestions: [
+              {
+                command: `写入文件: ${params.path} (覆盖模式)`,
+                description: '覆盖已存在的文件',
+                riskLevel: RiskLevel.HIGH,
+              },
+            ],
           };
         }
       } catch {
         // 文件不存在，可以继续
       }
+
+      // 检查目录是否存在
+      const dir = dirname(resolvedPath);
+      try {
+        await fs.access(dir);
+      } catch {
+        if (!params.createDirectories) {
+          return {
+            valid: false,
+            message: `目录 "${dir}" 不存在`,
+            suggestions: [
+              {
+                command: `写入文件: ${params.path} (创建目录)`,
+                description: '自动创建目录结构',
+                riskLevel: RiskLevel.MODERATE,
+              },
+            ],
+          };
+        }
+      }
+
+      return { valid: true };
+    } catch (error: any) {
+      return {
+        valid: false,
+        message: `文件预检查失败: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * 获取执行描述
+   */
+  protected getExecutionDescription(params: Record<string, any>): string {
+    const { path, content, encoding, overwrite, createDirectories } = params;
+
+    let description = `写入文件: ${path} (${content.length}字符, ${encoding}编码)`;
+
+    if (overwrite) {
+      description += ' - 覆盖模式';
+    }
+
+    if (createDirectories) {
+      description += ' - 自动创建目录';
+    }
+
+    return description;
+  }
+
+  /**
+   * 获取执行预览
+   */
+  protected async getExecutionPreview(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _command: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _workingDirectory: string,
+    params: Record<string, any>
+  ): Promise<string> {
+    const { path, content } = params;
+    const resolvedPath = resolve(path);
+
+    let preview = `文件路径: ${resolvedPath}\n`;
+    preview += `内容长度: ${content.length} 字符\n`;
+
+    if (content.length <= 200) {
+      preview += `内容预览:\n${content}`;
+    } else {
+      preview += `内容预览:\n${content.substring(0, 200)}...(已截断)`;
+    }
+
+    return preview;
+  }
+
+  /**
+   * 执行文件写入
+   */
+  protected async executeCommand(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _command: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _workingDirectory: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _options: ConfirmationOptions,
+    params: Record<string, any>
+  ) {
+    const { path, content, encoding, createDirectories } = params;
+
+    try {
+      const resolvedPath = resolve(path);
 
       // 创建目录结构
       if (createDirectories) {
@@ -160,8 +343,11 @@ const fileWriteTool: ToolDefinition = {
         error: `文件写入失败: ${error.message}`,
       };
     }
-  },
-};
+  }
+}
+
+// 创建 file_write 工具实例
+const fileWriteTool = new FileWriteTool();
 
 /**
  * 目录列表工具
@@ -376,4 +562,3 @@ export const fileSystemTools: ToolDefinition[] = [
   directoryListTool,
   fileInfoTool,
 ];
- 

@@ -10,26 +10,32 @@
 - 🎭 **智能场景**：智能助手、客服、代码助手等专业场景
 - 🔄 **流式聊天**：支持实时流式输出
 - 🌟 **多提供商**：支持千问(Qwen)和豆包(VolcEngine)
-- 🔧 **工具生态**：内置27个实用工具，涵盖Git、文件、网络、智能分析、命令确认等
+- 🔧 **工具生态**：内置25个实用工具，涵盖Git、文件、网络、智能分析等
 - 🤖 **智能工具**：基于LLM增强的智能代码审查和文档生成
-- 🛡️ **命令确认**：安全的命令确认交互功能，AI建议命令后用户确认执行
+- 🛡️ **统一确认机制**：基于ConfirmableToolBase的安全命令确认系统，智能风险评估
 - 🚀 **开箱即用**：无需复杂配置，快速开始
 
-## 🛠 工具生态 (27个工具)
+## 🛠 工具生态 (25个工具)
 
-### 🛡️ 命令确认工具 (2个) - ⭐ 安全执行
-- **命令确认** (`command_confirmation`): 显示命令供用户确认执行，提供安全的命令交互体验
-- **批量命令确认** (`batch_command_confirmation`): 显示多个命令供用户选择和执行
+### 🛡️ 统一确认机制 - ⭐ 安全保障
+
+所有需要用户确认的工具都基于 **ConfirmableToolBase** 基类，提供统一的安全确认体验：
+
+- **🔍 智能风险评估** - 自动评估操作风险级别（安全/中等/高风险/极高风险）
+- **📋 命令预览** - 显示详细的执行信息和影响预览
+- **🧠 预检查验证** - 智能检查并提供替代方案建议  
+- **✅ 交互确认** - 统一的用户确认界面
+- **⚡ 安全执行** - 确认后安全执行操作
 
 ### 🤖 智能工具 (2个)
 - **智能代码审查** (`smart_code_review`): 使用LLM分析代码质量、安全性和性能
 - **智能文档生成** (`smart_doc_generator`): 基于代码自动生成API文档和README
 
-### 📂 文件系统工具 (4个)
-- `file_read`: 读取文件内容
-- `file_write`: 写入文件内容  
-- `directory_list`: 列出目录内容
-- `file_info`: 获取文件详细信息
+### 📂 文件系统工具 (4个) - 🛡️ 写入操作需确认
+- `file_read`: 读取文件内容 (安全，跳过确认)
+- `file_write`: 写入文件内容 **🛡️ 需确认** (风险级别：中等-高风险)
+- `directory_list`: 列出目录内容 (安全，跳过确认)
+- `file_info`: 获取文件详细信息 (安全，跳过确认)
 
 ### 🌐 网络工具 (4个)
 - `http_request`: 发送HTTP请求
@@ -49,73 +55,102 @@
 - `random`: 生成随机数或随机字符串
 - `base64`: Base64编码解码
 
-### 📊 Git工具 (7个)
-- `git_status`: 查看仓库状态
-- `git_log`: 查看提交历史
-- `git_diff`: 查看文件差异
-- `git_branch`: 管理分支
-- `git_add`: 添加文件到暂存区
-- `git_commit`: 提交变更
+### 📊 Git工具 (7个) - 🛡️ 写入操作需确认
+- `git_status`: 查看仓库状态 (安全，跳过确认)
+- `git_log`: 查看提交历史 (安全，跳过确认)
+- `git_diff`: 查看文件差异 (安全，跳过确认)
+- `git_branch`: 管理分支 **🛡️ 需确认** (风险级别：安全-高风险，根据操作类型)
+- `git_add`: 添加文件到暂存区 **🛡️ 需确认** (风险级别：安全)
+- `git_commit`: 提交变更 **🛡️ 需确认** (风险级别：中等-高风险)
 - `git_smart_commit`: **🤖 智能提交** - 使用LLM分析变更并生成提交信息
 
-## 🛡️ 命令确认功能
+## 🛡️ ConfirmableToolBase 确认机制
 
-Blade 支持安全的命令确认交互功能，让AI建议的命令可以安全、透明地执行。
+Blade 基于 **ConfirmableToolBase** 抽象基类为所有需要确认的工具提供统一的安全确认体验。
 
 ### 🎯 核心特性
 
-- **📋 命令展示** - 清晰显示建议的命令和说明
-- **🔍 风险评估** - 自动显示命令的风险级别 (安全/中等/高风险)
-- **✅ 用户确认** - 交互式 Yes/No 确认机制
-- **⚡ 实时执行** - 确认后立即执行命令
-- **📊 执行统计** - 显示执行时间和结果
+- **🔍 智能风险评估** - 自动评估操作风险级别：
+  - 🟢 **安全** (SAFE) - 只读操作，通常跳过确认
+  - 🟡 **中等** (MODERATE) - 普通写入操作
+  - 🟠 **高风险** (HIGH) - 覆盖文件、删除分支等
+  - 🔴 **极高风险** (CRITICAL) - 危险操作
+- **📋 执行预览** - 显示详细的操作信息和影响范围
+- **🧠 预检查验证** - 智能检查命令有效性，提供替代方案
+- **✅ 统一确认界面** - 一致的用户体验
+- **⚡ 安全执行** - 确认后安全执行操作
 
-### 🎮 使用方式
+### 🎮 使用示例
 
-#### 1. 在 AI 对话中使用（推荐）
-
+#### Git 操作确认示例
 ```bash
-# AI 会自动使用命令确认工具
-blade chat "请使用命令确认工具帮我查看当前目录文件"
-blade chat "用命令确认工具执行 git status 命令"
+# Git 提交 - 显示确认界面
+blade tools call git_commit --params '{"message": "feat: 新增功能"}'
 ```
 
-#### 2. 直接调用工具
-
-```bash
-# 单个命令确认
-blade tools call command_confirmation \
-  --params '{"command": "ls -la", "description": "查看文件详情", "riskLevel": "safe"}'
-
-# 批量命令选择
-blade tools call batch_command_confirmation \
-  --params '{"commands": [
-    {"command": "pwd", "description": "显示目录", "riskLevel": "safe"},
-    {"command": "date", "description": "显示时间", "riskLevel": "safe"}
-  ]}'
-```
-
-### 🎨 交互界面示例
-
+界面显示：
 ```
 📋 建议执行以下命令:
-  ls -la
-  说明: 列出当前目录的详细文件信息
+  git commit -m "feat: 新增功能"
+  说明: 提交消息: "feat: 新增功能"
   工作目录: /Users/demo/project
-  风险级别: 安全
+  风险级别: 中等
 
-? 是否执行此命令？ (y/N)
+🔍 执行预览:
+将要提交的文件:
+  修改: src/tools/base/ConfirmableToolBase.ts
+  新增: src/tools/base/README.md
+
+✔ 是否提交这些更改？ Yes
 ```
 
-执行后：
+#### 文件写入确认示例
+```bash
+# 文件写入 - 显示高风险警告
+blade tools call file_write --params '{"path": "config.json", "content": "{...}", "overwrite": true}'
 ```
-⚡ 正在执行命令...
-✅ 命令执行成功 (89ms)
 
-📤 输出:
-total 32
-drwxr-xr-x  8 user  staff   256 Jan 15 10:30 .
--rw-r--r--  1 user  staff  1234 Jan 15 10:30 package.json
+界面显示：
+```
+📋 建议执行以下命令:
+  写入文件: config.json (覆盖模式)
+  说明: 写入文件: config.json - 覆盖模式
+  工作目录: /Users/demo/project
+  风险级别: 高风险
+
+🔍 执行预览:
+文件路径: /Users/demo/project/config.json
+内容长度: 128 字符
+内容预览:
+{"apiKey": "xxx", "debug": true}
+
+⚠️ 将覆盖文件 "config.json"，是否继续？ Yes
+```
+
+### 🔧 开发者指南
+
+为新工具添加确认功能：
+
+```typescript
+import { ConfirmableToolBase, RiskLevel } from '../base/ConfirmableToolBase.js';
+
+class MyTool extends ConfirmableToolBase {
+  readonly name = 'my_tool';
+  readonly description = '我的工具（需要用户确认）';
+  
+  // 构建要执行的命令
+  protected async buildCommand(params: Record<string, any>): Promise<string> {
+    return `my-command ${params.arg}`;
+  }
+  
+  // 自定义确认选项
+  protected getConfirmationOptions(params: Record<string, any>) {
+    return {
+      riskLevel: params.dangerous ? RiskLevel.HIGH : RiskLevel.MODERATE,
+      confirmMessage: '是否执行此操作？',
+    };
+  }
+}
 ```
 
 ## 🛠 安装与配置

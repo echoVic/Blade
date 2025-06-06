@@ -1,5 +1,4 @@
 // 内置工具导出
-export * from './command-confirmation.js';
 export { fileSystemTools } from './file-system.js';
 export { gitTools } from './git-tools.js';
 export * from './git/index.js';
