@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.2.4] - 2025-06-06
+
+### ✨ 新功能
+
+- 重构工具使用ConfirmableToolBase基类，统一用户确认机制 (f833a51)
+
+### 🔧 其他更改
+
+- 清理不必要的代码和文件，更新README - 删除command-confirmation.ts工具（已被ConfirmableToolBase替代） - 移除所有对commandConfirmationTools的引用 - 更新工具数量从27个减少到25个 - 重构README文档，强调新的ConfirmableToolBase统一确认机制 (e7b9854)
+
+
 ## [1.2.3] - 2025-06-04
 
 
