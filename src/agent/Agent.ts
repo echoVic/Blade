@@ -495,16 +495,61 @@ ${toolDescriptions}
     originalMessage: string,
     toolResults: ToolCallResult[]
   ): Promise<string> {
-    // 构造包含工具结果的上下文
+    // 构造包含工具结果的上下文，针对不同工具类型提供更详细的信息
     const toolResultsText = toolResults
       .map(result => {
         if (result.success) {
-          return `工具 ${result.toolName} 执行成功，结果: ${JSON.stringify(result.result)}`;
+          let resultDescription = '';
+
+          // 特殊处理 Git 相关工具，显示更多细节
+          if (result.toolName === 'git_smart_commit' && result.result) {
+            const data = result.result;
+            resultDescription = `Git智能提交执行成功:
+- 提交信息: "${data.commitMessage || '未知'}"
+- 提交哈希: ${data.commitHash || '未获取'}
+- 变更文件: ${data.changedFiles ? data.changedFiles.join(', ') : '未知'}
+- 统计信息: ${data.statistics ? `${data.statistics.filesChanged || 0}个文件, +${data.statistics.insertions || 0}行, -${data.statistics.deletions || 0}行` : '未知'}
+- 执行命令: git commit -m "${data.commitMessage || '未知'}"`;
+          } else if (result.toolName === 'git_status' && result.result) {
+            resultDescription = `Git状态查看成功:
+- 执行命令: git status
+- 输出结果: ${result.result.stdout || result.result.output || ''}`;
+          } else if (result.toolName === 'git_add' && result.result) {
+            const data = result.result;
+            resultDescription = `Git文件添加成功:
+- 执行命令: git add ${data.files ? data.files.join(' ') : 'unknown'}
+- 添加文件: ${data.addedFiles ? data.addedFiles.join(', ') : '未知'}`;
+          } else if (result.toolName === 'git_diff' && result.result) {
+            resultDescription = `Git差异查看成功:
+- 执行命令: git diff ${result.result.options || ''}
+- 输出结果: ${result.result.stdout || result.result.output || ''}`;
+          } else if (result.toolName.startsWith('git_') && result.result) {
+            // 其他Git工具的通用处理
+            const data = result.result;
+            resultDescription = `${result.toolName}执行成功:
+- 执行的命令: ${data.command || `git ${result.toolName.replace('git_', '')}`}
+- 输出结果: ${data.stdout || data.output || JSON.stringify(data)}`;
+          } else if (result.toolName === 'smart_code_review' && result.result) {
+            const data = result.result;
+            resultDescription = `智能代码审查完成:
+- 审查文件: ${data.reviewedFiles ? data.reviewedFiles.join(', ') : '未知'}
+- 分析结果: ${data.analysis || data.summary || '无详细信息'}`;
+          } else if (result.toolName === 'smart_doc_generator' && result.result) {
+            const data = result.result;
+            resultDescription = `智能文档生成完成:
+- 生成文件: ${data.generatedFiles ? data.generatedFiles.join(', ') : '未知'}
+- 文档类型: ${data.documentType || '未知'}`;
+          } else {
+            // 默认处理
+            resultDescription = `工具 ${result.toolName} 执行成功，结果: ${JSON.stringify(result.result)}`;
+          }
+
+          return resultDescription;
         } else {
           return `工具 ${result.toolName} 执行失败，错误: ${result.error}`;
         }
       })
-      .join('\n');
+      .join('\n\n');
 
     const contextPrompt = `
 用户问题: "${originalMessage}"
@@ -515,9 +560,10 @@ ${toolResultsText}
 请基于这些工具返回的数据，给用户一个完整、准确且友好的回答。
 回答应该：
 1. 直接回答用户的问题
-2. 整合工具返回的数据
+2. 整合工具返回的数据，特别是显示执行的具体命令
 3. 使用自然的语言表达
-4. 不要提及技术细节（如工具名称、JSON格式等）
+4. 对于Git操作，要告诉用户具体执行了什么命令
+5. 对于代码审查和文档生成，要说明处理的文件和结果
 
 回答:`;
 

@@ -1,0 +1,1 @@
+测试文件，用于验证 git smart commit 的命令显示功能
