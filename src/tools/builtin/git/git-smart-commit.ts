@@ -251,16 +251,12 @@ ${diffOutput.length > 2000 ? diffOutput.substring(0, 2000) + '\n...(差异内容
    * 重写执行方法，处理特殊的 need_llm_analysis 错误
    */
   async execute(params: Record<string, any>): Promise<any> {
-    console.log('🔧 git_smart_commit: 开始执行, params:', JSON.stringify(params, null, 2));
-
     const { llmAnalysis, path = '.' } = params;
 
     // 如果没有LLM分析结果，返回需要分析的信号
     if (!llmAnalysis) {
-      console.log('🔧 git_smart_commit: 没有LLM分析，准备生成分析提示...');
       try {
         const analysisPrompt = await this.generateGitAnalysisPrompt(path);
-        console.log('🔧 git_smart_commit: 分析提示生成完成，返回 need_llm_analysis');
         return {
           success: false,
           error: 'need_llm_analysis',
@@ -270,7 +266,6 @@ ${diffOutput.length > 2000 ? diffOutput.substring(0, 2000) + '\n...(差异内容
           },
         };
       } catch (error) {
-        console.log('🔧 git_smart_commit: 生成分析提示失败:', error);
         return {
           success: false,
           error: `生成分析提示失败: ${(error as Error).message}`,
@@ -279,13 +274,10 @@ ${diffOutput.length > 2000 ? diffOutput.substring(0, 2000) + '\n...(差异内容
     }
 
     // 有LLM分析结果，继续执行正常流程
-    console.log('🔧 git_smart_commit: 有LLM分析结果，执行正常流程');
     try {
       const result = await super.execute(params);
-      console.log('🔧 git_smart_commit: 执行完成, result:', JSON.stringify(result, null, 2));
       return result;
     } catch (error: any) {
-      console.log('🔧 git_smart_commit: 执行出错:', error);
       return {
         success: false,
         error: `Git smart commit failed: ${(error as Error).message}`,
