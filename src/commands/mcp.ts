@@ -29,7 +29,7 @@ export function mcpCommand(program: Command): void {
           auth: serverConfig.auth,
         };
 
-        const toolManager = createToolManager();
+        const toolManager = await createToolManager();
         const server = new MCPServer(config, toolManager);
 
         console.log(chalk.blue('🚀 启动 MCP 服务器...'));
@@ -513,7 +513,7 @@ async function callTool(client: MCPClient, sessionId: string): Promise<void> {
     if (properties && Object.keys(properties).length > 0) {
       console.log(chalk.blue('📝 请输入工具参数:'));
 
-      for (const [key, schema] of Object.entries(properties)) {
+      for (const [key] of Object.entries(properties)) {
         const isRequired = tool.inputSchema.required?.includes(key);
         const { value } = await inquirer.prompt([
           {
