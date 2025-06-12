@@ -31,6 +31,16 @@ export interface ToolDefinition {
   parameters: Record<string, ToolParameterSchema>;
   /** 必需参数列表 */
   required?: string[];
+  /** 输入模式定义 */
+  inputSchema?: {
+    type?: string;
+    properties?: Record<string, any>;
+    required?: string[];
+  };
+  /** 输出模式定义 */
+  outputSchema?: any;
+  /** 使用示例 */
+  examples?: any[];
   /** 工具执行函数 */
   execute: (params: Record<string, any>) => Promise<ToolExecutionResult>;
 }

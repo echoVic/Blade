@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
@@ -8,6 +7,7 @@ import { configCommand } from './commands/config.js';
 import { llmCommand } from './commands/llm.js';
 import { mcpCommand } from './commands/mcp.js';
 import { toolsCommand } from './commands/tools.js';
+import { UIDisplay, UILayout, UIList } from './ui/index.js';
 
 // 获取当前模块的目录路径
 const __filename = fileURLToPath(import.meta.url);
@@ -95,83 +95,119 @@ mcpCommand(program);
 
 // 添加帮助信息
 program.on('--help', () => {
-  console.log('');
-  console.log(chalk.blue('🚀 Blade 使用示例:'));
-  console.log('');
+  UIDisplay.newline();
+  UIDisplay.header('Blade 使用示例');
+  UIDisplay.newline();
 
-  console.log(chalk.green('  💬 智能对话:'));
-  console.log('  $ blade chat 什么是人工智能');
-  console.log('  $ blade chat 解释一下微服务架构');
-  console.log('  $ blade chat --scenario customer 怎么退货');
-  console.log('  $ blade chat --stream 详细解释机器学习');
-  console.log('');
+  // 智能对话示例
+  UIDisplay.section('💬 智能对话');
+  const chatExamples = [
+    'blade chat 什么是人工智能',
+    'blade chat 解释一下微服务架构',
+    'blade chat --scenario customer 怎么退货',
+    'blade chat --stream 详细解释机器学习',
+  ];
+  UIList.simple(chatExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🔄 交互式聊天:'));
-  console.log('  $ blade chat --interactive');
-  console.log('  $ blade chat -i --scenario code --stream');
-  console.log('');
+  // 交互式聊天示例
+  UIDisplay.section('🔄 交互式聊天');
+  const interactiveExamples = [
+    'blade chat --interactive',
+    'blade chat -i --scenario code --stream',
+  ];
+  UIList.simple(interactiveExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🧠 带上下文记忆的聊天:'));
-  console.log('  $ blade chat --context --interactive');
-  console.log('  $ blade chat --context "你还记得我之前问的问题吗？"');
-  console.log('  $ blade chat --context --context-session my-session');
-  console.log('  $ blade chat --context --context-user john --interactive');
-  console.log('');
+  // 上下文记忆聊天示例
+  UIDisplay.section('🧠 带上下文记忆的聊天');
+  const contextExamples = [
+    'blade chat --context --interactive',
+    'blade chat --context "你还记得我之前问的问题吗？"',
+    'blade chat --context --context-session my-session',
+    'blade chat --context --context-user john --interactive',
+  ];
+  UIList.simple(contextExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🎭 场景演示:'));
-  console.log('  $ blade chat --demo --scenario assistant');
-  console.log('  $ blade chat --demo --scenario customer');
-  console.log('');
+  // 场景演示示例
+  UIDisplay.section('🎭 场景演示');
+  const demoExamples = [
+    'blade chat --demo --scenario assistant',
+    'blade chat --demo --scenario customer',
+  ];
+  UIList.simple(demoExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🤖 纯 LLM 模式:'));
-  console.log('  $ blade llm --stream');
-  console.log('  $ blade llm --provider volcengine');
-  console.log('');
+  // LLM 模式示例
+  UIDisplay.section('🤖 纯 LLM 模式');
+  const llmExamples = ['blade llm --stream', 'blade llm --provider volcengine'];
+  UIList.simple(llmExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  📋 模型管理:'));
-  console.log('  $ blade models --provider qwen');
-  console.log('  $ blade models --provider volcengine');
-  console.log('');
+  // 模型管理示例
+  UIDisplay.section('📋 模型管理');
+  const modelExamples = ['blade models --provider qwen', 'blade models --provider volcengine'];
+  UIList.simple(modelExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  ⚙️ 配置管理:'));
-  console.log('  $ blade config show');
-  console.log('  $ blade config set-provider volcengine');
-  console.log('  $ blade config set-model ep-20250530171222-q42h8');
-  console.log('  $ blade config switch');
-  console.log('  $ blade config wizard');
-  console.log('');
+  // 配置管理示例
+  UIDisplay.section('⚙️ 配置管理');
+  const configExamples = [
+    'blade config show',
+    'blade config set-provider volcengine',
+    'blade config set-model ep-20250530171222-q42h8',
+    'blade config switch',
+    'blade config wizard',
+  ];
+  UIList.simple(configExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🔧 工具管理:'));
-  console.log('  $ blade tools list');
-  console.log('  $ blade tools info smart_code_review');
-  console.log('  $ blade tools call uuid');
-  console.log('  $ blade tools call command_confirmation \\');
-  console.log('    --params \'{"command": "ls -la", "description": "查看文件"}\'');
-  console.log('');
+  // 工具管理示例
+  UIDisplay.section('🔧 工具管理');
+  const toolExamples = [
+    'blade tools list',
+    'blade tools info smart_code_review',
+    'blade tools call uuid',
+    'blade tools call command_confirmation \\\n    --params \'{"command": "ls -la", "description": "查看文件"}\'',
+  ];
+  UIList.simple(toolExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.green('  🔗 MCP 支持:'));
-  console.log('  $ blade mcp server start');
-  console.log('  $ blade mcp config add');
-  console.log('  $ blade mcp client connect my-server');
-  console.log('  $ blade chat --mcp my-server "使用外部资源分析"');
-  console.log('');
+  // MCP 支持示例
+  UIDisplay.section('🔗 MCP 支持');
+  const mcpExamples = [
+    'blade mcp server start',
+    'blade mcp config add',
+    'blade mcp client connect my-server',
+    'blade chat --mcp my-server "使用外部资源分析"',
+  ];
+  UIList.simple(mcpExamples, { indent: 2 });
+  UIDisplay.newline();
 
-  console.log(chalk.blue('✨ 命令确认功能:'));
-  console.log(chalk.gray('  • 📋 命令展示 - 清晰显示建议的命令和说明'));
-  console.log(chalk.gray('  • 🔍 风险评估 - 自动显示命令的风险级别'));
-  console.log(chalk.gray('  • ✅ 用户确认 - 交互式确认是否执行'));
-  console.log(chalk.gray('  • ⚡ 实时执行 - 确认后立即执行命令'));
-  console.log(chalk.gray('  • 📊 执行统计 - 显示执行时间和结果'));
-  console.log('');
+  // 命令确认功能
+  UILayout.card(
+    '✨ 命令确认功能',
+    [
+      '• 📋 命令展示 - 清晰显示建议的命令和说明',
+      '• 🔍 风险评估 - 自动显示命令的风险级别',
+      '• ✅ 用户确认 - 交互式确认是否执行',
+      '• ⚡ 实时执行 - 确认后立即执行命令',
+      '• 📊 执行统计 - 显示执行时间和结果',
+    ],
+    { width: 60, style: 'rounded' }
+  );
+  UIDisplay.newline();
 
-  console.log(chalk.yellow('💡 提示: 使用 "blade chat 你的问题" 进行智能对话'));
-  console.log(chalk.yellow('        使用命令确认工具安全执行AI建议的命令'));
-  console.log(chalk.yellow('        在对话中说"请使用命令确认工具执行..."'));
+  // 提示信息
+  UIDisplay.warning('💡 提示: 使用 "blade chat 你的问题" 进行智能对话');
+  UIDisplay.muted('        使用命令确认工具安全执行AI建议的命令');
+  UIDisplay.muted('        在对话中说"请使用命令确认工具执行..."');
 });
 
 if (!process.argv.slice(2).length) {
-  console.log(chalk.cyan('🗡️ 欢迎使用 Blade！'));
-  console.log('');
+  UIDisplay.header('🗡️ 欢迎使用 Blade！');
+  UIDisplay.newline();
   program.outputHelp();
   process.exit(0);
 }

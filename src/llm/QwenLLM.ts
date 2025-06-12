@@ -17,7 +17,7 @@ export class QwenLLM extends BaseLLM {
   private client: OpenAI;
   private config: QwenConfig;
 
-  constructor(config: QwenConfig, defaultModel: string = 'qwen3-235b-a22b') {
+  constructor(config: QwenConfig, defaultModel: string = 'qwen-plus-2025-04-28') {
     super('qwen-llm', defaultModel);
     this.config = config;
 

@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { MCPClient, mcpConfig, MCPConnectionConfig, MCPServer } from '../mcp/index.js';
 import { createToolManager } from '../tools/index.js';
+import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
 
 /**
  * MCP 相关命令
@@ -20,6 +21,9 @@ export function mcpCommand(program: Command): void {
     .option('-h, --host <host>', '监听地址', 'localhost')
     .option('-t, --transport <type>', '传输类型 (ws|stdio)', 'ws')
     .action(async options => {
+      let spinner = UIProgress.spinner('正在初始化服务器配置...');
+      spinner.start();
+
       try {
         const serverConfig = mcpConfig.getServerConfig();
         const config = {
@@ -29,42 +33,55 @@ export function mcpCommand(program: Command): void {
           auth: serverConfig.auth,
         };
 
+        spinner.succeed('配置初始化完成');
+
+        spinner = UIProgress.spinner('正在启动工具管理器...');
+        spinner.start();
+
         const toolManager = await createToolManager();
+
+        spinner.succeed('工具管理器启动完成');
+
+        UILayout.card(
+          'MCP 服务器配置',
+          [
+            `传输方式: ${config.transport}`,
+            config.transport === 'ws' ? `监听地址: ws://${config.host}:${config.port}` : null,
+          ].filter(Boolean) as string[],
+          { icon: '🚀' }
+        );
+
+        spinner = UIProgress.spinner('正在启动 MCP 服务器...');
+        spinner.start();
+
         const server = new MCPServer(config, toolManager);
-
-        console.log(chalk.blue('🚀 启动 MCP 服务器...'));
-        console.log(chalk.gray(`   传输方式: ${config.transport}`));
-
-        if (config.transport === 'ws') {
-          console.log(chalk.gray(`   监听地址: ws://${config.host}:${config.port}`));
-        }
-
         await server.start();
 
         server.on('started', info => {
-          console.log(chalk.green('✅ MCP 服务器启动成功'));
+          spinner.succeed('MCP 服务器启动成功');
+
           if (info.host && info.port) {
-            console.log(chalk.cyan(`🌐 服务器地址: ws://${info.host}:${info.port}`));
+            UIDisplay.success(`服务器地址: ws://${info.host}:${info.port}`);
           }
-          console.log(chalk.yellow('💡 提示: 按 Ctrl+C 停止服务器'));
+          UIDisplay.info('按 Ctrl+C 停止服务器');
         });
 
         server.on('error', error => {
-          console.error(chalk.red('❌ 服务器错误:'), error.message);
+          UIDisplay.error(`服务器错误: ${error.message}`);
         });
 
         // 处理退出信号
         process.on('SIGINT', async () => {
-          console.log(chalk.yellow('\n⏹️  正在停止服务器...'));
+          const exitSpinner = UIProgress.spinner('正在停止服务器...');
+          exitSpinner.start();
+
           await server.stop();
-          console.log(chalk.green('✅ 服务器已停止'));
+          exitSpinner.succeed('服务器已停止');
           process.exit(0);
         });
       } catch (error) {
-        console.error(
-          chalk.red('❌ 启动服务器失败:'),
-          error instanceof Error ? error.message : error
-        );
+        if (spinner) spinner.fail('服务器启动失败');
+        UIDisplay.error(`错误: ${error instanceof Error ? error.message : error}`);
         process.exit(1);
       }
     });
@@ -77,29 +94,48 @@ export function mcpCommand(program: Command): void {
     .description('连接到 MCP 服务器')
     .option('-i, --interactive', '交互式模式')
     .action(async (serverName, options) => {
+      let spinner = UIProgress.spinner('正在验证服务器配置...');
+      spinner.start();
+
       try {
         const serverConfig = mcpConfig.getServer(serverName);
         if (!serverConfig) {
-          console.error(chalk.red(`❌ 未找到服务器配置: ${serverName}`));
-          console.log(chalk.yellow('💡 使用 "blade mcp config add" 添加服务器配置'));
+          spinner.fail('服务器配置不存在');
+          UIDisplay.error(`未找到服务器配置: ${serverName}`);
+          UIDisplay.info('使用 "blade mcp config add" 添加服务器配置');
           return;
         }
 
+        spinner.succeed('服务器配置验证完成');
+
+        UILayout.card(
+          '连接信息',
+          [
+            `服务器: ${serverName}`,
+            `地址: ${serverConfig.endpoint || serverConfig.command}`,
+            `传输方式: ${serverConfig.transport}`,
+          ],
+          { icon: '🔗' }
+        );
+
+        spinner = UIProgress.spinner('正在连接到 MCP 服务器...');
+        spinner.start();
+
         const client = new MCPClient();
-
-        console.log(chalk.blue('🔗 连接到 MCP 服务器...'));
-        console.log(chalk.gray(`   服务器: ${serverName}`));
-        console.log(chalk.gray(`   地址: ${serverConfig.endpoint || serverConfig.command}`));
-
         const session = await client.connect(serverConfig);
 
-        console.log(chalk.green('✅ 连接成功'));
-        console.log(chalk.gray(`   会话 ID: ${session.id}`));
-        if (session.serverInfo) {
-          console.log(
-            chalk.gray(`   服务器信息: ${session.serverInfo.name} v${session.serverInfo.version}`)
-          );
-        }
+        spinner.succeed('连接成功');
+
+        UILayout.card(
+          '会话信息',
+          [
+            `会话 ID: ${session.id}`,
+            session.serverInfo
+              ? `服务器: ${session.serverInfo.name} v${session.serverInfo.version}`
+              : null,
+          ].filter(Boolean) as string[],
+          { icon: '✅' }
+        );
 
         if (options.interactive) {
           await runInteractiveClient(client, session.id);
@@ -108,10 +144,14 @@ export function mcpCommand(program: Command): void {
           await showServerInfo(client, session.id);
         }
 
+        const disconnectSpinner = UIProgress.spinner('正在断开连接...');
+        disconnectSpinner.start();
+
         await client.disconnect(session.id);
-        console.log(chalk.yellow('🔌 连接已断开'));
+        disconnectSpinner.succeed('连接已断开');
       } catch (error) {
-        console.error(chalk.red('❌ 连接失败:'), error instanceof Error ? error.message : error);
+        if (spinner) spinner.fail('连接失败');
+        UIDisplay.error(`错误: ${error instanceof Error ? error.message : error}`);
         process.exit(1);
       }
     });
@@ -124,26 +164,28 @@ export function mcpCommand(program: Command): void {
       const serverNames = Object.keys(servers);
 
       if (serverNames.length === 0) {
-        console.log(chalk.yellow('📭 暂无配置的 MCP 服务器'));
-        console.log(chalk.gray('   使用 "blade mcp config add" 添加服务器配置'));
+        UIDisplay.warning('暂无配置的 MCP 服务器');
+        UIDisplay.info('使用 "blade mcp config add" 添加服务器配置');
         return;
       }
 
-      console.log(chalk.blue('📋 已配置的 MCP 服务器:'));
-      console.log('');
+      UIDisplay.section('已配置的 MCP 服务器');
 
-      serverNames.forEach(name => {
+      const serverList = serverNames.map(name => {
         const config = servers[name];
-        console.log(chalk.green(`🔗 ${name}`));
-        console.log(chalk.gray(`   传输: ${config.transport}`));
+        let info = `${name} (${config.transport})`;
+
         if (config.endpoint) {
-          console.log(chalk.gray(`   地址: ${config.endpoint}`));
+          info += ` - ${config.endpoint}`;
+        } else if (config.command) {
+          info += ` - ${config.command}`;
         }
-        if (config.command) {
-          console.log(chalk.gray(`   命令: ${config.command} ${config.args?.join(' ') || ''}`));
-        }
-        console.log('');
+
+        return info;
       });
+
+      UIList.simple(serverList);
+      UIDisplay.info(`共 ${serverNames.length} 个服务器`);
     });
 
   // MCP 配置命令
@@ -154,150 +196,156 @@ export function mcpCommand(program: Command): void {
     .description('添加 MCP 服务器配置')
     .action(async () => {
       try {
-        const answers = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'name',
-            message: '服务器名称:',
-            validate: input => (input.trim() ? true : '请输入服务器名称'),
-          },
-          {
-            type: 'list',
-            name: 'transport',
-            message: '传输方式:',
-            choices: [
-              { name: 'WebSocket (ws)', value: 'ws' },
-              { name: 'Standard I/O (stdio)', value: 'stdio' },
-            ],
-          },
+        UIDisplay.header('添加 MCP 服务器配置');
+
+        const name = await UIInput.text('服务器名称:', {
+          validate: input => (input.trim() ? true : '请输入服务器名称'),
+        });
+
+        const transport = await UIInput.select('传输方式:', [
+          { name: 'WebSocket (ws)', value: 'ws' },
+          { name: 'Standard I/O (stdio)', value: 'stdio' },
         ]);
 
         let config: MCPConnectionConfig = {
-          name: answers.name,
-          transport: answers.transport,
+          name,
+          transport: transport as 'ws' | 'stdio',
         };
 
-        if (answers.transport === 'ws') {
-          const wsAnswers = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'endpoint',
-              message: 'WebSocket 地址:',
-              default: 'ws://localhost:3001',
-              validate: input => (input.trim() ? true : '请输入 WebSocket 地址'),
-            },
-            {
-              type: 'number',
-              name: 'timeout',
-              message: '连接超时 (毫秒):',
-              default: 10000,
-            },
-          ]);
-          config = { ...config, ...wsAnswers };
+        if (transport === 'ws') {
+          const endpoint = await UIInput.text('WebSocket 地址:', {
+            default: 'ws://localhost:3001',
+            validate: input => (input.trim() ? true : '请输入 WebSocket 地址'),
+          });
+
+          const timeout = await UIInput.text('连接超时 (毫秒):', {
+            default: '10000',
+            validate: input => (!isNaN(Number(input)) ? true : '请输入有效数字'),
+          });
+
+          config = {
+            ...config,
+            endpoint,
+            timeout: parseInt(timeout),
+          };
         } else {
-          const stdioAnswers = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'command',
-              message: '启动命令:',
-              validate: input => (input.trim() ? true : '请输入启动命令'),
-            },
-            {
-              type: 'input',
-              name: 'args',
-              message: '命令参数 (用空格分隔):',
-              filter: input => (input.trim() ? input.split(/\s+/) : []),
-            },
-          ]);
-          config = { ...config, ...stdioAnswers };
+          const command = await UIInput.text('执行命令:', {
+            validate: input => (input.trim() ? true : '请输入执行命令'),
+          });
+
+          const args = await UIInput.text('命令参数 (可选):', { default: '' });
+
+          config = {
+            ...config,
+            command,
+            args: args ? args.split(' ') : undefined,
+          };
         }
 
-        const errors = mcpConfig.validateServerConfig(config);
-        if (errors.length > 0) {
-          console.error(chalk.red('❌ 配置验证失败:'));
-          errors.forEach(error => console.error(chalk.red(`   • ${error}`)));
-          return;
-        }
+        const spinner = UIProgress.spinner('正在保存配置...');
+        spinner.start();
 
-        mcpConfig.addServer(config.name, config);
-        console.log(chalk.green(`✅ 已添加服务器配置: ${config.name}`));
-      } catch (error) {
-        console.error(
-          chalk.red('❌ 添加配置失败:'),
-          error instanceof Error ? error.message : error
+        mcpConfig.addServer(name, config);
+
+        spinner.succeed('服务器配置添加成功');
+
+        UILayout.card(
+          '配置详情',
+          [
+            `名称: ${config.name}`,
+            `传输方式: ${config.transport}`,
+            config.endpoint ? `地址: ${config.endpoint}` : null,
+            config.command ? `命令: ${config.command}` : null,
+          ].filter(Boolean) as string[],
+          { icon: '✅' }
         );
+      } catch (error: any) {
+        UIDisplay.error(`配置添加失败: ${error.message}`);
       }
     });
 
   configCmd
     .command('remove <name>')
-    .description('移除 MCP 服务器配置')
+    .description('删除服务器配置')
     .action(async name => {
       try {
         const servers = mcpConfig.getServers();
         if (!servers[name]) {
-          console.error(chalk.red(`❌ 未找到服务器配置: ${name}`));
+          UIDisplay.error(`服务器配置 "${name}" 不存在`);
           return;
         }
 
-        const { confirm } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'confirm',
-            message: `确定要移除服务器配置 "${name}" 吗?`,
-            default: false,
-          },
-        ]);
+        UILayout.card('将要删除的配置', [`名称: ${name}`, `传输方式: ${servers[name].transport}`], {
+          icon: '⚠️',
+        });
 
-        if (confirm) {
-          mcpConfig.removeServer(name);
-          console.log(chalk.green(`✅ 已移除服务器配置: ${name}`));
-        } else {
-          console.log(chalk.yellow('❌ 操作已取消'));
+        const confirmed = await UIInput.confirm('确认删除此配置？', { default: false });
+
+        if (!confirmed) {
+          UIDisplay.info('操作已取消');
+          return;
         }
-      } catch (error) {
-        console.error(
-          chalk.red('❌ 移除配置失败:'),
-          error instanceof Error ? error.message : error
-        );
+
+        const spinner = UIProgress.spinner('正在删除配置...');
+        spinner.start();
+
+        mcpConfig.removeServer(name);
+
+        spinner.succeed(`服务器配置 "${name}" 已删除`);
+      } catch (error: any) {
+        UIDisplay.error(`删除配置失败: ${error.message}`);
       }
     });
 
   configCmd
-    .command('show')
-    .description('显示 MCP 配置')
-    .action(() => {
-      const config = mcpConfig.exportConfig();
-      console.log(chalk.blue('📋 MCP 配置:'));
-      console.log('');
-      console.log(JSON.stringify(config, null, 2));
-    });
-
-  configCmd
-    .command('reset')
-    .description('重置 MCP 配置为默认值')
-    .action(async () => {
+    .command('show [name]')
+    .description('显示服务器配置')
+    .action(name => {
       try {
-        const { confirm } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'confirm',
-            message: '确定要重置所有 MCP 配置吗? 这将删除所有服务器配置!',
-            default: false,
-          },
-        ]);
+        if (name) {
+          const config = mcpConfig.getServer(name);
+          if (!config) {
+            UIDisplay.error(`服务器配置 "${name}" 不存在`);
+            return;
+          }
 
-        if (confirm) {
-          mcpConfig.reset();
-          console.log(chalk.green('✅ MCP 配置已重置为默认值'));
+          UILayout.card(
+            `服务器配置: ${name}`,
+            [
+              `传输方式: ${config.transport}`,
+              config.endpoint ? `地址: ${config.endpoint}` : null,
+              config.command ? `命令: ${config.command}` : null,
+              config.args?.length ? `参数: ${config.args.join(' ')}` : null,
+              config.timeout ? `超时: ${config.timeout}ms` : null,
+            ].filter(Boolean) as string[],
+            { icon: '📋' }
+          );
         } else {
-          console.log(chalk.yellow('❌ 操作已取消'));
+          const servers = mcpConfig.getServers();
+          const serverNames = Object.keys(servers);
+
+          if (serverNames.length === 0) {
+            UIDisplay.warning('暂无配置的服务器');
+            return;
+          }
+
+          UIDisplay.section('所有服务器配置');
+
+          serverNames.forEach(serverName => {
+            const config = servers[serverName];
+            UILayout.card(
+              serverName,
+              [
+                `传输方式: ${config.transport}`,
+                config.endpoint ? `地址: ${config.endpoint}` : null,
+                config.command ? `命令: ${config.command}` : null,
+              ].filter(Boolean) as string[]
+            );
+            UIDisplay.newline();
+          });
         }
-      } catch (error) {
-        console.error(
-          chalk.red('❌ 重置配置失败:'),
-          error instanceof Error ? error.message : error
-        );
+      } catch (error: any) {
+        UIDisplay.error(`获取配置失败: ${error.message}`);
       }
     });
 }

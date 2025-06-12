@@ -3,6 +3,54 @@
  * 管理 LLM 的默认配置参数
  */
 
+import { existsSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+// 获取当前模块的目录路径
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// 加载config.env文件
+function loadConfigFile(): void {
+  // 尝试多个可能的配置文件路径
+  const possiblePaths = [
+    join(process.cwd(), 'config.env'), // 当前工作目录
+    join(__dirname, '..', '..', 'config.env'), // 源码结构
+    join(__dirname, '..', '..', '..', 'config.env'), // 构建后结构
+  ];
+
+  for (const configPath of possiblePaths) {
+    if (existsSync(configPath)) {
+      try {
+        const content = readFileSync(configPath, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (trimmedLine && !trimmedLine.startsWith('#')) {
+            const [key, ...valueParts] = trimmedLine.split('=');
+            if (key && valueParts.length > 0) {
+              const value = valueParts.join('=').trim();
+              // 只设置还没有的环境变量
+              if (!process.env[key.trim()]) {
+                process.env[key.trim()] = value;
+              }
+            }
+          }
+        }
+        console.log(`✅ 已加载配置文件: ${configPath}`);
+        break; // 找到第一个存在的配置文件后就停止搜索
+      } catch (error) {
+        console.warn(`Warning: Failed to load config file ${configPath}`);
+      }
+    }
+  }
+}
+
+// 在模块加载时自动加载配置文件
+loadConfigFile();
+
 export interface LLMProviderConfig {
   apiKey: string;
   defaultModel: string;
@@ -26,12 +74,14 @@ export const DEFAULT_CONFIG: DefaultConfig = {
   llm: {
     qwen: {
       apiKey: process.env.QWEN_API_KEY || '',
-      defaultModel: process.env.QWEN_DEFAULT_MODEL || 'qwen3-235b-a22b',
+      defaultModel: process.env.QWEN_DEFAULT_MODEL || 'qwen-plus-2025-04-28',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       supportedModels: [
         'qwen3-235b-a22b',
         'qwen-plus-latest',
         'qwen-turbo-latest',
+        'qwen-turbo-2025-04-28',
+        'qwen-plus-2025-04-28',
         'qwen-max-latest',
         'qwen-max-longcontext',
         'qwen-72b-chat',
@@ -53,6 +103,7 @@ export const DEFAULT_CONFIG: DefaultConfig = {
         'ep-20250417144747-rgffm',
         'ep-20250530171307-rrcc5', // DeepSeek R1 250528
         'ep-20250530171222-q42h8', // DeepSeek V3
+        'ep-20250612135125-br9k7', // Doubao-Seed-1.6-thinking
       ],
     },
   },
@@ -136,9 +187,11 @@ export function validateApiKey(provider: 'qwen' | 'volcengine', apiKey?: string)
 export const MODEL_DESCRIPTIONS = {
   // Qwen 模型说明
   qwen: {
-    'qwen3-235b-a22b': '通义千问3-235B-A22B (默认)',
+    'qwen3-235b-a22b': '通义千问3-235B-A22B',
     'qwen-plus-latest': '通义千问-Plus-Latest (Qwen3)',
     'qwen-turbo-latest': '通义千问-Turbo-Latest (Qwen3)',
+    'qwen-turbo-2025-04-28': '通义千问-Turbo-2025-04-28 (1M上下文)',
+    'qwen-plus-2025-04-28': '通义千问-Plus-2025-04-28 (128K上下文) (默认)',
     'qwen-max-latest': '通义千问-Max-Latest (Qwen3)',
     'qwen-max-longcontext': '通义千问-Max-长上下文',
     'qwen-72b-chat': '通义千问-72B-Chat',
@@ -156,6 +209,7 @@ export const MODEL_DESCRIPTIONS = {
     'ep-20250417144747-rgffm': 'Doubao-1.5-thinking-pro',
     'ep-20250530171307-rrcc5': 'DeepSeek R1 250528',
     'ep-20250530171222-q42h8': 'DeepSeek V3',
+    'ep-20250612135125-br9k7': 'Doubao-Seed-1.6-thinking',
   },
 } as const;
 
