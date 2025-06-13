@@ -71,12 +71,17 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@langchain/community": "^0.3.3",
+    "@langchain/core": "^0.3.9",
+    "@langchain/openai": "^0.3.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "axios": "^1.9.0",
     "chalk": "^5.4.1",
     "commander": "^14.0.0",
     "inquirer": "^12.6.3",
-    "openai": "^4.103.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "ws": "^8.18.0"
+    "langchain": "^0.3.2",
+    "openai": "^5.1.0",
+    "ws": "^8.18.0",
+    "zod": "^3.22.4"
   }
 }

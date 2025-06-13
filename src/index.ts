@@ -18,13 +18,16 @@ const packageJsonPath = join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const version = packageJson.version;
 
-// 导出 Agent 和 LLM 相关模块
+// 导出新的 LangChain 集成模块
+export * from './langchain/index.js';
+
+// 导出传统模块（向后兼容，稍后移除）
 export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
 export { BaseComponent } from './agent/BaseComponent.js';
 export { LoggerComponent } from './agent/LoggerComponent.js';
 export { ToolComponent, ToolComponentConfig } from './agent/ToolComponent.js';
 
-// LLM 模块
+// LLM 模块（向后兼容，稍后移除）
 export { BaseLLM } from './llm/BaseLLM.js';
 export { QwenLLM } from './llm/QwenLLM.js';
 export { VolcEngineLLM } from './llm/VolcEngineLLM.js';
