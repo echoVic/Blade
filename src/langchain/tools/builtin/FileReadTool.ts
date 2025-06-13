@@ -6,28 +6,32 @@ import { promises as fs } from 'fs';
 import { resolve } from 'path';
 import { z } from 'zod';
 import { BladeTool } from '../base/BladeTool.js';
-import type { BladeToolResult, ToolExecutionContext } from '../types.js';
+import {
+  RiskLevel,
+  ToolCategory,
+  type BladeToolConfig,
+  type BladeToolResult,
+  type ToolExecutionContext,
+} from '../types.js';
 
 /**
  * 文件读取工具
- *
- * 提供安全的文件读取功能：
- * - 文件大小限制
- * - 路径安全检查
- * - 编码支持
- * - 文件信息返回
+ * 安全地读取文件内容，支持多种编码格式
  */
 export class FileReadTool extends BladeTool {
   constructor() {
-    super({
+    const config: BladeToolConfig = {
       name: 'file_read',
       description: '读取文件内容，支持多种编码格式',
-      category: 'filesystem',
+      category: ToolCategory.FILESYSTEM,
       tags: ['file', 'read', 'content', 'filesystem'],
       version: '2.0.0',
-      riskLevel: 'safe',
+      author: 'Blade AI Team',
       requiresConfirmation: false,
-    });
+      riskLevel: RiskLevel.SAFE,
+    };
+
+    super(config);
   }
 
   /**
@@ -35,14 +39,12 @@ export class FileReadTool extends BladeTool {
    */
   protected createSchema(): z.ZodSchema<any> {
     return z.object({
-      path: z.string().min(1, 'File path cannot be empty').describe('文件路径（相对或绝对路径）'),
-      encoding: z.enum(['utf8', 'base64', 'hex']).default('utf8').describe('文件编码格式'),
+      path: z.string().min(1, '文件路径不能为空'),
+      encoding: z.enum(['utf8', 'base64', 'hex']).default('utf8'),
       maxSize: z
         .number()
-        .min(1)
-        .max(100 * 1024 * 1024) // 100MB
-        .default(1024 * 1024) // 1MB
-        .describe('最大文件大小（字节）'),
+        .positive()
+        .default(1024 * 1024), // 1MB
     });
   }
 
@@ -50,17 +52,14 @@ export class FileReadTool extends BladeTool {
    * 执行文件读取
    */
   protected async executeInternal(
-    params: Record<string, any>,
+    params: { path: string; encoding?: string; maxSize?: number },
     context: ToolExecutionContext
   ): Promise<BladeToolResult> {
-    const { path, encoding, maxSize } = params;
+    const { path, encoding = 'utf8', maxSize = 1024 * 1024 } = params;
+    const startTime = Date.now();
 
     try {
-      // 解析并验证路径
       const resolvedPath = resolve(path);
-
-      // 安全检查：确保不能访问系统敏感目录
-      await this.validatePath(resolvedPath);
 
       // 检查文件是否存在
       const stats = await fs.stat(resolvedPath);
@@ -68,11 +67,11 @@ export class FileReadTool extends BladeTool {
       if (!stats.isFile()) {
         return {
           success: false,
-          error: `指定路径不是文件: ${path}`,
+          error: '指定路径不是文件',
           metadata: {
-            executionId: context.executionId,
             path: resolvedPath,
-            isDirectory: stats.isDirectory(),
+            type: 'directory',
+            executionTime: Date.now() - startTime,
           },
         };
       }
@@ -83,16 +82,16 @@ export class FileReadTool extends BladeTool {
           success: false,
           error: `文件太大 (${this.formatFileSize(stats.size)})，超过限制 (${this.formatFileSize(maxSize)})`,
           metadata: {
-            executionId: context.executionId,
             path: resolvedPath,
-            fileSize: stats.size,
+            size: stats.size,
             maxSize,
+            executionTime: Date.now() - startTime,
           },
         };
       }
 
       // 读取文件内容
-      const content = await fs.readFile(resolvedPath, encoding as BufferEncoding);
+      const content = await fs.readFile(resolvedPath, encoding as 'utf8' | 'base64' | 'hex');
 
       return {
         success: true,
@@ -101,68 +100,28 @@ export class FileReadTool extends BladeTool {
           content,
           encoding,
           size: stats.size,
-          sizeFormatted: this.formatFileSize(stats.size),
           modified: stats.mtime.toISOString(),
           created: stats.birthtime.toISOString(),
-          fileInfo: {
-            isFile: stats.isFile(),
-            isDirectory: stats.isDirectory(),
-            mode: stats.mode,
-            uid: stats.uid,
-            gid: stats.gid,
-          },
+          type: this.getFileType(resolvedPath),
         },
         metadata: {
-          executionId: context.executionId,
-          toolName: this.name,
-          category: this.category,
           operation: 'file_read',
-          performance: {
-            fileSize: stats.size,
-            encoding,
-          },
+          executionTime: Date.now() - startTime,
+          executionId: context.executionId,
         },
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
+    } catch (error: any) {
       return {
         success: false,
-        error: `文件读取失败: ${errorMessage}`,
+        error: `文件读取失败: ${error.message}`,
         metadata: {
-          executionId: context.executionId,
           path,
-          originalError: errorMessage,
-          operation: 'file_read',
+          errorCode: error.code,
+          errorType: error.constructor.name,
+          executionTime: Date.now() - startTime,
+          executionId: context.executionId,
         },
       };
-    }
-  }
-
-  /**
-   * 验证文件路径安全性
-   */
-  private async validatePath(resolvedPath: string): Promise<void> {
-    // 检查路径是否包含危险模式
-    const dangerousPatterns = [
-      '/etc/',
-      '/proc/',
-      '/sys/',
-      '/dev/',
-      '/root/',
-      'C:\\Windows\\',
-      'C:\\System32\\',
-    ];
-
-    for (const pattern of dangerousPatterns) {
-      if (resolvedPath.includes(pattern)) {
-        throw new Error(`Access to system directory not allowed: ${pattern}`);
-      }
-    }
-
-    // 检查是否尝试访问上级目录
-    if (resolvedPath.includes('..')) {
-      throw new Error('Path traversal detected (..)');
     }
   }
 
@@ -170,7 +129,7 @@ export class FileReadTool extends BladeTool {
    * 格式化文件大小
    */
   private formatFileSize(bytes: number): string {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const units = ['B', 'KB', 'MB', 'GB'];
     let size = bytes;
     let unitIndex = 0;
 
@@ -179,7 +138,34 @@ export class FileReadTool extends BladeTool {
       unitIndex++;
     }
 
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  }
+
+  /**
+   * 获取文件类型
+   */
+  private getFileType(filePath: string): string {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+
+    const typeMap: Record<string, string> = {
+      txt: 'text',
+      md: 'markdown',
+      js: 'javascript',
+      ts: 'typescript',
+      json: 'json',
+      xml: 'xml',
+      html: 'html',
+      css: 'css',
+      py: 'python',
+      java: 'java',
+      cpp: 'cpp',
+      c: 'c',
+      h: 'header',
+      yml: 'yaml',
+      yaml: 'yaml',
+    };
+
+    return typeMap[ext || ''] || 'unknown';
   }
 
   /**

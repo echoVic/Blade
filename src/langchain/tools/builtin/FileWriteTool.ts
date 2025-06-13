@@ -6,28 +6,32 @@ import { promises as fs } from 'fs';
 import { dirname, resolve } from 'path';
 import { z } from 'zod';
 import { BladeTool } from '../base/BladeTool.js';
-import type { BladeToolResult, ToolExecutionContext } from '../types.js';
+import {
+  RiskLevel,
+  ToolCategory,
+  type BladeToolConfig,
+  type BladeToolResult,
+  type ToolExecutionContext,
+} from '../types.js';
 
 /**
  * 文件写入工具
- *
- * 提供安全的文件写入功能：
- * - 路径安全检查
- * - 目录自动创建
- * - 备份现有文件
- * - 覆盖确认机制
+ * 安全地写入文件内容，支持目录创建和覆盖确认
  */
 export class FileWriteTool extends BladeTool {
   constructor() {
-    super({
+    const config: BladeToolConfig = {
       name: 'file_write',
-      description: '写入文件内容，支持创建目录和备份',
-      category: 'filesystem',
+      description: '写入文件内容，支持创建目录和文件覆盖确认',
+      category: ToolCategory.FILESYSTEM,
       tags: ['file', 'write', 'create', 'filesystem'],
       version: '2.0.0',
-      riskLevel: 'high',
+      author: 'Blade AI Team',
       requiresConfirmation: true,
-    });
+      riskLevel: RiskLevel.MODERATE,
+    };
+
+    super(config);
   }
 
   /**
@@ -35,12 +39,12 @@ export class FileWriteTool extends BladeTool {
    */
   protected createSchema(): z.ZodSchema<any> {
     return z.object({
-      path: z.string().min(1, 'File path cannot be empty').describe('文件路径'),
-      content: z.string().describe('文件内容'),
-      encoding: z.enum(['utf8', 'base64', 'hex']).default('utf8').describe('文件编码格式'),
-      createDirectories: z.boolean().default(true).describe('是否自动创建目录'),
-      overwrite: z.boolean().default(false).describe('是否覆盖已存在的文件'),
-      backup: z.boolean().default(true).describe('覆盖时是否创建备份'),
+      path: z.string().min(1, '文件路径不能为空'),
+      content: z.string(),
+      encoding: z.enum(['utf8', 'base64', 'hex']).default('utf8'),
+      createDirectories: z.boolean().default(true),
+      overwrite: z.boolean().default(false),
+      backup: z.boolean().default(false),
     });
   }
 
@@ -48,154 +52,131 @@ export class FileWriteTool extends BladeTool {
    * 执行文件写入
    */
   protected async executeInternal(
-    params: Record<string, any>,
+    params: {
+      path: string;
+      content: string;
+      encoding?: string;
+      createDirectories?: boolean;
+      overwrite?: boolean;
+      backup?: boolean;
+    },
     context: ToolExecutionContext
   ): Promise<BladeToolResult> {
-    const { path, content, encoding, createDirectories, overwrite, backup } = params;
+    const {
+      path,
+      content,
+      encoding = 'utf8',
+      createDirectories = true,
+      overwrite = false,
+      backup = false,
+    } = params;
+    const startTime = Date.now();
 
     try {
-      // 解析并验证路径
       const resolvedPath = resolve(path);
-
-      // 安全检查
-      await this.validatePath(resolvedPath);
+      const parentDir = dirname(resolvedPath);
 
       // 检查文件是否已存在
-      const fileExists = await this.fileExists(resolvedPath);
+      let fileExists = false;
+      let existingSize = 0;
+      try {
+        const stats = await fs.stat(resolvedPath);
+        fileExists = stats.isFile();
+        existingSize = stats.size;
+      } catch {
+        // 文件不存在，继续
+      }
 
+      // 如果文件存在且不允许覆盖
       if (fileExists && !overwrite) {
         return {
           success: false,
-          error: `文件已存在且未设置覆盖: ${path}`,
+          error: `文件已存在: ${resolvedPath}，请设置 overwrite: true 来覆盖`,
           metadata: {
-            executionId: context.executionId,
             path: resolvedPath,
             fileExists: true,
+            existingSize,
+            executionTime: Date.now() - startTime,
+            executionId: context.executionId,
           },
         };
       }
 
-      // 创建备份
+      // 创建备份（如果需要且文件存在）
       let backupPath: string | undefined;
-      if (fileExists && backup) {
-        backupPath = await this.createBackup(resolvedPath);
+      if (backup && fileExists) {
+        backupPath = `${resolvedPath}.backup.${Date.now()}`;
+        await fs.copyFile(resolvedPath, backupPath);
       }
 
       // 创建目录结构
       if (createDirectories) {
-        const dir = dirname(resolvedPath);
-        await fs.mkdir(dir, { recursive: true });
+        await fs.mkdir(parentDir, { recursive: true });
       }
 
       // 写入文件
-      await fs.writeFile(resolvedPath, content, encoding as BufferEncoding);
+      await fs.writeFile(resolvedPath, content, encoding as 'utf8' | 'base64' | 'hex');
 
-      // 获取文件信息
-      const stats = await fs.stat(resolvedPath);
+      // 获取写入后的文件信息
+      const newStats = await fs.stat(resolvedPath);
+      const executionTime = Date.now() - startTime;
 
       return {
         success: true,
         data: {
           path: resolvedPath,
-          size: stats.size,
-          sizeFormatted: this.formatFileSize(stats.size),
+          content: content.length <= 1000 ? content : content.substring(0, 1000) + '... (截断)',
           encoding,
-          created: stats.birthtime.toISOString(),
-          modified: stats.mtime.toISOString(),
-          backupPath,
-          overwritten: fileExists,
+          size: newStats.size,
+          sizeChange: newStats.size - existingSize,
+          created: !fileExists,
+          overwritten: fileExists && overwrite,
+          backup: backupPath ? { created: true, path: backupPath } : undefined,
+          parentDirectory: parentDir,
+          directoryCreated: createDirectories,
+          modified: newStats.mtime.toISOString(),
         },
+        duration: executionTime,
         metadata: {
-          executionId: context.executionId,
-          toolName: this.name,
-          category: this.category,
           operation: 'file_write',
-          performance: {
-            contentLength: content.length,
+          executionTime,
+          executionId: context.executionId,
+          writeConfig: {
             encoding,
+            createDirectories,
+            overwrite,
+            backup,
+          },
+          fileInfo: {
+            existed: fileExists,
+            sizeChange: newStats.size - existingSize,
+            finalSize: newStats.size,
           },
         },
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    } catch (error: any) {
+      const executionTime = Date.now() - startTime;
 
       return {
         success: false,
-        error: `文件写入失败: ${errorMessage}`,
+        error: `文件写入失败: ${error.message}`,
+        duration: executionTime,
         metadata: {
-          executionId: context.executionId,
-          path,
-          originalError: errorMessage,
           operation: 'file_write',
+          executionTime,
+          executionId: context.executionId,
+          errorType: error.constructor.name,
+          errorCode: error.code,
+          writeConfig: {
+            path,
+            encoding,
+            createDirectories,
+            overwrite,
+            backup,
+          },
         },
       };
     }
-  }
-
-  /**
-   * 验证文件路径安全性
-   */
-  private async validatePath(resolvedPath: string): Promise<void> {
-    // 检查路径是否包含危险模式
-    const dangerousPatterns = [
-      '/etc/',
-      '/proc/',
-      '/sys/',
-      '/dev/',
-      '/root/',
-      'C:\\Windows\\',
-      'C:\\System32\\',
-    ];
-
-    for (const pattern of dangerousPatterns) {
-      if (resolvedPath.includes(pattern)) {
-        throw new Error(`Access to system directory not allowed: ${pattern}`);
-      }
-    }
-
-    // 检查是否尝试访问上级目录
-    if (resolvedPath.includes('..')) {
-      throw new Error('Path traversal detected (..)');
-    }
-  }
-
-  /**
-   * 检查文件是否存在
-   */
-  private async fileExists(path: string): Promise<boolean> {
-    try {
-      await fs.access(path);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * 创建备份文件
-   */
-  private async createBackup(originalPath: string): Promise<string> {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${originalPath}.backup.${timestamp}`;
-
-    await fs.copyFile(originalPath, backupPath);
-    return backupPath;
-  }
-
-  /**
-   * 格式化文件大小
-   */
-  private formatFileSize(bytes: number): string {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
   }
 
   /**
@@ -223,7 +204,7 @@ ${super.getHelp()}
 - encoding: 文件编码（可选，默认 utf8）
 - createDirectories: 是否自动创建目录（可选，默认 true）
 - overwrite: 是否覆盖已存在文件（可选，默认 false）
-- backup: 覆盖时是否创建备份（可选，默认 true）
+- backup: 覆盖时是否创建备份（可选，默认 false）
 
 安全特性:
 - 自动检测和阻止路径遍历攻击

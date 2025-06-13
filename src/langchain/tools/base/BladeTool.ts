@@ -63,10 +63,13 @@ export abstract class BladeTool extends Tool {
   }
 
   /**
-   * LangChain 工具执行方法
-   * 包装我们的 executeInternal 方法
+   * 直接执行方法
+   * 提供类型安全的参数接口
    */
-  async _call(arg: string): Promise<string> {
+  async execute(
+    params: Record<string, any>,
+    context?: Partial<ToolExecutionContext>
+  ): Promise<BladeToolResult> {
     const startTime = Date.now();
     let executionId: string;
 
@@ -74,26 +77,51 @@ export abstract class BladeTool extends Tool {
       // 生成执行ID
       executionId = this.generateExecutionId();
 
-      // 解析参数
-      const params = this.parseArguments(arg);
-
       // 验证参数
-      await this.validateParameters(params);
+      const validatedParams = await this.validateAndParseParameters(params);
 
       // 创建执行上下文
-      const context: ToolExecutionContext = {
+      const fullContext: ToolExecutionContext = {
         executionId,
         timestamp: startTime,
         category: this.category,
         requiresConfirmation: this.requiresConfirmation,
+        ...context,
       };
 
       // 执行工具逻辑
-      const result = await this.executeInternal(params, context);
+      const result = await this.executeInternal(validatedParams, fullContext);
 
       // 计算执行时间
       const duration = Date.now() - startTime;
       result.duration = duration;
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        duration,
+        metadata: {
+          executionId: executionId!,
+          toolName: this.name,
+        },
+      };
+    }
+  }
+
+  /**
+   * LangChain 工具执行方法
+   * 包装我们的 executeInternal 方法
+   */
+  async _call(arg: string): Promise<string> {
+    try {
+      // 解析参数
+      const params = this.parseArguments(arg);
+
+      // 执行工具
+      const result = await this.execute(params);
 
       // 返回结果
       if (result.success) {
@@ -102,13 +130,11 @@ export abstract class BladeTool extends Tool {
         return this.formatErrorResult(result);
       }
     } catch (error) {
-      const duration = Date.now() - startTime;
       const errorResult: BladeToolResult = {
         success: false,
         error: error instanceof Error ? error.message : String(error),
-        duration,
+        duration: 0,
         metadata: {
-          executionId: executionId!,
           toolName: this.name,
         },
       };
@@ -125,6 +151,30 @@ export abstract class BladeTool extends Tool {
     params: Record<string, any>,
     context: ToolExecutionContext
   ): Promise<BladeToolResult>;
+
+  /**
+   * 创建参数验证模式
+   * 子类需要实现此方法
+   */
+  protected abstract createSchema(): z.ZodSchema<any>;
+
+  /**
+   * 验证和解析参数
+   */
+  protected async validateAndParseParameters(
+    params: Record<string, any>
+  ): Promise<Record<string, any>> {
+    try {
+      const schema = this.createSchema();
+      return schema.parse(params);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issues = error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
+        throw new Error(`参数验证失败: ${issues.join(', ')}`);
+      }
+      throw error;
+    }
+  }
 
   /**
    * 解析参数
@@ -198,11 +248,11 @@ export abstract class BladeTool extends Tool {
    * 检查工具是否支持某个功能
    */
   public supportsFeature(feature: string): boolean {
-    return this.tags.includes(feature) || this.category === feature;
+    return this.tags.includes(feature);
   }
 
   /**
-   * 获取工具风险级别
+   * 获取风险级别
    */
   public getRiskLevel(): RiskLevel {
     return this.riskLevel;
@@ -216,34 +266,16 @@ export abstract class BladeTool extends Tool {
   }
 
   /**
-   * 创建 Zod 模式（用于参数验证）
-   * 子类可以重写此方法
-   */
-  protected createSchema(): z.ZodSchema<any> {
-    return z.object({
-      input: z.string().optional(),
-    });
-  }
-
-  /**
-   * 获取工具使用示例
+   * 获取工具示例
    */
   public getExamples(): string[] {
-    return [`使用 ${this.name} 工具的基本示例`];
+    return [];
   }
 
   /**
    * 获取工具帮助信息
    */
   public getHelp(): string {
-    return `
-工具名称: ${this.name}
-描述: ${this.description}
-分类: ${this.category}
-版本: ${this.version}
-风险级别: ${this.riskLevel}
-需要确认: ${this.requiresConfirmation ? '是' : '否'}
-标签: ${this.tags.join(', ')}
-    `.trim();
+    return `${this.name}: ${this.description}`;
   }
 }

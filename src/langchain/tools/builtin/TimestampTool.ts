@@ -4,28 +4,32 @@
 
 import { z } from 'zod';
 import { BladeTool } from '../base/BladeTool.js';
-import type { BladeToolResult, ToolExecutionContext } from '../types.js';
+import {
+  RiskLevel,
+  ToolCategory,
+  type BladeToolConfig,
+  type BladeToolResult,
+  type ToolExecutionContext,
+} from '../types.js';
 
 /**
  * 时间戳工具
- *
- * 提供时间相关的实用功能：
- * - 获取当前时间戳
- * - 时间格式转换
- * - 时区处理
- * - 时间计算
+ * 处理时间相关操作，包括时间戳生成、解析和格式化
  */
 export class TimestampTool extends BladeTool {
   constructor() {
-    super({
+    const config: BladeToolConfig = {
       name: 'timestamp',
-      description: '时间戳工具，支持时间获取、转换和计算',
-      category: 'utility',
-      tags: ['time', 'timestamp', 'date', 'utility'],
+      description: '处理时间相关操作，支持时间戳生成、解析和格式化',
+      category: ToolCategory.UTILITY,
+      tags: ['time', 'timestamp', 'date', 'format', 'utility'],
       version: '2.0.0',
-      riskLevel: 'safe',
+      author: 'Blade AI Team',
       requiresConfirmation: false,
-    });
+      riskLevel: RiskLevel.SAFE,
+    };
+
+    super(config);
   }
 
   /**
@@ -33,30 +37,16 @@ export class TimestampTool extends BladeTool {
    */
   protected createSchema(): z.ZodSchema<any> {
     return z.object({
-      action: z
-        .enum(['current', 'format', 'parse', 'calculate'])
-        .default('current')
-        .describe('操作类型'),
-      timestamp: z.number().optional().describe('时间戳（毫秒）'),
-      format: z.string().optional().describe('时间格式'),
-      timezone: z.string().optional().describe('时区'),
-      calculation: z
-        .object({
-          operation: z.enum(['add', 'subtract']),
-          amount: z.number(),
-          unit: z.enum([
-            'milliseconds',
-            'seconds',
-            'minutes',
-            'hours',
-            'days',
-            'weeks',
-            'months',
-            'years',
-          ]),
-        })
-        .optional()
-        .describe('时间计算'),
+      operation: z.enum(['now', 'parse', 'format', 'add', 'subtract', 'diff']).default('now'),
+      input: z.string().optional(),
+      format: z.enum(['timestamp', 'iso', 'local', 'utc', 'custom']).default('timestamp'),
+      customFormat: z.string().optional(),
+      timezone: z.string().optional(),
+      amount: z.number().optional(),
+      unit: z
+        .enum(['milliseconds', 'seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years'])
+        .optional(),
+      compareWith: z.string().optional(),
     });
   }
 
@@ -64,272 +54,356 @@ export class TimestampTool extends BladeTool {
    * 执行时间戳操作
    */
   protected async executeInternal(
-    params: Record<string, any>,
+    params: {
+      operation?: string;
+      input?: string;
+      format?: string;
+      customFormat?: string;
+      timezone?: string;
+      amount?: number;
+      unit?: string;
+      compareWith?: string;
+    },
     context: ToolExecutionContext
   ): Promise<BladeToolResult> {
-    const { action, timestamp, format, timezone, calculation } = params;
+    const {
+      operation = 'now',
+      input,
+      format = 'timestamp',
+      customFormat,
+      timezone,
+      amount,
+      unit,
+      compareWith,
+    } = params;
+    const startTime = Date.now();
 
     try {
-      let result: any;
+      let date: Date;
+      let resultData: any = {};
 
-      switch (action) {
-        case 'current':
-          result = this.getCurrentTime(timezone);
-          break;
-
-        case 'format':
-          if (!timestamp) {
-            throw new Error('timestamp is required for format action');
-          }
-          result = this.formatTime(timestamp, format, timezone);
+      // 处理不同的操作类型
+      switch (operation) {
+        case 'now':
+          date = new Date();
           break;
 
         case 'parse':
-          if (!format) {
-            throw new Error('format is required for parse action');
+          if (!input) {
+            return {
+              success: false,
+              error: '解析操作需要提供 input 参数',
+              metadata: { operation, executionTime: Date.now() - startTime },
+            };
           }
-          result = this.parseTime(format, timezone);
+          date = this.parseDate(input);
+          if (!date || isNaN(date.getTime())) {
+            return {
+              success: false,
+              error: `无法解析的时间格式: ${input}`,
+              metadata: { operation, input, executionTime: Date.now() - startTime },
+            };
+          }
           break;
 
-        case 'calculate':
-          if (!timestamp || !calculation) {
-            throw new Error('timestamp and calculation are required for calculate action');
+        case 'format':
+          if (!input) {
+            return {
+              success: false,
+              error: '格式化操作需要提供 input 参数',
+              metadata: { operation, executionTime: Date.now() - startTime },
+            };
           }
-          result = this.calculateTime(timestamp, calculation);
+          date = this.parseDate(input);
+          if (!date || isNaN(date.getTime())) {
+            return {
+              success: false,
+              error: `无法解析的时间格式: ${input}`,
+              metadata: { operation, input, executionTime: Date.now() - startTime },
+            };
+          }
+          break;
+
+        case 'add':
+        case 'subtract':
+          if (!input || amount === undefined || !unit) {
+            return {
+              success: false,
+              error: `${operation} 操作需要提供 input、amount 和 unit 参数`,
+              metadata: { operation, executionTime: Date.now() - startTime },
+            };
+          }
+          date = this.parseDate(input);
+          if (!date || isNaN(date.getTime())) {
+            return {
+              success: false,
+              error: `无法解析的时间格式: ${input}`,
+              metadata: { operation, input, executionTime: Date.now() - startTime },
+            };
+          }
+          date = this.addTime(date, amount * (operation === 'subtract' ? -1 : 1), unit);
+          resultData.originalDate = this.parseDate(input);
+          resultData.operation = operation;
+          resultData.amount = amount;
+          resultData.unit = unit;
+          break;
+
+        case 'diff':
+          if (!input || !compareWith) {
+            return {
+              success: false,
+              error: 'diff 操作需要提供 input 和 compareWith 参数',
+              metadata: { operation, executionTime: Date.now() - startTime },
+            };
+          }
+          const date1 = this.parseDate(input);
+          const date2 = this.parseDate(compareWith);
+          if (!date1 || !date2 || isNaN(date1.getTime()) || isNaN(date2.getTime())) {
+            return {
+              success: false,
+              error: '无法解析其中一个时间格式',
+              metadata: { operation, input, compareWith, executionTime: Date.now() - startTime },
+            };
+          }
+
+          const diffMs = Math.abs(date1.getTime() - date2.getTime());
+          resultData = this.calculateTimeDifference(date1, date2, diffMs);
+          date = date1; // 使用第一个日期作为主要结果
           break;
 
         default:
-          throw new Error(`Unknown action: ${action}`);
+          return {
+            success: false,
+            error: `不支持的操作: ${operation}`,
+            metadata: { operation, executionTime: Date.now() - startTime },
+          };
       }
+
+      // 格式化输出
+      const formattedResult = this.formatDate(date, format, customFormat, timezone);
+      const executionTime = Date.now() - startTime;
 
       return {
         success: true,
-        data: result,
+        data: {
+          operation,
+          input: input || 'current time',
+          result: formattedResult,
+          formats: {
+            timestamp: date.getTime(),
+            iso: date.toISOString(),
+            local: date.toLocaleString(),
+            utc: date.toUTCString(),
+            unix: Math.floor(date.getTime() / 1000),
+          },
+          metadata: {
+            timezone: timezone || 'local',
+            weekday: date.toLocaleDateString('zh-CN', { weekday: 'long' }),
+            isWeekend: [0, 6].includes(date.getDay()),
+            dayOfYear: this.getDayOfYear(date),
+            weekOfYear: this.getWeekOfYear(date),
+          },
+          ...resultData,
+        },
+        duration: executionTime,
         metadata: {
+          operation: 'timestamp',
+          executionTime,
           executionId: context.executionId,
-          toolName: this.name,
-          category: this.category,
-          operation: `timestamp_${action}`,
-          performance: {
-            action,
-            timezone: timezone || 'UTC',
+          timeConfig: {
+            operation,
+            format,
+            timezone,
           },
         },
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    } catch (error: any) {
+      const executionTime = Date.now() - startTime;
 
       return {
         success: false,
-        error: `时间戳操作失败: ${errorMessage}`,
+        error: `时间处理失败: ${error.message}`,
+        duration: executionTime,
         metadata: {
+          operation: 'timestamp',
+          executionTime,
           executionId: context.executionId,
-          action,
-          originalError: errorMessage,
-          operation: `timestamp_${action}`,
+          errorType: error.constructor.name,
+          timeConfig: {
+            operation,
+            input,
+            format,
+          },
         },
       };
     }
   }
 
   /**
-   * 获取当前时间
+   * 解析日期字符串
    */
-  private getCurrentTime(timezone?: string): any {
-    const now = new Date();
-    const timestamp = now.getTime();
+  private parseDate(input: string): Date {
+    // 尝试各种解析方式
+    const timestamp = Number(input);
 
-    const result: any = {
-      timestamp,
-      timestampSeconds: Math.floor(timestamp / 1000),
-      iso: now.toISOString(),
-      utc: now.toUTCString(),
-      local: now.toString(),
-    };
-
-    // 添加时区信息
-    if (timezone) {
-      try {
-        result.timezone = {
-          name: timezone,
-          formatted: now.toLocaleString('en-US', { timeZone: timezone }),
-          offset: this.getTimezoneOffset(now, timezone),
-        };
-      } catch (error) {
-        result.timezoneError = `Invalid timezone: ${timezone}`;
+    // 如果是纯数字，尝试作为时间戳解析
+    if (!isNaN(timestamp)) {
+      // 判断是秒级还是毫秒级时间戳
+      if (timestamp < 10000000000) {
+        return new Date(timestamp * 1000); // 秒级时间戳
+      } else {
+        return new Date(timestamp); // 毫秒级时间戳
       }
     }
 
-    return result;
+    // 尝试直接解析
+    return new Date(input);
   }
 
   /**
-   * 格式化时间
+   * 格式化日期
    */
-  private formatTime(timestamp: number, format?: string, timezone?: string): any {
-    const date = new Date(timestamp);
-
-    const result: any = {
-      timestamp,
-      iso: date.toISOString(),
-      utc: date.toUTCString(),
-      local: date.toString(),
-    };
-
-    // 自定义格式
-    if (format) {
-      result.custom = this.customFormat(date, format);
-    }
-
-    // 时区格式
-    if (timezone) {
-      try {
-        result.timezone = {
-          name: timezone,
-          formatted: date.toLocaleString('en-US', { timeZone: timezone }),
-          offset: this.getTimezoneOffset(date, timezone),
-        };
-      } catch (error) {
-        result.timezoneError = `Invalid timezone: ${timezone}`;
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * 解析时间字符串
-   */
-  private parseTime(timeString: string, timezone?: string): any {
-    let date: Date;
-
-    try {
-      date = new Date(timeString);
-
-      if (isNaN(date.getTime())) {
-        throw new Error('Invalid date string');
-      }
-    } catch (error) {
-      throw new Error(`Failed to parse time string: ${timeString}`);
-    }
-
-    return this.formatTime(date.getTime(), undefined, timezone);
-  }
-
-  /**
-   * 时间计算
-   */
-  private calculateTime(timestamp: number, calculation: any): any {
-    const { operation, amount, unit } = calculation;
-    const date = new Date(timestamp);
-
-    let milliseconds = 0;
-
-    switch (unit) {
-      case 'milliseconds':
-        milliseconds = amount;
-        break;
-      case 'seconds':
-        milliseconds = amount * 1000;
-        break;
-      case 'minutes':
-        milliseconds = amount * 60 * 1000;
-        break;
-      case 'hours':
-        milliseconds = amount * 60 * 60 * 1000;
-        break;
-      case 'days':
-        milliseconds = amount * 24 * 60 * 60 * 1000;
-        break;
-      case 'weeks':
-        milliseconds = amount * 7 * 24 * 60 * 60 * 1000;
-        break;
-      case 'months':
-        // 近似计算（30天）
-        milliseconds = amount * 30 * 24 * 60 * 60 * 1000;
-        break;
-      case 'years':
-        // 近似计算（365天）
-        milliseconds = amount * 365 * 24 * 60 * 60 * 1000;
-        break;
+  private formatDate(date: Date, format: string, customFormat?: string, timezone?: string): any {
+    switch (format) {
+      case 'timestamp':
+        return date.getTime();
+      case 'iso':
+        return date.toISOString();
+      case 'local':
+        return timezone
+          ? date.toLocaleString('zh-CN', { timeZone: timezone })
+          : date.toLocaleString();
+      case 'utc':
+        return date.toUTCString();
+      case 'custom':
+        return customFormat ? this.applyCustomFormat(date, customFormat) : date.toISOString();
       default:
-        throw new Error(`Unsupported unit: ${unit}`);
+        return date.getTime();
     }
-
-    const newTimestamp = operation === 'add' ? timestamp + milliseconds : timestamp - milliseconds;
-
-    return {
-      original: {
-        timestamp,
-        formatted: new Date(timestamp).toISOString(),
-      },
-      calculation: {
-        operation,
-        amount,
-        unit,
-        milliseconds,
-      },
-      result: {
-        timestamp: newTimestamp,
-        formatted: new Date(newTimestamp).toISOString(),
-      },
-      difference: {
-        milliseconds: Math.abs(newTimestamp - timestamp),
-        seconds: Math.abs(newTimestamp - timestamp) / 1000,
-        minutes: Math.abs(newTimestamp - timestamp) / (1000 * 60),
-        hours: Math.abs(newTimestamp - timestamp) / (1000 * 60 * 60),
-        days: Math.abs(newTimestamp - timestamp) / (1000 * 60 * 60 * 24),
-      },
-    };
   }
 
   /**
-   * 自定义时间格式
+   * 应用自定义格式
    */
-  private customFormat(date: Date, format: string): string {
+  private applyCustomFormat(date: Date, format: string): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    const second = String(date.getSeconds()).padStart(2, '0');
 
     return format
-      .replace('YYYY', String(year))
-      .replace('MM', month)
-      .replace('DD', day)
-      .replace('HH', hours)
-      .replace('mm', minutes)
-      .replace('ss', seconds);
+      .replace(/YYYY/g, String(year))
+      .replace(/MM/g, month)
+      .replace(/DD/g, day)
+      .replace(/HH/g, hour)
+      .replace(/mm/g, minute)
+      .replace(/ss/g, second);
   }
 
   /**
-   * 获取时区偏移
+   * 添加时间
    */
-  private getTimezoneOffset(date: Date, timezone: string): string {
-    try {
-      const utc = date.getTime() + date.getTimezoneOffset() * 60000;
-      const targetTime = new Date(utc + this.getTimezoneOffsetMs(timezone));
-      const offset = (targetTime.getTime() - date.getTime()) / (1000 * 60 * 60);
-      return offset >= 0 ? `+${offset}` : String(offset);
-    } catch {
-      return 'unknown';
+  private addTime(date: Date, amount: number, unit: string): Date {
+    const newDate = new Date(date);
+
+    switch (unit) {
+      case 'milliseconds':
+        newDate.setMilliseconds(newDate.getMilliseconds() + amount);
+        break;
+      case 'seconds':
+        newDate.setSeconds(newDate.getSeconds() + amount);
+        break;
+      case 'minutes':
+        newDate.setMinutes(newDate.getMinutes() + amount);
+        break;
+      case 'hours':
+        newDate.setHours(newDate.getHours() + amount);
+        break;
+      case 'days':
+        newDate.setDate(newDate.getDate() + amount);
+        break;
+      case 'weeks':
+        newDate.setDate(newDate.getDate() + amount * 7);
+        break;
+      case 'months':
+        newDate.setMonth(newDate.getMonth() + amount);
+        break;
+      case 'years':
+        newDate.setFullYear(newDate.getFullYear() + amount);
+        break;
     }
+
+    return newDate;
   }
 
   /**
-   * 获取时区偏移毫秒数
+   * 计算时间差
    */
-  private getTimezoneOffsetMs(timezone: string): number {
-    // 简化实现，实际应该使用更精确的时区库
-    const offsetMap: Record<string, number> = {
-      UTC: 0,
-      'Asia/Shanghai': 8 * 60 * 60 * 1000,
-      'America/New_York': -5 * 60 * 60 * 1000,
-      'Europe/London': 0,
-    };
+  private calculateTimeDifference(date1: Date, date2: Date, diffMs: number): any {
+    const seconds = Math.floor(diffMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    const weeks = Math.floor(days / 7);
+    const months = Math.floor(days / 30.44); // 平均天数
+    const years = Math.floor(days / 365.25); // 平均天数
 
-    return offsetMap[timezone] || 0;
+    return {
+      date1: date1.toISOString(),
+      date2: date2.toISOString(),
+      difference: {
+        milliseconds: diffMs,
+        seconds,
+        minutes,
+        hours,
+        days,
+        weeks,
+        months,
+        years,
+      },
+      humanReadable: this.getHumanReadableDiff(diffMs),
+      isDate1Later: date1.getTime() > date2.getTime(),
+    };
+  }
+
+  /**
+   * 获取人类可读的时间差
+   */
+  private getHumanReadableDiff(diffMs: number): string {
+    const seconds = Math.floor(diffMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days} 天`;
+    if (hours > 0) return `${hours} 小时`;
+    if (minutes > 0) return `${minutes} 分钟`;
+    return `${seconds} 秒`;
+  }
+
+  /**
+   * 获取一年中的第几天
+   */
+  private getDayOfYear(date: Date): number {
+    const start = new Date(date.getFullYear(), 0, 0);
+    const diff = date.getTime() - start.getTime();
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
+  }
+
+  /**
+   * 获取一年中的第几周
+   */
+  private getWeekOfYear(date: Date): number {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    return (
+      1 +
+      Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+    );
   }
 
   /**

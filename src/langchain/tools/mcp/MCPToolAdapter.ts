@@ -34,7 +34,7 @@ export class MCPToolAdapter extends BladeTool {
       version: '1.0.0',
       author: 'MCP Adapter',
       requiresConfirmation: config.requiresConfirmation ?? true,
-      riskLevel: config.riskLevel || RiskLevel.MODERATE,
+      riskLevel: (config.riskLevel as any) || RiskLevel.MODERATE,
     };
 
     super(bladeConfig);
@@ -185,11 +185,13 @@ export class MCPToolAdapter extends BladeTool {
   private convertPropertyToZod(prop: any): z.ZodTypeAny {
     switch (prop.type) {
       case 'string':
-        let stringSchema = z.string();
+        let stringSchema: z.ZodTypeAny = z.string();
         if (prop.minLength) stringSchema = stringSchema.min(prop.minLength);
         if (prop.maxLength) stringSchema = stringSchema.max(prop.maxLength);
         if (prop.pattern) stringSchema = stringSchema.regex(new RegExp(prop.pattern));
-        if (prop.enum) stringSchema = z.enum(prop.enum);
+        if (prop.enum) {
+          return z.enum(prop.enum as any);
+        }
         return stringSchema;
 
       case 'number':
