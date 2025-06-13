@@ -20,3 +20,6 @@ export * from './prompts/index.js';
 
 // 导出链
 export * from './chains/index.js';
+
+// 导出扩展系统 (新增)
+export * from './extensions/index.js';
