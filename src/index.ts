@@ -1,4 +1,7 @@
+#!/usr/bin/env node
+
 import { Command } from 'commander';
+import 'dotenv/config';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -75,8 +78,8 @@ export type {
 // 类型定义
 export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
 
-// MCP 模块
 export * from './mcp/index.js';
+export * from './tools/index.js';
 
 const program = new Command();
 
