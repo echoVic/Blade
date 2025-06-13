@@ -53,7 +53,6 @@ export class BladeToolkit {
     if (enabled) {
       this.tools.set(tool.name, tool);
       this.initializeToolMetrics(tool.name);
-      console.log(`✅ 已注册工具: ${tool.name} (${tool.category})`);
     }
   }
 
@@ -299,7 +298,6 @@ export class BladeToolkit {
   public clear(): void {
     this.tools.clear();
     this.toolMetrics.clear();
-    console.log('🧹 已清空所有工具');
   }
 
   /**

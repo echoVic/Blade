@@ -95,10 +95,31 @@ export class QwenChatModel extends BaseChatModel {
    * 将 LangChain BaseMessage 转换为 OpenAI 格式
    */
   private convertMessagesToOpenAI(messages: BaseMessage[]) {
-    return messages.map(msg => ({
-      role: msg._getType() as 'system' | 'user' | 'assistant',
-      content: msg.content as string,
-    }));
+    return messages.map(msg => {
+      const messageType = msg._getType();
+      let role: 'system' | 'user' | 'assistant';
+
+      // 将 LangChain 的消息类型转换为 Qwen API 期望的角色
+      switch (messageType) {
+        case 'human':
+          role = 'user';
+          break;
+        case 'ai':
+          role = 'assistant';
+          break;
+        case 'system':
+          role = 'system';
+          break;
+        default:
+          role = 'user'; // 默认为 user
+          break;
+      }
+
+      return {
+        role,
+        content: msg.content as string,
+      };
+    });
   }
 
   /**
@@ -211,7 +232,7 @@ export class QwenChatModel extends BaseChatModel {
   async getModels(): Promise<string[]> {
     try {
       const models = await this.client.models.list();
-      return models.data.map(model => model.id);
+      return models.data.map((model: any) => model.id);
     } catch (error) {
       throw new Error(`Failed to get Qwen models: ${error}`);
     }

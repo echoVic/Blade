@@ -166,15 +166,51 @@ export class BladeAgent extends EventEmitter {
 
       // 3. 观察阶段 - 将结果加入消息历史
       const observation = step.observation;
+
+      // 调试信息
+      if (this.config.debug) {
+        console.log(`🔧 工具执行完成: ${action.tool} (${step.status})`);
+      }
+
       messages.push(new AIMessage(thought.content));
       messages.push(new HumanMessage(`工具执行结果: ${observation}`));
 
-      // 检查是否需要继续
-      if (step.status === 'completed' && this.shouldFinish(observation)) {
+      // 对于工具执行成功的单一任务，直接返回结果
+      if (step.status === 'completed') {
+        // 尝试提取工具结果中的关键信息
+        let finalOutput = observation;
+
+        try {
+          const parsedResult = JSON.parse(observation);
+          if (parsedResult.result !== undefined) {
+            finalOutput =
+              typeof parsedResult.result === 'string'
+                ? parsedResult.result
+                : JSON.stringify(parsedResult.result);
+          }
+        } catch {
+          // 如果不是JSON，使用原始观察结果
+        }
+
+        if (this.config.debug) {
+          console.log(`✅ 任务完成: ${action.tool}`);
+        }
+
         return {
-          returnValues: { output: observation },
+          returnValues: { output: `已成功执行 ${action.tool} 工具。结果: ${finalOutput}` },
           log: `完成任务，经过 ${iteration} 轮思考`,
           reason: 'success',
+          outputFormat: 'text',
+        };
+      } else if (step.status === 'failed') {
+        if (this.config.debug) {
+          console.log(`❌ 工具执行失败: ${action.tool} - ${step.error}`);
+        }
+
+        return {
+          returnValues: { output: `工具执行失败: ${step.error}` },
+          log: `工具执行失败，经过 ${iteration} 轮思考`,
+          reason: 'error',
           outputFormat: 'text',
         };
       }
@@ -336,24 +372,90 @@ ${availableTools}
       thinkingTime,
     };
 
-    // 尝试解析JSON格式的行动计划
+    // 尝试解析JSON格式的行动计划 - 支持嵌套结构
     try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const actionPlan = JSON.parse(jsonMatch[0]);
-        if (actionPlan.tool && actionPlan.params) {
-          thought.plannedAction = {
-            tool: actionPlan.tool,
-            params: actionPlan.params,
-            reason: actionPlan.reason || '未指定原因',
-          };
+      // 更好的JSON匹配策略：查找平衡的大括号
+      const jsonMatches = this.extractJSONFromText(content);
+
+      if (jsonMatches.length > 0) {
+        // 尝试解析第一个有效的工具调用
+        for (const jsonMatch of jsonMatches) {
+          try {
+            const actionPlan = JSON.parse(jsonMatch);
+            if (actionPlan.tool && actionPlan.params !== undefined) {
+              thought.plannedAction = {
+                tool: actionPlan.tool,
+                params: actionPlan.params,
+                reason: actionPlan.reason || '未指定原因',
+              };
+
+              if (this.config.debug) {
+                console.log(`🔧 解析到工具调用: ${actionPlan.tool}`);
+              }
+
+              break; // 找到第一个有效的就停止
+            }
+          } catch (parseError) {
+            // 继续尝试下一个 JSON
+            continue;
+          }
         }
       }
     } catch (error) {
-      // 解析失败，说明不需要使用工具
+      // 解析失败，不需要工具调用
     }
 
     return thought;
+  }
+
+  /**
+   * 从文本中提取平衡的JSON对象
+   */
+  private extractJSONFromText(text: string): string[] {
+    const jsonObjects: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"' && !escaped) {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      if (char === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const jsonStr = text.substring(start, i + 1);
+          jsonObjects.push(jsonStr);
+          start = -1;
+        }
+      }
+    }
+
+    return jsonObjects;
   }
 
   /**
@@ -361,7 +463,35 @@ ${availableTools}
    */
   private shouldFinish(observation: string): boolean {
     // 简单判断逻辑，可以扩展
-    const finishIndicators = ['任务完成', '已完成', '执行成功', 'success', '结果已生成'];
+    const finishIndicators = [
+      '任务完成',
+      '已完成',
+      '执行成功',
+      'success',
+      '结果已生成',
+      // 添加工具执行成功的更多指示器
+      'uuid:',
+      'timestamp:',
+      'generated',
+      'created',
+      'result:',
+      // 对于单个工具调用，如果有具体结果就认为完成
+      '{',
+      '"',
+      'true',
+      'false',
+    ];
+
+    // 如果观察结果不是错误消息且有实际内容，就认为任务完成
+    if (
+      observation &&
+      !observation.includes('失败') &&
+      !observation.includes('错误') &&
+      !observation.includes('error') &&
+      observation.trim().length > 10
+    ) {
+      return true;
+    }
 
     return finishIndicators.some(indicator =>
       observation.toLowerCase().includes(indicator.toLowerCase())

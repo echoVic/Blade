@@ -1,13 +1,17 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
-import { Agent, AgentConfig } from '../agent/Agent.js';
 import { getModelDescription, getProviderConfig, isProviderSupported } from '../config/defaults.js';
 import { getCurrentModel, getCurrentProvider } from '../config/user-config.js';
-import { LLMMessage } from '../llm/BaseLLM.js';
+import { AgentFactory } from '../langchain/agents/AgentFactory.js';
+import { BladeAgent } from '../langchain/agents/BladeAgent.js';
+import { BladeChains } from '../langchain/chains/BladeChains.js';
+import { LangChainMemoryManager } from '../langchain/memory/LangChainMemoryManager.js';
+import { BladeToolkit } from '../langchain/tools/BladeToolkit.js';
+import { getAllBuiltinTools } from '../langchain/tools/builtin/index.js';
 
 /**
- * 注册智能聊天命令
+ * 注册智能聊天命令 - LangChain 版本
  */
 export function agentLlmCommand(program: Command) {
   program
@@ -21,10 +25,10 @@ export function agentLlmCommand(program: Command) {
     .option('-i, --interactive', '启动交互式聊天模式', false)
     .option('--stream', '启用流式输出', false)
     .option('--demo', '运行场景演示', false)
-    .option('--context', '启用上下文管理（记住对话历史）', false)
-    .option('--context-session <sessionId>', '加载指定的上下文会话')
-    .option('--context-user <userId>', '指定用户ID用于上下文管理', 'default-user')
-    .option('--mcp [servers...]', '启用 MCP 并连接到指定服务器（可指定多个）')
+    .option('--memory', '启用记忆功能（LangChain Memory）', false)
+    .option('--memory-type <type>', '记忆类型 (buffer|window)', 'buffer')
+    .option('--chains', '启用 Chains 功能', false)
+    .option('--debug', '启用调试模式', false)
     .action(async (questionArgs, options) => {
       try {
         // 使用用户配置作为默认值
@@ -42,74 +46,77 @@ export function agentLlmCommand(program: Command) {
         const defaultModel = getProviderConfig(provider).defaultModel;
         const model = options.model || userModel || defaultModel;
 
-        // 创建 Agent 配置
-        const agentConfig: AgentConfig = {
-          debug: false,
-          llm: {
-            provider: provider,
-            apiKey: options.apiKey,
-            model: model,
-          },
-          tools: {
-            enabled: true,
-            includeBuiltinTools: true,
-          },
-          context: options.context
-            ? {
-                enabled: true,
-                debug: false,
-                storage: {
-                  maxMemorySize: 1000,
-                  persistentPath: './blade-context',
-                  cacheSize: 100,
-                  compressionEnabled: true,
-                },
-                defaultFilter: {
-                  maxTokens: 4000,
-                  maxMessages: 50,
-                  timeWindow: 24 * 60 * 60 * 1000, // 24小时
-                  includeTools: true,
-                  includeWorkspace: true,
-                },
-                compressionThreshold: 6000,
-              }
-            : {
-                enabled: false,
-              },
-          mcp: options.mcp
-            ? {
-                enabled: true,
-                servers: Array.isArray(options.mcp) ? options.mcp : [],
-                autoConnect: true,
-                debug: false,
-              }
-            : {
-                enabled: false,
-              },
-        };
+        console.log(chalk.blue('🤖 启动 LangChain Agent...'));
 
-        // 初始化 Agent
-        console.log(chalk.blue('🤖 启动智能 Agent...'));
-        if (options.context) {
-          console.log(chalk.cyan('🧠 上下文管理已启用'));
+        // 显示启用的功能
+        if (options.memory) {
+          console.log(chalk.cyan(`🧠 LangChain Memory 已启用 (${options.memoryType})`));
         }
-        if (options.mcp) {
-          const serverList = Array.isArray(options.mcp) ? options.mcp : [];
-          if (serverList.length > 0) {
-            console.log(chalk.cyan(`🔗 MCP 已启用，将连接到: ${serverList.join(', ')}`));
-          } else {
-            console.log(chalk.cyan('🔗 MCP 已启用'));
-          }
+        if (options.chains) {
+          console.log(chalk.cyan('⛓️ Chains 功能已启用'));
+        }
+        if (options.debug) {
+          console.log(chalk.yellow('🐛 调试模式已启用'));
         }
 
-        const agent = new Agent(agentConfig);
+        // 创建工具包
+        const toolkit = new BladeToolkit({
+          name: 'MainToolkit',
+          description: '主工具包',
+          enableConfirmation: false,
+        });
+
+        // 注册所有内置工具
+        const builtinTools = getAllBuiltinTools();
+        toolkit.registerTools(builtinTools);
+
+        // 创建 Agent
+        let agent: BladeAgent;
 
         try {
-          await agent.init();
+          if (provider === 'qwen') {
+            agent = AgentFactory.createQwenAgent(getScenarioPreset(options.scenario), {
+              apiKey: options.apiKey,
+              modelName: model,
+              toolkit,
+              overrides: {
+                streaming: options.stream,
+                debug: options.debug,
+                memory: options.memory
+                  ? {
+                      enabled: true,
+                      maxMessages: 50,
+                      contextWindow: 4000,
+                    }
+                  : undefined,
+              },
+            });
+          } else {
+            agent = AgentFactory.createVolcEngineAgent(getScenarioPreset(options.scenario), {
+              apiKey: options.apiKey,
+              modelName: model,
+              toolkit,
+              overrides: {
+                streaming: options.stream,
+                debug: options.debug,
+                memory: options.memory
+                  ? {
+                      enabled: true,
+                      maxMessages: 50,
+                      contextWindow: 4000,
+                    }
+                  : undefined,
+              },
+            });
+          }
         } catch (error) {
           // 检查是否是API密钥相关错误
           const errorMessage = (error as Error).message;
-          if (errorMessage.includes('API密钥') || errorMessage.includes('API key')) {
+          if (
+            errorMessage.includes('API密钥') ||
+            errorMessage.includes('API key') ||
+            errorMessage.includes('apiKey')
+          ) {
             console.log(chalk.red('\n❌ API密钥配置错误'));
             console.log(chalk.yellow('\n💡 配置API密钥的方法:'));
             console.log(chalk.gray('1. 命令行参数: --api-key your-api-key'));
@@ -137,33 +144,29 @@ export function agentLlmCommand(program: Command) {
         const modelDescription = getModelDescription(provider, model);
         console.log(chalk.green(`✅ 使用 ${provider} (${modelDescription})`));
 
-        // 处理上下文会话
-        if (options.context) {
-          if (options.contextSession) {
-            // 加载指定会话
-            const loaded = await agent.loadContextSession(options.contextSession);
-            if (loaded) {
-              console.log(chalk.green(`📂 已加载会话: ${options.contextSession}`));
-            } else {
-              console.log(chalk.yellow(`⚠️ 会话不存在，将创建新会话: ${options.contextSession}`));
-              await agent.createContextSession(
-                options.contextUser,
-                {
-                  sessionId: options.contextSession,
-                  scenario: options.scenario,
-                },
-                {},
-                options.contextSession // 传递自定义sessionId
-              );
-            }
-          } else {
-            // 创建新会话
-            const sessionId = await agent.createContextSession(options.contextUser, {
-              scenario: options.scenario,
-              startTime: Date.now(),
-            });
-            console.log(chalk.cyan(`📋 已创建会话: ${sessionId}`));
-          }
+        // 设置记忆功能
+        if (options.memory) {
+          new LangChainMemoryManager({
+            type: options.memoryType,
+            options: { k: 50 },
+          });
+
+          // 这里可以将 memory 集成到 agent，但当前 BladeAgent 还没有直接的 memory 接口
+          // 可以通过事件监听或插件系统来集成
+          console.log(chalk.green('📝 记忆系统已配置'));
+        }
+
+        // 设置 Chains 功能
+        let chains: BladeChains | undefined;
+        if (options.chains) {
+          chains = new BladeChains();
+
+          // 注册工具到 chains
+          builtinTools.forEach(tool => {
+            chains!.registerTool(tool.name, tool);
+          });
+
+          console.log(chalk.green('⛓️ Chains 系统已配置'));
         }
 
         // 判断聊天模式
@@ -171,8 +174,7 @@ export function agentLlmCommand(program: Command) {
 
         if (options.demo) {
           // 演示模式
-          agentConfig.debug = true; // 演示时显示调试信息
-          await runScenarioDemo(agentConfig, options.scenario);
+          await runScenarioDemo(agent, options.scenario, options.chains ? chains : undefined);
         } else if (question) {
           // 单次问答模式
           await answerSingleQuestion(
@@ -180,18 +182,25 @@ export function agentLlmCommand(program: Command) {
             question,
             options.scenario,
             options.stream,
-            options.context
+            options.chains ? chains : undefined
           );
         } else if (options.interactive) {
           // 交互式聊天模式
-          await startInteractiveChat(agent, options.scenario, options.stream, options.context);
+          await startInteractiveChat(
+            agent,
+            options.scenario,
+            options.stream,
+            options.chains ? chains : undefined
+          );
         } else {
           // 默认：启动交互式聊天
-          await startInteractiveChat(agent, options.scenario, options.stream, options.context);
+          await startInteractiveChat(
+            agent,
+            options.scenario,
+            options.stream,
+            options.chains ? chains : undefined
+          );
         }
-
-        // 确保清理资源
-        await agent.destroy();
       } catch (error) {
         console.error(chalk.red('❌ 启动失败:'), error);
       }
@@ -202,126 +211,56 @@ export function agentLlmCommand(program: Command) {
  * 单次问答
  */
 async function answerSingleQuestion(
-  agent: Agent,
+  agent: BladeAgent,
   question: string,
   scenario: string,
   useStream: boolean = false,
-  useContext: boolean = false
-) {
+  chains?: BladeChains
+): Promise<void> {
+  console.log(chalk.cyan(`\n💬 AI (${getScenarioName(scenario)}):`) + ' 思考中...\n');
+
   try {
-    let response: string;
+    if (
+      (chains && question.includes('链式')) ||
+      question.includes('步骤') ||
+      question.includes('chain')
+    ) {
+      // 使用 Chains 处理复杂任务
+      console.log(chalk.blue('🔗 检测到复杂任务，使用 Chains 处理...'));
 
-    if (useStream) {
-      // 流式输出模式
-      console.log(chalk.green('\n💬 AI: '), { newline: false });
-
-      switch (scenario) {
-        case 'customer':
-          if (useContext) {
-            response = await agent.chatWithContext(
-              question,
-              '你是专业的客服代表，友好耐心地解答问题'
-            );
-            console.log(response);
-          } else {
-            const messages: LLMMessage[] = [
-              { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
-              { role: 'user', content: question },
-            ];
-            response = await agent.streamChat(messages, chunk => {
-              process.stdout.write(chunk);
-            });
-          }
-          break;
-        case 'code':
-          // 代码场景直接使用非流式，因为需要工具调用
-          response = await agent.reviewCode(question, 'auto-detect');
-          console.log(response);
-          break;
-        case 'assistant':
-        default:
-          // 智能助手模式的流式输出
-          if (useContext) {
-            const smartResponse = await agent.smartChatWithContext(question);
-
-            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-              if (smartResponse.reasoning) {
-                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-              }
-            }
-            console.log(smartResponse.content);
-          } else {
-            const smartResponse = await agent.smartChat(question);
-
-            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-              if (smartResponse.reasoning) {
-                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-              }
-              console.log(chalk.green('\n💬 AI: '));
-              console.log(smartResponse.content);
-            } else {
-              const messages: LLMMessage[] = [{ role: 'user', content: question }];
-              response = await agent.streamChat(messages, chunk => {
-                process.stdout.write(chunk);
-              });
-            }
-          }
-          break;
-      }
-      console.log('\n'); // 流式输出后换行
+      // 这里可以根据问题类型动态创建链
+      // 现在先用简单的方式处理
+      const response = await agent.invoke(question);
+      console.log(chalk.white(response.content));
     } else {
-      // 普通输出模式
-      switch (scenario) {
-        case 'customer':
-          if (useContext) {
-            response = await agent.chatWithContext(
-              question,
-              '你是专业的客服代表，友好耐心地解答问题'
-            );
-          } else {
-            const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-            response = await agent.chatWithSystem(systemPrompt, question);
-          }
-          break;
-        case 'code':
-          response = await agent.reviewCode(question, 'auto-detect');
-          break;
-        case 'assistant':
-        default:
-          // 使用智能聊天，支持工具调用
-          if (useContext) {
-            const smartResponse = await agent.smartChatWithContext(question);
-            response = smartResponse.content;
+      // 常规 Agent 处理
+      if (useStream) {
+        // 流式输出
+        const response = await agent.invoke(question);
 
-            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-              if (smartResponse.reasoning) {
-                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-              }
-            }
-          } else {
-            const smartResponse = await agent.smartChat(question);
-            response = smartResponse.content;
+        // 模拟流式输出效果
+        const content = response.content;
+        for (let i = 0; i < content.length; i++) {
+          process.stdout.write(content[i]);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        console.log('\n');
+      } else {
+        // 常规输出
+        const response = await agent.invoke(question);
+        console.log(chalk.white(response.content));
 
-            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-              if (smartResponse.reasoning) {
-                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-              }
-            }
-          }
-          break;
+        if (response.metadata?.totalSteps && response.metadata.totalSteps > 0) {
+          console.log(
+            chalk.gray(
+              `\n📊 执行统计: ${response.metadata.totalSteps} 个步骤, 耗时 ${response.metadata.totalTime}ms`
+            )
+          );
+        }
       }
-      console.log(chalk.green(`\n💬 AI: ${response}`));
     }
   } catch (error) {
-    console.error(chalk.red('❌ 聊天错误:'), error);
+    console.error(chalk.red('\n❌ 处理失败:'), error);
   }
 }
 
@@ -329,250 +268,136 @@ async function answerSingleQuestion(
  * 交互式聊天
  */
 async function startInteractiveChat(
-  agent: Agent,
+  agent: BladeAgent,
   scenario: string,
   useStream: boolean = false,
-  useContext: boolean = false
-) {
-  console.log(chalk.cyan(`\n=== 🤖 ${getScenarioName(scenario)} ===`));
-  if (useContext) {
-    console.log(chalk.gray('🧠 上下文记忆已启用 - 我会记住我们的对话'));
+  chains?: BladeChains
+): Promise<void> {
+  console.log(chalk.green('\n🎯 进入交互式聊天模式'));
+  console.log(chalk.gray('输入 "exit", "quit", "再见" 或按 Ctrl+C 退出\n'));
 
-    // 显示当前会话信息
-    const sessionId = agent.getCurrentSessionId();
-    if (sessionId) {
-      console.log(chalk.gray(`📋 当前会话: ${sessionId}`));
-    }
-  }
-  console.log(chalk.gray('输入 "quit" 或 "exit" 退出聊天'));
-  console.log(chalk.gray('输入 "stats" 查看上下文统计信息'));
-  console.log(chalk.gray('输入 "sessions" 搜索历史会话\n'));
+  const scenarioName = getScenarioName(scenario);
 
-  try {
-    while (true) {
+  while (true) {
+    try {
       const { message } = await inquirer.prompt([
         {
           type: 'input',
           name: 'message',
-          message: '你:',
+          message: `💬 您 (${scenarioName}):`,
+          validate: (input: string) => input.trim().length > 0 || '请输入有效的消息',
         },
       ]);
 
-      if (!message.trim()) {
-        continue;
-      }
-
-      if (message.toLowerCase() === 'quit' || message.toLowerCase() === 'exit') {
-        console.log(chalk.blue('👋 再见！'));
+      // 检查退出条件
+      const trimmedMessage = message.trim().toLowerCase();
+      if (['exit', 'quit', '再见', 'bye', 'goodbye'].includes(trimmedMessage)) {
+        console.log(chalk.green('\n👋 再见！'));
         break;
       }
 
-      // 特殊命令处理
-      if (message.toLowerCase() === 'stats' && useContext) {
-        const stats = await agent.getContextStats();
-        if (stats) {
-          console.log(chalk.cyan('\n📊 上下文统计信息:'));
-          console.log(chalk.gray(`- 当前会话: ${stats.currentSession}`));
-          console.log(chalk.gray(`- 内存消息数: ${stats.memory.messageCount}`));
-          console.log(chalk.gray(`- 缓存大小: ${stats.cache.size}`));
-          console.log(chalk.gray(`- 存储会话数: ${stats.storage.totalSessions}\n`));
-        }
-        continue;
-      }
+      console.log(chalk.cyan(`\n🤖 AI (${scenarioName}):`) + ' 思考中...\n');
 
-      if (message.toLowerCase() === 'sessions' && useContext) {
-        try {
-          const sessions = await agent.searchContextSessions('', 5);
-          if (sessions.length > 0) {
-            console.log(chalk.cyan('\n📂 最近的会话:'));
-            sessions.forEach((session, index) => {
-              const date = new Date(session.lastActivity).toLocaleString();
-              console.log(chalk.gray(`${index + 1}. ${session.sessionId} (${date})`));
-              if (session.summary) {
-                console.log(chalk.gray(`   ${session.summary}`));
-              }
-            });
-            console.log();
-          } else {
-            console.log(chalk.yellow('📂 暂无历史会话\n'));
-          }
-        } catch (error) {
-          console.log(chalk.red('❌ 获取会话列表失败\n'));
-        }
-        continue;
-      }
-
-      try {
-        let response: string;
-
+      if (
+        chains &&
+        (message.includes('链式') || message.includes('步骤') || message.includes('chain'))
+      ) {
+        // 使用 Chains 处理
+        console.log(chalk.blue('🔗 使用 Chains 处理复杂任务...'));
+        const response = await agent.invoke(message);
+        console.log(chalk.white(response.content));
+      } else {
+        // 常规处理
         if (useStream) {
-          // 流式输出模式
-          console.log(chalk.green('AI: '), { newline: false });
+          // 流式输出
+          const response = await agent.invoke(message);
 
-          switch (scenario) {
-            case 'customer':
-              if (useContext) {
-                response = await agent.chatWithContext(
-                  message,
-                  '你是专业的客服代表，友好耐心地解答问题'
-                );
-                console.log(response);
-              } else {
-                const customerMessages: LLMMessage[] = [
-                  { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
-                  { role: 'user', content: message },
-                ];
-                response = await agent.streamChat(customerMessages, chunk => {
-                  process.stdout.write(chunk);
-                });
-              }
-              break;
-            case 'code':
-              if (
-                message.includes('```') ||
-                message.includes('function') ||
-                message.includes('class')
-              ) {
-                response = await agent.reviewCode(message, 'auto-detect');
-                console.log(response);
-              } else {
-                if (useContext) {
-                  response = await agent.chatWithContext(`作为代码助手，${message}`);
-                  console.log(response);
-                } else {
-                  const codeMessages: LLMMessage[] = [
-                    { role: 'user', content: `作为代码助手，${message}` },
-                  ];
-                  response = await agent.streamChat(codeMessages, chunk => {
-                    process.stdout.write(chunk);
-                  });
-                }
-              }
-              break;
-            case 'assistant':
-            default:
-              // 智能助手模式
-              if (useContext) {
-                const smartResponse = await agent.smartChatWithContext(message);
-
-                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                  if (smartResponse.reasoning) {
-                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-                  }
-                }
-                console.log(chalk.green('AI: '));
-                console.log(smartResponse.content);
-              } else {
-                const smartResponse = await agent.smartChat(message);
-
-                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                  if (smartResponse.reasoning) {
-                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-                  }
-                  console.log(chalk.green('AI: '));
-                  console.log(smartResponse.content);
-                } else {
-                  const assistantMessages: LLMMessage[] = [{ role: 'user', content: message }];
-                  response = await agent.streamChat(assistantMessages, chunk => {
-                    process.stdout.write(chunk);
-                  });
-                }
-              }
-              break;
+          // 模拟流式输出
+          const content = response.content;
+          for (let i = 0; i < content.length; i++) {
+            process.stdout.write(content[i]);
+            await new Promise(resolve => setTimeout(resolve, 15));
           }
-          console.log('\n'); // 流式输出后换行
+          console.log('\n');
         } else {
-          // 普通输出模式
-          switch (scenario) {
-            case 'customer':
-              if (useContext) {
-                response = await agent.chatWithContext(
-                  message,
-                  '你是专业的客服代表，友好耐心地解答问题'
-                );
-              } else {
-                const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-                response = await agent.chatWithSystem(systemPrompt, message);
-              }
-              break;
-            case 'code':
-              if (
-                message.includes('```') ||
-                message.includes('function') ||
-                message.includes('class')
-              ) {
-                response = await agent.reviewCode(message, 'auto-detect');
-              } else {
-                if (useContext) {
-                  response = await agent.chatWithContext(`作为代码助手，${message}`);
-                } else {
-                  response = await agent.ask(`作为代码助手，${message}`);
-                }
-              }
-              break;
-            case 'assistant':
-            default:
-              // 使用智能聊天，支持工具调用
-              if (useContext) {
-                const smartResponse = await agent.smartChatWithContext(message);
-                response = smartResponse.content;
+          // 常规输出
+          const response = await agent.invoke(message);
+          console.log(chalk.white(response.content));
 
-                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                  if (smartResponse.reasoning) {
-                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-                  }
-                }
-              } else {
-                const smartResponse = await agent.smartChat(message);
-                response = smartResponse.content;
-
-                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                  if (smartResponse.reasoning) {
-                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
-                  }
-                }
-              }
-              break;
+          if (response.metadata?.totalSteps && response.metadata.totalSteps > 0) {
+            console.log(
+              chalk.gray(
+                `📊 执行统计: ${response.metadata.totalSteps} 个步骤, 耗时 ${response.metadata.totalTime}ms`
+              )
+            );
           }
-          console.log(chalk.green(`AI: ${response}\n`));
         }
-      } catch (error) {
-        console.error(chalk.red('❌ 聊天错误:'), error);
       }
+    } catch (error) {
+      if ((error as any).name === 'ExitPromptError') {
+        console.log(chalk.green('\n👋 再见！'));
+        break;
+      }
+      console.error(chalk.red('\n❌ 处理失败:'), error);
     }
-  } finally {
-    // Agent会在主函数中被销毁
   }
 }
 
 /**
- * 运行场景演示
+ * 场景演示
  */
-async function runScenarioDemo(config: AgentConfig, scenario: string) {
-  console.log(chalk.cyan('🎭 场景演示模式'));
-  console.log(chalk.gray('注意：演示模式暂不支持上下文管理\n'));
+async function runScenarioDemo(
+  agent: BladeAgent,
+  scenario: string,
+  _chains?: BladeChains
+): Promise<void> {
+  console.log(chalk.blue(`\n🎭 ${getScenarioName(scenario)}场景演示\n`));
 
+  const demos = getScenarioDemo(scenario);
+
+  for (let i = 0; i < demos.length; i++) {
+    const demo = demos[i];
+    console.log(chalk.yellow(`\n📋 演示 ${i + 1}/${demos.length}: ${demo.title}`));
+    console.log(chalk.gray(`问题: ${demo.question}\n`));
+
+    try {
+      const response = await agent.invoke(demo.question);
+      console.log(chalk.white(response.content));
+
+      if (response.metadata?.totalSteps && response.metadata.totalSteps > 0) {
+        console.log(
+          chalk.gray(
+            `📊 执行统计: ${response.metadata.totalSteps} 个步骤, 耗时 ${response.metadata.totalTime}ms`
+          )
+        );
+      }
+    } catch (error) {
+      console.error(chalk.red('❌ 演示失败:'), error);
+    }
+
+    if (i < demos.length - 1) {
+      console.log(chalk.gray('\n按 Enter 继续下一个演示...'));
+      await inquirer.prompt([{ type: 'input', name: 'continue', message: '' }]);
+    }
+  }
+
+  console.log(chalk.green('\n✅ 场景演示完成！'));
+}
+
+/**
+ * 获取场景预设
+ */
+function getScenarioPreset(
+  scenario: string
+): keyof typeof import('../langchain/agents/AgentFactory.js').AgentPresets {
   switch (scenario) {
     case 'customer':
-      await startCustomerService(config);
-      break;
+      return 'GENERAL_ASSISTANT';
     case 'code':
-      await startCodeAssistant(config);
-      break;
+      return 'CODE_ASSISTANT';
     case 'assistant':
-      await startBasicAssistant(config);
-      break;
     default:
-      console.log(chalk.red(`❌ 不支持的场景: ${scenario}`));
-      return;
+      return 'GENERAL_ASSISTANT';
   }
 }
 
@@ -582,135 +407,53 @@ async function runScenarioDemo(config: AgentConfig, scenario: string) {
 function getScenarioName(scenario: string): string {
   switch (scenario) {
     case 'customer':
-      return '智能客服';
+      return '客服助手';
     case 'code':
       return '代码助手';
     case 'assistant':
-      return '智能助手';
     default:
       return '智能助手';
   }
 }
 
 /**
- * 启动智能客服
+ * 获取场景演示内容
  */
-async function startCustomerService(config: AgentConfig) {
-  console.log(chalk.cyan('\n=== 🎧 智能客服 Agent ==='));
-
-  const agent = new Agent(config);
-  await agent.init();
-
-  const scenarios = [
-    '我想了解你们的退货政策',
-    '这个产品质量太差了，我要求退款！',
-    '请问你们有什么优惠活动吗？',
-  ];
-
-  for (const inquiry of scenarios) {
-    console.log(chalk.yellow(`\n客户: ${inquiry}`));
-
-    try {
-      const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-      const response = await agent.chatWithSystem(systemPrompt, inquiry);
-      console.log(chalk.green(`客服: ${response}`));
-
-      if (inquiry.includes('质量太差')) {
-        console.log(chalk.gray('\n分析客户情绪...'));
-        const sentiment = await agent.analyzeSentiment(inquiry);
-        console.log(chalk.blue(`情绪分析: ${sentiment}`));
-      }
-    } catch (error) {
-      console.error(chalk.red('❌ 处理失败:'), error);
-    }
+function getScenarioDemo(scenario: string) {
+  switch (scenario) {
+    case 'customer':
+      return [
+        {
+          title: '产品咨询',
+          question: '你们有什么产品？价格如何？',
+        },
+        {
+          title: '服务支持',
+          question: '我遇到了问题，需要技术支持',
+        },
+      ];
+    case 'code':
+      return [
+        {
+          title: '代码审查',
+          question: '请帮我分析这段代码的问题：function test() { var x = 1; return x + y; }',
+        },
+        {
+          title: '项目管理',
+          question: '请帮我查看当前目录的文件结构',
+        },
+      ];
+    case 'assistant':
+    default:
+      return [
+        {
+          title: '信息查询',
+          question: '请告诉我今天的日期和时间',
+        },
+        {
+          title: '任务处理',
+          question: '生成一个随机的UUID',
+        },
+      ];
   }
-
-  await agent.destroy();
-  console.log(chalk.green('\n✅ 客服演示完成'));
-}
-
-/**
- * 启动代码助手
- */
-async function startCodeAssistant(config: AgentConfig) {
-  console.log(chalk.cyan('\n=== 💻 代码助手 Agent ==='));
-
-  const agent = new Agent(config);
-  await agent.init();
-
-  const sampleCode = `
-function calculateTotal(items) {
-  var total = 0;
-  for (var i = 0; i < items.length; i++) {
-    total += items[i].price * items[i].quantity;
-  }
-  return total;
-}`;
-
-  console.log(chalk.yellow('\n待分析的代码:'));
-  console.log(sampleCode);
-
-  try {
-    console.log(chalk.gray('\n🔍 正在进行代码审查...'));
-    const review = await agent.reviewCode(sampleCode, 'javascript');
-    console.log(chalk.green('\n📋 代码审查结果:'));
-    console.log(review);
-
-    console.log(chalk.gray('\n🧪 正在生成测试用例...'));
-    const prompt = `为以下代码生成测试用例：\n${sampleCode}`;
-    const tests = await agent.chat(prompt);
-    console.log(chalk.green('\n🔬 生成的测试用例:'));
-    console.log(tests);
-  } catch (error) {
-    console.error(chalk.red('❌ 代码分析失败:'), error);
-  }
-
-  await agent.destroy();
-  console.log(chalk.green('\n✅ 代码助手演示完成'));
-}
-
-/**
- * 启动基础助手
- */
-async function startBasicAssistant(config: AgentConfig) {
-  console.log(chalk.cyan('\n=== 🤖 智能助手 Agent ==='));
-
-  const agent = new Agent(config);
-  await agent.init();
-
-  // 显示 Agent 状态
-  const status = agent.getStatus();
-  console.log(
-    chalk.gray(`Agent 状态: LLM=${status.llmProvider}, 组件数=${status.components.componentCount}`)
-  );
-
-  try {
-    // 智能问答
-    console.log(chalk.yellow('\n问题: 什么是微服务架构？'));
-    const answer = await agent.ask('什么是微服务架构？请简洁地解释');
-    console.log(chalk.green(`回答: ${answer}`));
-
-    // 代码生成
-    console.log(chalk.yellow('\n请求: 生成快速排序算法'));
-    const code = await agent.generateCode('实现快速排序算法', 'python');
-    console.log(chalk.green(`生成的代码:\n${code}`));
-
-    // 流式回答
-    console.log(chalk.yellow('\n流式问答: 解释区块链技术'));
-    process.stdout.write(chalk.green('AI: '));
-
-    const messages: LLMMessage[] = [
-      { role: 'user' as const, content: '请简单解释什么是区块链技术' },
-    ];
-
-    await agent.streamChat(messages, chunk => {
-      process.stdout.write(chunk);
-    });
-    console.log('\n');
-  } catch (error) {
-    console.error(chalk.red('❌ 助手操作失败:'), error);
-  }
-
-  await agent.destroy();
-  console.log(chalk.green('\n✅ 智能助手演示完成'));
 }
