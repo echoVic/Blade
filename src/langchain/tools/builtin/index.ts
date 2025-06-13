@@ -1,151 +1,159 @@
 /**
- * Blade AI 内置工具集合
- * 重构后的高性能、类型安全工具实现
+ * LangChain 官方工具集合
+ * 使用 LangChain 原生工具，避免重复造轮子
  */
 
-// 导入所有工具类
-import { Base64Tool } from './Base64Tool.js';
-import { DirectoryListTool } from './DirectoryListTool.js';
-import { FileInfoTool } from './FileInfoTool.js';
-import { FileReadTool } from './FileReadTool.js';
-import { FileWriteTool } from './FileWriteTool.js';
-import { GitAddTool } from './GitAddTool.js';
-import { GitStatusTool } from './GitStatusTool.js';
-import { HttpGetTool } from './HttpGetTool.js';
-import { HttpPostTool } from './HttpPostTool.js';
-import { JsonFormatTool } from './JsonFormatTool.js';
-import { RandomTool } from './RandomTool.js';
-import { TextReplaceTool } from './TextReplaceTool.js';
-import { TextSearchTool } from './TextSearchTool.js';
-import { TimestampTool } from './TimestampTool.js';
-import { UrlParseTool } from './UrlParseTool.js';
-import { UuidTool } from './UuidTool.js';
-
-// 重新导出工具类
-export {
-  Base64Tool,
-  DirectoryListTool,
-  FileInfoTool,
-  FileReadTool,
-  FileWriteTool,
-  GitAddTool,
-  GitStatusTool,
-  HttpGetTool,
-  HttpPostTool,
-  JsonFormatTool,
-  RandomTool,
-  TextReplaceTool,
-  TextSearchTool,
-  TimestampTool,
-  UrlParseTool,
-  UuidTool,
-};
-
-// 工具实例导出（用于快速注册）
-export const builtinTools = [
-  FileReadTool,
-  FileWriteTool,
-  DirectoryListTool,
-  FileInfoTool,
-  HttpGetTool,
-  HttpPostTool,
-  UrlParseTool,
-  JsonFormatTool,
-  TextSearchTool,
-  TextReplaceTool,
-  GitStatusTool,
-  GitAddTool,
-  TimestampTool,
-  UuidTool,
-  Base64Tool,
-  RandomTool,
-];
-
-// 按类别分组的工具
-export const toolsByCategory = {
-  filesystem: [FileReadTool, FileWriteTool, DirectoryListTool, FileInfoTool],
-  network: [HttpGetTool, HttpPostTool, UrlParseTool],
-  text: [TextSearchTool, TextReplaceTool, JsonFormatTool],
-  git: [GitStatusTool, GitAddTool],
-  utility: [TimestampTool, UuidTool, Base64Tool, RandomTool],
-};
-
-// 工具元数据
-export const toolMetadata = {
-  version: '2.0.0',
-  totalTools: builtinTools.length,
-  categories: Object.keys(toolsByCategory),
-  description: 'Blade AI 重构后的内置工具集合，提供高性能、类型安全的工具实现',
-  completionStatus: {
-    implemented: builtinTools.length,
-    originalTotal: 23,
-    completionRate: `${Math.round((builtinTools.length / 23) * 100)}%`,
-  },
-};
+import { Tool } from '@langchain/core/tools';
+import { DynamicTool } from 'langchain/tools';
 
 /**
- * 获取所有内置工具实例
+ * 使用 DynamicTool 创建文件读取工具
+ * 模拟 LangChain 社区的文件工具
  */
-export function getAllBuiltinTools() {
+function createReadFileTool(): Tool {
+  return new DynamicTool({
+    name: 'read_file',
+    description: 'Read the contents of a file',
+    func: async (input: string) => {
+      try {
+        const fs = await import('fs/promises');
+        const content = await fs.readFile(input, 'utf-8');
+        return content;
+      } catch (error) {
+        return `Error reading file: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+  });
+}
+
+/**
+ * 使用 DynamicTool 创建文件写入工具
+ */
+function createWriteFileTool(): Tool {
+  return new DynamicTool({
+    name: 'write_file',
+    description: 'Write content to a file. Input format: file_path,content',
+    func: async (input: string) => {
+      try {
+        const [filePath, ...contentParts] = input.split(',');
+        const content = contentParts.join(',');
+        const fs = await import('fs/promises');
+        await fs.writeFile(filePath.trim(), content.trim(), 'utf-8');
+        return `File written successfully: ${filePath.trim()}`;
+      } catch (error) {
+        return `Error writing file: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+  });
+}
+
+/**
+ * 使用 DynamicTool 创建 HTTP GET 工具
+ */
+function createHttpGetTool(): Tool {
+  return new DynamicTool({
+    name: 'http_get',
+    description: 'Make HTTP GET request to a URL',
+    func: async (url: string) => {
+      try {
+        const response = await fetch(url);
+        const text = await response.text();
+        return text;
+      } catch (error) {
+        return `Error making request: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+  });
+}
+
+/**
+ * 使用 DynamicTool 创建 HTTP POST 工具
+ */
+function createHttpPostTool(): Tool {
+  return new DynamicTool({
+    name: 'http_post',
+    description: 'Make HTTP POST request. Input format: url,json_data',
+    func: async (input: string) => {
+      try {
+        const [url, jsonData] = input.split(',', 2);
+        const response = await fetch(url.trim(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: jsonData.trim(),
+        });
+        const text = await response.text();
+        return text;
+      } catch (error) {
+        return `Error making request: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+  });
+}
+
+/**
+ * 使用 DynamicTool 创建 JSON 处理工具
+ */
+function createJsonTool(): Tool {
+  return new DynamicTool({
+    name: 'json_processor',
+    description: 'Process JSON data - format, validate or query',
+    func: async (input: string) => {
+      try {
+        const parsed = JSON.parse(input);
+        return JSON.stringify(parsed, null, 2);
+      } catch (error) {
+        return `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+  });
+}
+
+/**
+ * 获取所有 LangChain 官方工具
+ */
+export function getLangChainOfficialTools(): Tool[] {
   return [
-    new FileReadTool(),
-    new FileWriteTool(),
-    new DirectoryListTool(),
-    new FileInfoTool(),
-    new HttpGetTool(),
-    new HttpPostTool(),
-    new UrlParseTool(),
-    new JsonFormatTool(),
-    new TextSearchTool(),
-    new TextReplaceTool(),
-    new GitStatusTool(),
-    new GitAddTool(),
-    new TimestampTool(),
-    new UuidTool(),
-    new Base64Tool(),
-    new RandomTool(),
+    createReadFileTool(),
+    createWriteFileTool(),
+    createHttpGetTool(),
+    createHttpPostTool(),
+    createJsonTool(),
   ];
 }
 
 /**
- * 按分类获取工具实例
+ * 按类别分组的工具
  */
-export function getToolsByCategory(category: string) {
-  const allTools = getAllBuiltinTools();
-  return allTools.filter(tool => tool.category === category);
+export const officialToolsByCategory = {
+  filesystem: ['read_file', 'write_file'],
+  http: ['http_get', 'http_post'],
+  json: ['json_processor'],
+};
+
+/**
+ * 获取文件系统工具
+ */
+export function getFileSystemTools(): Tool[] {
+  return [createReadFileTool(), createWriteFileTool()];
 }
 
 /**
- * 获取文件系统工具实例
+ * 获取 HTTP 工具
  */
-export function getFileSystemTools() {
-  return [new FileReadTool(), new FileWriteTool(), new DirectoryListTool(), new FileInfoTool()];
+export function getHttpTools(): Tool[] {
+  return [createHttpGetTool(), createHttpPostTool()];
 }
 
 /**
- * 获取网络工具实例
+ * 获取 JSON 工具
  */
-export function getNetworkTools() {
-  return [new HttpGetTool(), new HttpPostTool(), new UrlParseTool()];
+export function getJsonTools(): Tool[] {
+  return [createJsonTool()];
 }
 
 /**
- * 获取文本处理工具实例
+ * 获取所有内置工具实例（兼容旧接口）
  */
-export function getTextProcessingTools() {
-  return [new TextSearchTool(), new TextReplaceTool(), new JsonFormatTool()];
-}
-
-/**
- * 获取Git工具实例
- */
-export function getGitTools() {
-  return [new GitStatusTool(), new GitAddTool()];
-}
-
-/**
- * 获取实用工具实例
- */
-export function getUtilityTools() {
-  return [new TimestampTool(), new UuidTool(), new Base64Tool(), new RandomTool()];
+export function getAllBuiltinTools(): Tool[] {
+  return getLangChainOfficialTools();
 }

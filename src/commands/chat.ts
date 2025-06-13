@@ -8,7 +8,6 @@ import { BladeAgent } from '../langchain/agents/BladeAgent.js';
 import { LangChainMemoryManager } from '../langchain/memory/LangChainMemoryManager.js';
 import { MemoryType } from '../langchain/memory/types.js';
 import { BladeToolkit } from '../langchain/tools/BladeToolkit.js';
-import { getAllBuiltinTools } from '../langchain/tools/builtin/index.js';
 
 /**
  * 注册智能聊天命令 - LangChain 深度集成版本
@@ -72,15 +71,8 @@ export function chatCommand(program: Command) {
         }
 
         // 创建工具包
-        const toolkit = new BladeToolkit({
-          name: 'MainToolkit',
-          description: '主工具包',
-          enableConfirmation: false,
-        });
-
-        // 注册所有内置工具
-        const builtinTools = getAllBuiltinTools();
-        toolkit.registerTools(builtinTools);
+        const toolkit = new BladeToolkit();
+        // 工具在构造时已自动加载
 
         // 创建 LangChain Memory 管理器
         let memoryManager: LangChainMemoryManager | undefined;

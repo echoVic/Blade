@@ -6,7 +6,6 @@ import type { BaseLanguageModel } from '@langchain/core/language_models/base';
 import { QwenChatModel } from '../models/QwenChatModel.js';
 import { VolcEngineChatModel } from '../models/VolcEngineChatModel.js';
 import { BladeToolkit } from '../tools/BladeToolkit.js';
-import { getAllBuiltinTools } from '../tools/builtin/index.js';
 import { BladeAgent } from './BladeAgent.js';
 import type { BladeAgentConfig } from './types.js';
 
@@ -160,62 +159,31 @@ export class AgentFactory {
    * 创建默认工具包
    */
   static createDefaultToolkit(): BladeToolkit {
-    const toolkit = new BladeToolkit({
-      name: 'DefaultToolkit',
-      description: '默认工具包',
-      enableConfirmation: false,
-    });
-
-    // 注册所有内置工具
-    const builtinTools = getAllBuiltinTools();
-    toolkit.registerTools(builtinTools);
-
+    const toolkit = new BladeToolkit();
+    // 工具在构造时已自动加载
     return toolkit;
   }
 
   /**
    * 创建自定义工具包
    */
-  static createCustomToolkit(config: {
+  static createCustomToolkit(_config: {
     name: string;
     description?: string;
     enableConfirmation?: boolean;
     tools?: string[]; // 指定要包含的工具名称
   }): BladeToolkit {
-    const toolkit = new BladeToolkit({
-      name: config.name,
-      description: config.description || '自定义工具包',
-      enableConfirmation: config.enableConfirmation || false,
-    });
-
-    const allTools = getAllBuiltinTools();
-
-    if (config.tools) {
-      // 只注册指定的工具
-      const selectedTools = allTools.filter(tool => config.tools!.includes(tool.name));
-      toolkit.registerTools(selectedTools);
-    } else {
-      // 注册所有工具
-      toolkit.registerTools(allTools);
-    }
-
+    const toolkit = new BladeToolkit();
+    // 工具在构造时已自动加载，配置参数暂时忽略
     return toolkit;
   }
 
   /**
    * 创建专用工具包
    */
-  static createSpecializedToolkit(type: 'filesystem' | 'network' | 'utility'): BladeToolkit {
-    const toolkit = new BladeToolkit({
-      name: `${type}Toolkit`,
-      description: `${type} 专用工具包`,
-      enableConfirmation: type === 'filesystem', // 文件系统工具需要确认
-    });
-
-    const allTools = getAllBuiltinTools();
-    const filteredTools = allTools.filter(tool => tool.category === type);
-
-    toolkit.registerTools(filteredTools);
+  static createSpecializedToolkit(_type: 'filesystem' | 'network' | 'utility'): BladeToolkit {
+    const toolkit = new BladeToolkit();
+    // 专用工具包功能暂时简化，返回默认工具包
     return toolkit;
   }
 

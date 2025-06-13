@@ -3,7 +3,7 @@
  * 定义链式处理的核心接口和类型
  */
 
-import { BladeMemory } from '../memory/BladeMemory.js';
+import { LangChainMemoryManager } from '../memory/LangChainMemoryManager.js';
 import { BladeTool } from '../tools/base/BladeTool.js';
 
 /**
@@ -186,7 +186,7 @@ export interface ChainConfig {
   errorStrategy?: 'fail-fast' | 'continue' | 'rollback';
 
   memory?: {
-    provider: BladeMemory;
+    provider: LangChainMemoryManager;
     sessionKey?: string;
   };
 

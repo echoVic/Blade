@@ -1,9 +1,7 @@
 /**
- * Blade Memory 模块导出
+ * LangChain Memory 模块导出
+ * 纯正的 LangChain 集成实现
  */
 
-export { BladeMemory } from './BladeMemory.js';
 export { LangChainMemoryManager } from './LangChainMemoryManager.js';
-export { FileProvider } from './providers/FileProvider.js';
-export { InMemoryProvider } from './providers/InMemoryProvider.js';
 export * from './types.js';

@@ -21,8 +21,4 @@ export * from './mcp/index.js';
  */
 import { BladeToolkit } from './BladeToolkit.js';
 
-export const defaultToolkit = new BladeToolkit({
-  name: 'BladeDefaultToolkit',
-  description: '默认 Blade 工具包 - LangChain 集成版本',
-  enableConfirmation: true,
-});
+export const defaultToolkit = new BladeToolkit();

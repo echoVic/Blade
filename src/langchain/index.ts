@@ -15,8 +15,7 @@ export * from './agents/index.js';
 // 导出记忆
 export * from './memory/index.js';
 
-// 导出提示模板
-export * from './prompts/index.js';
+// LangChain 原生 prompts 已足够，无需自定义实现
 
 // 导出链
 export * from './chains/index.js';

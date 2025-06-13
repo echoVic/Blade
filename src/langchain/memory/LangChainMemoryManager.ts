@@ -4,7 +4,16 @@
  */
 
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { BaseMemory, BufferMemory, BufferWindowMemory, ChatMessageHistory } from 'langchain/memory';
+import { ChatOpenAI } from '@langchain/openai';
+import {
+  BaseMemory,
+  BufferMemory,
+  BufferWindowMemory,
+  ChatMessageHistory,
+  ConversationSummaryBufferMemory,
+  ConversationSummaryMemory,
+  ConversationTokenBufferMemory,
+} from 'langchain/memory';
 import {
   MemoryEntry,
   MemoryEvent,
@@ -15,10 +24,17 @@ import {
 } from './types.js';
 
 export interface LangChainMemoryConfig {
-  type: 'buffer' | 'window';
+  type: 'buffer' | 'window' | 'summary' | 'summary_buffer' | 'token_buffer';
   options?: {
     // Buffer Window 配置
     k?: number; // 保留消息数量
+    // Token Buffer 配置
+    maxTokenLimit?: number; // token 限制
+    // Summary 配置
+    llm?: ChatOpenAI; // 用于摘要的 LLM
+    maxTokens?: number; // 摘要的最大 tokens
+    // Summary Buffer 配置
+    maxTokenLimitInSummaryBuffer?: number;
   };
 }
 
@@ -68,6 +84,32 @@ export class LangChainMemoryManager implements MemoryManager {
           returnMessages: true,
           memoryKey: 'chat_history',
           k: options.k || 10,
+        });
+
+      case 'summary':
+        return new ConversationSummaryMemory({
+          chatHistory: messageHistory,
+          returnMessages: true,
+          memoryKey: 'chat_history',
+          llm: options.llm || new ChatOpenAI({ temperature: 0 }),
+        });
+
+      case 'summary_buffer':
+        return new ConversationSummaryBufferMemory({
+          chatHistory: messageHistory,
+          returnMessages: true,
+          memoryKey: 'chat_history',
+          llm: options.llm || new ChatOpenAI({ temperature: 0 }),
+          maxTokenLimit: options.maxTokenLimitInSummaryBuffer || 2000,
+        });
+
+      case 'token_buffer':
+        return new ConversationTokenBufferMemory({
+          chatHistory: messageHistory,
+          returnMessages: true,
+          memoryKey: 'chat_history',
+          llm: options.llm || new ChatOpenAI({ temperature: 0 }),
+          maxTokenLimit: options.maxTokenLimit || 2000,
         });
 
       default:

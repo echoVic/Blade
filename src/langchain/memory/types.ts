@@ -1,14 +1,25 @@
 /**
- * LangChain 记忆类型定义
+ * LangChain Memory 相关类型定义
+ * 只保留业务必需的类型，其他依赖 LangChain 原生类型
  */
 
 /**
- * Blade Memory 类型定义
- * 定义记忆存储的核心接口和类型
+ * 记忆类型枚举
  */
+export enum MemoryType {
+  CONVERSATION = 'conversation',
+  FACT = 'fact',
+  PREFERENCE = 'preference',
+  CONTEXT = 'context',
+  TOOL_RESULT = 'tool_result',
+  CHAIN_STATE = 'chain_state',
+  USER_PROFILE = 'user_profile',
+  SYSTEM_STATE = 'system_state',
+  CUSTOM = 'custom',
+}
 
 /**
- * 记忆条目
+ * 记忆条目基础结构
  */
 export interface MemoryEntry {
   id: string;
@@ -23,21 +34,6 @@ export interface MemoryEntry {
   importance?: number; // 0-1，重要性评分
   access_count?: number;
   lastAccessedAt?: Date;
-}
-
-/**
- * 记忆类型
- */
-export enum MemoryType {
-  CONVERSATION = 'conversation',
-  FACT = 'fact',
-  PREFERENCE = 'preference',
-  CONTEXT = 'context',
-  TOOL_RESULT = 'tool_result',
-  CHAIN_STATE = 'chain_state',
-  USER_PROFILE = 'user_profile',
-  SYSTEM_STATE = 'system_state',
-  CUSTOM = 'custom',
 }
 
 /**
@@ -86,146 +82,6 @@ export interface PreferenceMemoryEntry extends MemoryEntry {
 }
 
 /**
- * 记忆配置
- */
-export interface BladeMemoryConfig {
-  provider: MemoryProvider;
-
-  // 存储配置
-  storage: {
-    type: 'memory' | 'file' | 'redis' | 'database' | 'custom';
-    config?: Record<string, any>;
-  };
-
-  // 容量限制
-  limits: {
-    maxEntries?: number;
-    maxSizePerEntry?: number; // bytes
-    maxTotalSize?: number; // bytes
-    ttl?: number; // seconds，默认过期时间
-  };
-
-  // 清理策略
-  cleanup: {
-    strategy: 'lru' | 'lfu' | 'ttl' | 'importance' | 'custom';
-    interval?: number; // seconds
-    customFunction?: (entries: MemoryEntry[]) => MemoryEntry[];
-  };
-
-  // 压缩配置
-  compression: {
-    enabled: boolean;
-    algorithm?: 'gzip' | 'brotli' | 'custom';
-    threshold?: number; // bytes，超过阈值才压缩
-  };
-
-  // 加密配置
-  encryption: {
-    enabled: boolean;
-    algorithm?: 'aes-256-gcm' | 'chacha20-poly1305';
-    key?: string;
-  };
-
-  // 同步配置
-  sync: {
-    enabled: boolean;
-    interval?: number;
-    conflictResolution?: 'merge' | 'overwrite' | 'ignore';
-  };
-}
-
-/**
- * 记忆提供者接口
- */
-export interface MemoryProvider {
-  // 基础操作
-  get(sessionId: string, key?: string): Promise<MemoryEntry[]>;
-  set(entry: MemoryEntry): Promise<void>;
-  update(id: string, updates: Partial<MemoryEntry>): Promise<void>;
-  delete(id: string): Promise<void>;
-  clear(sessionId: string): Promise<void>;
-
-  // 查询操作
-  search(query: MemorySearchQuery): Promise<MemoryEntry[]>;
-  filter(criteria: MemoryFilterCriteria): Promise<MemoryEntry[]>;
-
-  // 统计操作
-  count(sessionId: string, type?: MemoryType): Promise<number>;
-  size(sessionId: string): Promise<number>;
-
-  // 维护操作
-  cleanup(): Promise<number>; // 返回清理的条目数
-  optimize(): Promise<void>;
-  export(sessionId: string): Promise<MemoryExport>;
-  import(data: MemoryExport): Promise<void>;
-}
-
-/**
- * 记忆搜索查询
- */
-export interface MemorySearchQuery {
-  sessionId: string;
-  query: string;
-  type?: MemoryType[];
-  limit?: number;
-  offset?: number;
-  sortBy?: 'relevance' | 'createdAt' | 'importance' | 'access_count';
-  sortOrder?: 'asc' | 'desc';
-  timeRange?: {
-    start?: Date;
-    end?: Date;
-  };
-  includeExpired?: boolean;
-}
-
-/**
- * 记忆过滤条件
- */
-export interface MemoryFilterCriteria {
-  sessionId: string;
-  userId?: string;
-  type?: MemoryType[];
-  tags?: string[];
-  metadata?: Record<string, any>;
-  importance?: {
-    min?: number;
-    max?: number;
-  };
-  createdAt?: {
-    start?: Date;
-    end?: Date;
-  };
-  includeExpired?: boolean;
-  limit?: number;
-  offset?: number;
-}
-
-/**
- * 记忆导出格式
- */
-export interface MemoryExport {
-  version: string;
-  exportedAt: Date;
-  sessionId: string;
-  entries: MemoryEntry[];
-  metadata?: Record<string, any>;
-}
-
-/**
- * 记忆统计信息
- */
-export interface MemoryStats {
-  sessionId: string;
-  totalEntries: number;
-  totalSize: number; // bytes
-  entriesByType: Record<MemoryType, number>;
-  oldestEntry?: Date;
-  newestEntry?: Date;
-  averageImportance?: number;
-  compressionRatio?: number;
-}
-
-/**
  * 记忆事件
  */
 export interface MemoryEvent {
@@ -243,13 +99,28 @@ export interface MemoryEvent {
 export type MemoryEventListener = (event: MemoryEvent) => void | Promise<void>;
 
 /**
- * 记忆管理器接口
+ * 记忆统计信息
+ */
+export interface MemoryStats {
+  sessionId: string;
+  totalEntries: number;
+  totalSize: number; // bytes
+  entriesByType: Record<MemoryType, number>;
+  oldestEntry?: Date;
+  newestEntry?: Date;
+  averageImportance?: number;
+  compressionRatio?: number;
+}
+
+/**
+ * 简化的记忆管理器接口
+ * 专注于核心功能，其他交给 LangChain
  */
 export interface MemoryManager {
   // 会话管理
   createSession(sessionId: string, userId?: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
-  listSessions(userId?: string): Promise<string[]>;
+  listSessions(): Promise<string[]>;
 
   // 记忆操作
   remember(
@@ -264,72 +135,22 @@ export interface MemoryManager {
 
   // 高级功能
   summarize(sessionId: string, maxEntries?: number): Promise<string>;
-  compress(sessionId: string): Promise<number>;
+  compress(): Promise<number>;
   merge(sourceSessionId: string, targetSessionId: string): Promise<void>;
 
   // 统计和监控
   getStats(sessionId: string): Promise<MemoryStats>;
   addEventListener(listener: MemoryEventListener): void;
   removeEventListener(listener: MemoryEventListener): void;
-}
 
-/**
- * 记忆中间件接口
- */
-export interface MemoryMiddleware {
-  name: string;
-  priority: number;
-
-  beforeCreate?(entry: MemoryEntry): Promise<MemoryEntry | null>;
-  afterCreate?(entry: MemoryEntry): Promise<void>;
-
-  beforeRead?(query: MemorySearchQuery): Promise<MemorySearchQuery>;
-  afterRead?(entries: MemoryEntry[]): Promise<MemoryEntry[]>;
-
-  beforeUpdate?(id: string, updates: Partial<MemoryEntry>): Promise<Partial<MemoryEntry>>;
-  afterUpdate?(entry: MemoryEntry): Promise<void>;
-
-  beforeDelete?(id: string): Promise<boolean>; // return false to prevent deletion
-  afterDelete?(id: string): Promise<void>;
-}
-
-/**
- * 记忆策略配置
- */
-export interface MemoryStrategy {
-  // 存储策略
-  storage: {
-    importance_threshold: number; // 低于此重要性的记忆不存储
-    deduplication: boolean; // 是否去重
-    compression: boolean; // 是否压缩
-  };
-
-  // 检索策略
-  retrieval: {
-    max_results: number;
-    relevance_threshold: number;
-    time_decay_factor: number; // 时间衰减因子
-    importance_boost: number; // 重要性加权
-  };
-
-  // 清理策略
-  cleanup: {
-    max_age_days: number;
-    max_entries: number;
-    importance_threshold: number;
-  };
-}
-
-/**
- * 向量记忆配置（用于语义搜索）
- */
-export interface VectorMemoryConfig {
-  enabled: boolean;
-  dimensions: number;
-  similarity_threshold: number;
-  index_type: 'flat' | 'hnsw' | 'ivf';
-  distance_metric: 'cosine' | 'euclidean' | 'dot_product';
-  embedding_model?: string;
+  // LangChain 集成方法
+  getMemoryInstance(sessionId: string): Promise<any>; // BaseMemory
+  getMemoryVariables(sessionId: string, inputs?: Record<string, any>): Promise<Record<string, any>>;
+  saveContext(
+    sessionId: string,
+    inputs: Record<string, any>,
+    outputs: Record<string, any>
+  ): Promise<void>;
 }
 
 /**
