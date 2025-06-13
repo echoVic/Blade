@@ -1,3 +1,5 @@
+import type { BaseLanguageModel } from '@langchain/core/language_models/base';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
@@ -8,9 +10,8 @@ import {
   isProviderSupported,
 } from '../config/defaults.js';
 import { getCurrentModel, getCurrentProvider } from '../config/user-config.js';
-import { BaseLLM } from '../llm/BaseLLM.js';
-import { QwenLLM } from '../llm/QwenLLM.js';
-import { VolcEngineLLM } from '../llm/VolcEngineLLM.js';
+import { QwenChatModel } from '../langchain/models/QwenChatModel.js';
+import { VolcEngineChatModel } from '../langchain/models/VolcEngineChatModel.js';
 
 /**
  * 注册 LLM 相关命令
@@ -72,15 +73,26 @@ export function llmCommand(program: Command) {
         console.log(chalk.green(`📱 模型: ${modelDescription}`));
         console.log(chalk.gray('💡 输入 "quit" 或 "exit" 退出聊天\n'));
 
-        // 创建LLM实例
-        let llm: QwenLLM | VolcEngineLLM;
+        // 创建LangChain模型实例
+        let llm: BaseLanguageModel;
         if (provider === 'qwen') {
-          llm = new QwenLLM({ apiKey, baseURL: providerConfig.baseURL }, model);
+          llm = new QwenChatModel({
+            apiKey,
+            model,
+            baseURL: providerConfig.baseURL,
+            temperature: 0.7,
+            maxTokens: 2000,
+          });
         } else {
-          llm = new VolcEngineLLM({ apiKey, baseURL: providerConfig.baseURL }, model);
+          llm = new VolcEngineChatModel({
+            apiKey,
+            model,
+            endpoint: providerConfig.baseURL,
+            temperature: 0.7,
+            maxTokens: 2000,
+          });
         }
 
-        await llm.init();
         console.log(chalk.green(`✅ 已连接 ${provider} (${modelDescription})`));
 
         // 开始聊天循环
@@ -147,11 +159,11 @@ export function llmCommand(program: Command) {
 /**
  * 开始聊天循环
  */
-async function startChatLoop(llm: BaseLLM, useStream: boolean = false) {
+async function startChatLoop(llm: BaseLanguageModel, useStream: boolean = false) {
   console.log(chalk.cyan('\n🤖 LLM 聊天开始！输入 "quit" 或 "exit" 退出'));
   console.log(chalk.gray('💡 直接在终端输入消息即可\n'));
 
-  const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  const conversationHistory: any[] = [];
 
   while (true) {
     try {
@@ -177,41 +189,45 @@ async function startChatLoop(llm: BaseLLM, useStream: boolean = false) {
       }
 
       // 添加用户消息到历史
-      conversationHistory.push({ role: 'user', content: userMessage });
+      conversationHistory.push(new HumanMessage(userMessage));
 
       // 生成回复
-      console.log(chalk.green('\nAI: '), { newline: false });
+      console.log(chalk.green('\nAI: '));
 
-      if (useStream && llm instanceof QwenLLM && llm.streamChat) {
+      if (useStream) {
         // 流式输出
-        const response = await llm.streamChat(
-          {
-            messages: conversationHistory,
-          },
-          chunk => {
-            process.stdout.write(chunk);
-          }
-        );
+        try {
+          const stream = await llm.stream(conversationHistory);
+          let fullResponse = '';
 
-        console.log('\n');
-        conversationHistory.push({ role: 'assistant', content: response.content });
+          for await (const chunk of stream) {
+            const content = chunk.content.toString();
+            process.stdout.write(content);
+            fullResponse += content;
+          }
+
+          console.log('\n');
+          conversationHistory.push(new AIMessage(fullResponse));
+        } catch (streamError) {
+          // 如果流式输出失败，回退到普通输出
+          console.log(chalk.yellow('流式输出不可用，使用普通模式'));
+          const response = await llm.invoke(conversationHistory);
+          const content = response.content.toString();
+          console.log(content);
+          conversationHistory.push(new AIMessage(content));
+        }
       } else {
         // 普通输出
-        const response = await llm.conversation(conversationHistory);
-        console.log(response);
-        console.log('');
-
-        conversationHistory.push({ role: 'assistant', content: response });
+        const response = await llm.invoke(conversationHistory);
+        const content = response.content.toString();
+        console.log(content);
+        conversationHistory.push(new AIMessage(content));
       }
 
-      // 保持对话历史在合理长度
-      if (conversationHistory.length > 20) {
-        conversationHistory.splice(0, 2);
-      }
+      console.log('\n');
     } catch (error) {
-      console.error(chalk.red('❌ 聊天错误:'), error);
+      console.error(chalk.red('❌ 对话失败:'), error);
+      console.log(chalk.yellow('请重试或输入 "quit" 退出\n'));
     }
   }
-
-  await llm.destroy();
 }

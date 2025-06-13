@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { agentLlmCommand } from './commands/agent-llm.js';
+import { chatCommand } from './commands/chat.js';
 import { configCommand } from './commands/config.js';
 import { llmCommand } from './commands/llm.js';
 import { mcpCommand } from './commands/mcp.js';
@@ -19,19 +19,18 @@ const packageJsonPath = join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const version = packageJson.version;
 
-// 导出新的 LangChain 集成模块
+// 导出 LangChain 集成模块 - 统一的 AI 功能接口
 export * from './langchain/index.js';
 
-// 导出传统模块（向后兼容，稍后移除）
-export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
-export { BaseComponent } from './agent/BaseComponent.js';
-export { LoggerComponent } from './agent/LoggerComponent.js';
-export { ToolComponent, ToolComponentConfig } from './agent/ToolComponent.js';
+// ===== 已重构至 LangChain 系统 =====
+// 旧的 Agent 和 LLM 系统已被 LangChain 原生实现替代
+// 新的使用方式：
+// import { BladeAgent, AgentFactory } from 'blade-ai/langchain/agents';
+// import { QwenChatModel, VolcEngineChatModel } from 'blade-ai/langchain/models';
 
-// LLM 模块（向后兼容，稍后移除）
-export { BaseLLM } from './llm/BaseLLM.js';
-export { QwenLLM } from './llm/QwenLLM.js';
-export { VolcEngineLLM } from './llm/VolcEngineLLM.js';
+// 如需向后兼容，请使用以下导入（将在下个主要版本中移除）:
+// export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
+// export { BaseLLM, QwenLLM, VolcEngineLLM } from './llm/index.js';
 
 // 配置模块
 export {
@@ -73,8 +72,8 @@ export type {
   ToolRegistrationOptions,
 } from './tools/index.js';
 
-// 类型定义
-export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
+// 类型定义现在通过 LangChain 模块导出
+// 使用: import type { BaseMessage } from '@langchain/core/messages';
 
 // MCP 模块 - 明确导出以避免命名冲突
 export {
@@ -100,8 +99,8 @@ const program = new Command();
 // 设置基本信息
 program.name('blade').description('🗡️ Blade - 智能 AI 助手命令行工具').version(version);
 
-// 注册 LLM 相关命令
-agentLlmCommand(program);
+// 注册聊天相关命令
+chatCommand(program);
 llmCommand(program);
 
 // 注册配置相关命令

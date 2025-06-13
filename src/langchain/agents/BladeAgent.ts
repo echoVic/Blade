@@ -2,10 +2,12 @@
  * Blade Agent - LangChain 原生 Agent 实现
  */
 
-import type { BaseMessage } from '@langchain/core/messages';
-import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { PromptTemplate } from '@langchain/core/prompts';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
+import { AgentExecutor, createReactAgent } from 'langchain/agents';
+import { pull } from 'langchain/hub';
+import { BladeToolkit } from '../tools/BladeToolkit.js';
 
 import type {
   AgentContext,
@@ -16,19 +18,16 @@ import type {
   AgentResponse,
   AgentStats,
   AgentStatusType,
-  AgentThought,
-  BladeAgentAction,
   BladeAgentConfig,
-  BladeAgentFinish,
-  BladeAgentStep,
 } from './types.js';
 import { AgentEventType, AgentStatus } from './types.js';
 
 /**
  * Blade Agent - 智能代理核心实现
  *
- * 提供完整的 LangChain Agent 功能：
- * - ReAct (推理-行动) 循环
+ * 使用 LangChain 原生 Agent 功能：
+ * - 原生 ReAct Agent (createReactAgent)
+ * - AgentExecutor 管理
  * - 工具调用和确认
  * - 记忆管理
  * - 插件系统
@@ -40,6 +39,7 @@ export class BladeAgent extends EventEmitter {
   private currentExecution?: AgentExecutionHistory;
   private plugins: AgentPlugin[] = [];
   private stats: AgentStats;
+  private agentExecutor?: AgentExecutor;
 
   constructor(config: BladeAgentConfig) {
     super();
@@ -55,9 +55,73 @@ export class BladeAgent extends EventEmitter {
       ...config,
     };
 
+    // 初始化 LangChain Agent
+    this.initializeLangChainAgent();
+
     // 设置工具确认回调
     if (this.config.toolConfirmation?.enabled) {
       this.setupToolConfirmation();
+    }
+  }
+
+  /**
+   * 初始化 LangChain Agent Executor
+   */
+  private async initializeLangChainAgent(): Promise<void> {
+    const tools = this.config.toolkit?.toLangChainTools() || [];
+
+    // 创建提示模板
+    const prompt = await this.createPromptTemplate();
+
+    // 创建 ReAct Agent
+    const agent = await createReactAgent({
+      llm: this.config.llm!,
+      tools,
+      prompt,
+    });
+
+    // 创建 Agent Executor
+    this.agentExecutor = new AgentExecutor({
+      agent,
+      tools,
+      maxIterations: this.config.maxIterations,
+      verbose: this.config.debug,
+      handleParsingErrors: true,
+    });
+  }
+
+  /**
+   * 创建提示模板
+   */
+  private async createPromptTemplate(): Promise<PromptTemplate> {
+    try {
+      // 尝试从 LangChain Hub 拉取标准 ReAct 提示模板
+      return await pull('hwchase17/react');
+    } catch {
+      // 如果失败，使用自定义提示模板
+      const template = `${this.config.systemPrompt || '你是一个智能助手，可以使用工具来帮助用户解决问题。'}
+
+你有权访问以下工具：
+
+{tools}
+
+使用以下格式：
+
+Question: 用户输入的问题
+Thought: 我需要思考该怎么做
+Action: 要使用的工具，应该是 [{tool_names}] 中的一个
+Action Input: 工具的输入参数
+Observation: 工具执行的结果
+... (这个Thought/Action/Action Input/Observation序列可以重复N次)
+Thought: 我现在知道最终答案了
+Final Answer: 对原始输入问题的最终答案
+
+开始!
+
+Question: {input}
+Thought:{agent_scratchpad}`;
+
+      return PromptTemplate.fromTemplate(template);
     }
   }
 
@@ -75,10 +139,17 @@ export class BladeAgent extends EventEmitter {
       });
 
       // 初始化执行历史
-      this.currentExecution = this.initializeExecution(executionContext, input);
+      this.currentExecution = this.initializeExecution(executionContext);
 
-      // 开始 ReAct 循环
-      const result = await this.reactLoop(input, executionContext);
+      // 确保 AgentExecutor 已初始化
+      if (!this.agentExecutor) {
+        await this.initializeLangChainAgent();
+      }
+
+      // 使用 LangChain Agent Executor 执行
+      const result = await this.agentExecutor!.invoke({
+        input,
+      });
 
       // 更新统计信息
       this.updateStats(this.currentExecution);
@@ -91,14 +162,20 @@ export class BladeAgent extends EventEmitter {
 
       return {
         executionId: executionContext.executionId,
-        content: result.returnValues.output || result.log,
+        content: result.output || '任务完成',
         type: 'final',
-        finish: result,
+        finish: {
+          returnValues: { output: result.output },
+          log: result.log || '',
+          reason: 'success',
+          outputFormat: 'text',
+        },
         status: this.status,
         timestamp: Date.now(),
         metadata: {
           totalSteps: this.currentExecution.steps.length,
           totalTime: this.currentExecution.performance.totalTime,
+          intermediateSteps: result.intermediateSteps,
         },
       };
     } catch (error) {
@@ -122,429 +199,109 @@ export class BladeAgent extends EventEmitter {
   }
 
   /**
-   * ReAct (推理-行动) 循环
+   * 流式执行对话任务
    */
-  private async reactLoop(input: string, context: AgentContext): Promise<BladeAgentFinish> {
-    const currentInput = input;
-    let iteration = 0;
-
-    // 构建初始消息
-    const messages: BaseMessage[] = [];
-
-    if (this.config.systemPrompt) {
-      messages.push(new SystemMessage(this.config.systemPrompt));
-    }
-
-    messages.push(new HumanMessage(currentInput));
-
-    while (iteration < this.config.maxIterations!) {
-      iteration++;
-
-      // 1. 思考阶段
-      const thought = await this.think(messages, context);
-      this.currentExecution!.thoughts.push(thought);
-
-      // 检查是否直接给出答案
-      if (!thought.plannedAction) {
-        return {
-          returnValues: { output: thought.content },
-          log: thought.reasoning,
-          reason: 'success',
-          outputFormat: 'text',
-        };
-      }
-
-      // 2. 行动阶段
-      const action: BladeAgentAction = {
-        tool: thought.plannedAction.tool,
-        toolInput: thought.plannedAction.params,
-        log: thought.plannedAction.reason,
-      };
-
-      const step = await this.executeAction(action, context);
-      this.currentExecution!.steps.push(step);
-
-      // 3. 观察阶段 - 将结果加入消息历史
-      const observation = step.observation;
-
-      // 调试信息
-      if (this.config.debug) {
-        console.log(`🔧 工具执行完成: ${action.tool} (${step.status})`);
-      }
-
-      messages.push(new AIMessage(thought.content));
-      messages.push(new HumanMessage(`工具执行结果: ${observation}`));
-
-      // 对于工具执行成功的单一任务，直接返回结果
-      if (step.status === 'completed') {
-        // 尝试提取工具结果中的关键信息
-        let finalOutput = observation;
-
-        try {
-          const parsedResult = JSON.parse(observation);
-          if (parsedResult.result !== undefined) {
-            finalOutput =
-              typeof parsedResult.result === 'string'
-                ? parsedResult.result
-                : JSON.stringify(parsedResult.result);
-          }
-        } catch {
-          // 如果不是JSON，使用原始观察结果
-        }
-
-        if (this.config.debug) {
-          console.log(`✅ 任务完成: ${action.tool}`);
-        }
-
-        return {
-          returnValues: { output: `已成功执行 ${action.tool} 工具。结果: ${finalOutput}` },
-          log: `完成任务，经过 ${iteration} 轮思考`,
-          reason: 'success',
-          outputFormat: 'text',
-        };
-      } else if (step.status === 'failed') {
-        if (this.config.debug) {
-          console.log(`❌ 工具执行失败: ${action.tool} - ${step.error}`);
-        }
-
-        return {
-          returnValues: { output: `工具执行失败: ${step.error}` },
-          log: `工具执行失败，经过 ${iteration} 轮思考`,
-          reason: 'error',
-          outputFormat: 'text',
-        };
-      }
-
-      // 检查执行时间
-      if (Date.now() - this.currentExecution!.startTime > this.config.maxExecutionTime!) {
-        return {
-          returnValues: { output: '任务执行超时' },
-          log: `超时终止，经过 ${iteration} 轮思考`,
-          reason: 'timeout',
-          outputFormat: 'text',
-        };
-      }
-    }
-
-    // 达到最大迭代次数
-    return {
-      returnValues: { output: '达到最大思考轮数限制' },
-      log: `达到最大 ${this.config.maxIterations} 轮思考限制`,
-      reason: 'max_iterations',
-      outputFormat: 'text',
-    };
-  }
-
-  /**
-   * 思考阶段
-   */
-  private async think(messages: BaseMessage[], _context: AgentContext): Promise<AgentThought> {
-    const startTime = Date.now();
-
-    await this.emitEvent(AgentEventType.THOUGHT_START, { messages });
+  public async *stream(
+    input: string,
+    context?: Partial<AgentContext>
+  ): AsyncGenerator<AgentResponse> {
+    const executionContext = this.createExecutionContext(context);
 
     try {
-      // 构建思考提示
-      const thinkingPrompt = this.buildThinkingPrompt(messages);
-      const thinkingMessage = new HumanMessage(thinkingPrompt);
-      const allMessages = [...messages, thinkingMessage];
+      this.status = AgentStatus.THINKING;
+      await this.emitEvent(AgentEventType.EXECUTION_START, {
+        input,
+        context: executionContext,
+      });
 
-      // 调用 LLM 进行推理
-      const response = await this.config.llm.invoke(allMessages);
-      const content = typeof response === 'string' ? response : response.content.toString();
+      // 初始化执行历史
+      this.currentExecution = this.initializeExecution(executionContext);
 
-      // 解析思考结果
-      const thought = this.parseThought(content, Date.now() - startTime);
+      // 确保 AgentExecutor 已初始化
+      if (!this.agentExecutor) {
+        await this.initializeLangChainAgent();
+      }
 
-      await this.emitEvent(AgentEventType.THOUGHT_END, { thought });
+      // 使用 LangChain Agent Executor 流式执行
+      const stream = await this.agentExecutor!.stream({
+        input,
+      });
 
-      return thought;
+      for await (const chunk of stream) {
+        if (chunk.intermediateSteps) {
+          // 处理中间步骤
+          yield {
+            executionId: executionContext.executionId,
+            content: `执行中: ${JSON.stringify(chunk.intermediateSteps)}`,
+            type: 'action',
+            status: AgentStatus.THINKING,
+            timestamp: Date.now(),
+            metadata: { chunk },
+          };
+        }
+
+        if (chunk.output) {
+          // 最终结果
+          yield {
+            executionId: executionContext.executionId,
+            content: chunk.output,
+            type: 'final',
+            status: AgentStatus.FINISHED,
+            timestamp: Date.now(),
+            metadata: { chunk },
+          };
+        }
+      }
+
+      this.status = AgentStatus.FINISHED;
+      await this.emitEvent(AgentEventType.EXECUTION_END, {
+        execution: this.currentExecution,
+      });
     } catch (error) {
+      this.status = AgentStatus.ERROR;
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      return {
-        content: `思考过程出错: ${errorMessage}`,
-        reasoning: errorMessage,
-        confidence: 0,
-        thinkingTime: Date.now() - startTime,
+      await this.emitEvent(AgentEventType.ERROR, {
+        error: errorMessage,
+        context: executionContext,
+      });
+
+      yield {
+        executionId: executionContext.executionId,
+        content: `执行错误: ${errorMessage}`,
+        type: 'error',
+        status: this.status,
+        timestamp: Date.now(),
+        metadata: { error: errorMessage },
       };
     }
   }
 
+  // ======================== 插件和工具管理 ========================
+
   /**
-   * 执行动作
+   * 获取工具包
    */
-  private async executeAction(
-    action: BladeAgentAction,
-    context: AgentContext
-  ): Promise<BladeAgentStep> {
-    const startTime = Date.now();
-
-    const step: BladeAgentStep = {
-      action,
-      observation: '',
-      status: 'pending',
-      startTime,
-    };
-
-    await this.emitEvent(AgentEventType.ACTION_START, { action });
-
-    try {
-      step.status = 'executing';
-
-      // 检查工具是否存在
-      if (!this.config.toolkit.hasTool(action.tool)) {
-        throw new Error(`工具不存在: ${action.tool}`);
-      }
-
-      // 工具确认
-      if (this.config.toolConfirmation?.enabled) {
-        const confirmed = await this.confirmToolExecution(action, context);
-        if (!confirmed) {
-          step.status = 'failed';
-          step.error = '用户取消了工具执行';
-          step.observation = '工具执行被用户取消';
-          step.endTime = Date.now();
-          return step;
-        }
-      }
-
-      // 执行工具
-      const result = await this.config.toolkit.executeTool(action.tool, action.toolInput);
-
-      step.status = 'completed';
-      step.observation = typeof result === 'string' ? result : JSON.stringify(result);
-      step.endTime = Date.now();
-
-      await this.emitEvent(AgentEventType.ACTION_END, { step });
-
-      return step;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      step.status = 'failed';
-      step.error = errorMessage;
-      step.observation = `工具执行失败: ${errorMessage}`;
-      step.endTime = Date.now();
-
-      await this.emitEvent(AgentEventType.ACTION_END, { step });
-
-      return step;
-    }
+  public getToolkit(): BladeToolkit {
+    return this.config.toolkit;
   }
 
-  /**
-   * 构建思考提示
-   */
-  private buildThinkingPrompt(messages: BaseMessage[]): string {
-    const availableTools = this.config.toolkit.listTools();
+  // ======================== 辅助方法 ========================
 
-    return `
-你是一个智能助手，需要通过思考和行动来解决用户的问题。
-
-可用工具:
-${availableTools}
-
-请按以下格式思考和回答:
-
-思考: [你的推理过程]
-行动: [如果需要使用工具，描述要使用的工具和参数；如果可以直接回答，说明原因]
-
-如果需要使用工具，请严格按照以下JSON格式:
-{
-  "tool": "工具名称",
-  "params": {参数对象},
-  "reason": "使用原因"
-}
-
-如果可以直接回答用户问题，请直接给出答案，不要使用工具。
-    `.trim();
-  }
-
-  /**
-   * 解析思考结果
-   */
-  private parseThought(content: string, thinkingTime: number): AgentThought {
-    const thought: AgentThought = {
-      content,
-      reasoning: content,
-      confidence: 0.8,
-      thinkingTime,
-    };
-
-    // 尝试解析JSON格式的行动计划 - 支持嵌套结构
-    try {
-      // 更好的JSON匹配策略：查找平衡的大括号
-      const jsonMatches = this.extractJSONFromText(content);
-
-      if (jsonMatches.length > 0) {
-        // 尝试解析第一个有效的工具调用
-        for (const jsonMatch of jsonMatches) {
-          try {
-            const actionPlan = JSON.parse(jsonMatch);
-            if (actionPlan.tool && actionPlan.params !== undefined) {
-              thought.plannedAction = {
-                tool: actionPlan.tool,
-                params: actionPlan.params,
-                reason: actionPlan.reason || '未指定原因',
-              };
-
-              if (this.config.debug) {
-                console.log(`🔧 解析到工具调用: ${actionPlan.tool}`);
-              }
-
-              break; // 找到第一个有效的就停止
-            }
-          } catch (parseError) {
-            // 继续尝试下一个 JSON
-            continue;
-          }
-        }
-      }
-    } catch (error) {
-      // 解析失败，不需要工具调用
-    }
-
-    return thought;
-  }
-
-  /**
-   * 从文本中提取平衡的JSON对象
-   */
-  private extractJSONFromText(text: string): string[] {
-    const jsonObjects: string[] = [];
-    let depth = 0;
-    let start = -1;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (char === '\\' && inString) {
-        escaped = true;
-        continue;
-      }
-
-      if (char === '"' && !escaped) {
-        inString = !inString;
-        continue;
-      }
-
-      if (inString) {
-        continue;
-      }
-
-      if (char === '{') {
-        if (depth === 0) {
-          start = i;
-        }
-        depth++;
-      } else if (char === '}') {
-        depth--;
-        if (depth === 0 && start !== -1) {
-          const jsonStr = text.substring(start, i + 1);
-          jsonObjects.push(jsonStr);
-          start = -1;
-        }
-      }
-    }
-
-    return jsonObjects;
-  }
-
-  /**
-   * 判断是否应该结束
-   */
-  private shouldFinish(observation: string): boolean {
-    // 简单判断逻辑，可以扩展
-    const finishIndicators = [
-      '任务完成',
-      '已完成',
-      '执行成功',
-      'success',
-      '结果已生成',
-      // 添加工具执行成功的更多指示器
-      'uuid:',
-      'timestamp:',
-      'generated',
-      'created',
-      'result:',
-      // 对于单个工具调用，如果有具体结果就认为完成
-      '{',
-      '"',
-      'true',
-      'false',
-    ];
-
-    // 如果观察结果不是错误消息且有实际内容，就认为任务完成
-    if (
-      observation &&
-      !observation.includes('失败') &&
-      !observation.includes('错误') &&
-      !observation.includes('error') &&
-      observation.trim().length > 10
-    ) {
-      return true;
-    }
-
-    return finishIndicators.some(indicator =>
-      observation.toLowerCase().includes(indicator.toLowerCase())
-    );
-  }
-
-  /**
-   * 工具确认
-   */
-  private async confirmToolExecution(
-    action: BladeAgentAction,
-    context: AgentContext
-  ): Promise<boolean> {
-    const confirmationEvent: AgentEvent = {
-      type: AgentEventType.TOOL_CONFIRMATION,
-      executionId: context.executionId,
-      data: {
-        tool: action.tool,
-        params: action.toolInput,
-        reason: action.log,
-      },
-      timestamp: Date.now(),
-    };
-
-    await this.emitEvent(AgentEventType.TOOL_CONFIRMATION, confirmationEvent.data);
-
-    // 这里应该等待用户确认，简化实现直接返回true
-    // 实际实现中应该通过事件或回调等待用户输入
-    return true;
-  }
-
-  /**
-   * 创建执行上下文
-   */
   private createExecutionContext(context?: Partial<AgentContext>): AgentContext {
     return {
       executionId: randomUUID(),
+      sessionId: context?.sessionId || randomUUID(),
+      userId: context?.userId || 'anonymous',
       timestamp: Date.now(),
-      workingDirectory: process.cwd(),
-      environment: Object.fromEntries(
-        Object.entries(process.env).filter(([_, value]) => value !== undefined)
-      ) as Record<string, string>,
       ...context,
     };
   }
 
-  /**
-   * 初始化执行历史
-   */
-  private initializeExecution(context: AgentContext, input: string): AgentExecutionHistory {
+  private initializeExecution(context: AgentContext): AgentExecutionHistory {
     return {
       executionId: context.executionId,
-      messages: [new HumanMessage(input)],
+      messages: [],
       steps: [],
       thoughts: [],
       startTime: Date.now(),
@@ -559,36 +316,20 @@ ${availableTools}
     };
   }
 
-  /**
-   * 更新统计信息
-   */
   private updateStats(execution: AgentExecutionHistory): void {
     this.stats.totalExecutions++;
+    this.stats.successfulExecutions++;
 
-    if (execution.result?.reason === 'success') {
-      this.stats.successfulExecutions++;
-    } else {
-      this.stats.failedExecutions++;
-    }
-
+    // 计算执行时间
     execution.performance.totalTime = Date.now() - execution.startTime;
     this.stats.averageExecutionTime =
       (this.stats.averageExecutionTime * (this.stats.totalExecutions - 1) +
         execution.performance.totalTime) /
       this.stats.totalExecutions;
 
-    // 更新工具使用统计
-    execution.steps.forEach(step => {
-      const toolName = step.action.tool;
-      this.stats.toolUsage[toolName] = (this.stats.toolUsage[toolName] || 0) + 1;
-    });
-
     this.stats.llmCalls += execution.thoughts.length;
   }
 
-  /**
-   * 初始化统计信息
-   */
   private initializeStats(): AgentStats {
     return {
       totalExecutions: 0,
@@ -601,73 +342,61 @@ ${availableTools}
     };
   }
 
-  /**
-   * 设置工具确认
-   */
   private setupToolConfirmation(): void {
-    // 实现工具确认逻辑
+    // 设置工具确认回调
+    // 这里可以根据需要实现
   }
 
-  /**
-   * 发射事件
-   */
   private async emitEvent(type: AgentEventTypeValue, data: any): Promise<void> {
     const event: AgentEvent = {
       type,
       executionId: this.currentExecution?.executionId || 'unknown',
-      data,
       timestamp: Date.now(),
+      data,
     };
 
-    this.emit(type, event);
-
-    // 执行插件钩子
+    // 异步触发插件处理
     for (const plugin of this.plugins) {
       try {
-        // 根据事件类型调用相应的钩子
-        // 这里可以扩展更复杂的插件系统
+        // 使用具体的插件钩子而非通用的 onEvent
+        if (type === AgentEventType.EXECUTION_START) {
+          await plugin.beforeExecution?.(data.context);
+        } else if (type === AgentEventType.EXECUTION_END) {
+          await plugin.afterExecution?.(data.context, data.result);
+        } else if (type === AgentEventType.ERROR) {
+          await plugin.onError?.(data.context, new Error(data.error));
+        }
       } catch (error) {
         if (this.config.debug) {
-          console.error(`插件 ${plugin.name} 处理事件失败:`, error);
+          console.error(`Plugin ${plugin.name} error:`, error);
         }
       }
     }
+
+    this.emit(type, event);
   }
 
-  /**
-   * 获取当前状态
-   */
+  // ======================== 公共方法 ========================
+
   public getStatus(): AgentStatusType {
     return this.status;
   }
 
-  /**
-   * 获取执行历史
-   */
   public getExecutionHistory(): AgentExecutionHistory | undefined {
     return this.currentExecution;
   }
 
-  /**
-   * 获取统计信息
-   */
   public getStats(): AgentStats {
     return { ...this.stats };
   }
 
-  /**
-   * 添加插件
-   */
   public addPlugin(plugin: AgentPlugin): void {
     this.plugins.push(plugin);
   }
 
-  /**
-   * 移除插件
-   */
   public removePlugin(pluginName: string): boolean {
     const index = this.plugins.findIndex(p => p.name === pluginName);
-    if (index >= 0) {
+    if (index !== -1) {
       this.plugins.splice(index, 1);
       return true;
     }

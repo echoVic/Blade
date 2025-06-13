@@ -1,7 +1,7 @@
 {
   "name": "blade-ai",
-  "version": "1.2.8",
-  "description": "🗡️ Blade - 智能 AI 助手命令行工具",
+  "version": "2.0.0",
+  "description": "🗡️ Blade - 智能 AI 助手命令行工具 (LangChain 原生实现)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -11,7 +11,8 @@
     "dist",
     "bin",
     "config.env.example",
-    "README.md"
+    "README.md",
+    "LANGCHAIN_MIGRATION_GUIDE.md"
   ],
   "scripts": {
     "dev": "tsup --watch",
@@ -43,7 +44,9 @@
     "smart-tools",
     "code-review",
     "documentation",
-    "git-tools"
+    "git-tools",
+    "langchain",
+    "langchain-js"
   ],
   "author": "echoVic",
   "license": "MIT",

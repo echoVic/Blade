@@ -1,4 +1,4 @@
-import type { LLMMessage } from '../llm/BaseLLM.js';
+import { BaseMessage } from '@langchain/core/messages';
 
 /**
  * 模型提供商类型
@@ -174,7 +174,7 @@ export interface PromptBuildOptions {
  * 构建结果
  */
 export interface PromptBuildResult {
-  messages: LLMMessage[];
+  messages: BaseMessage[];
   metadata: {
     templateId: string;
     roleId?: string;
