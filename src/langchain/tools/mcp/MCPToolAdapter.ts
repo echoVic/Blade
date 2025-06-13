@@ -63,7 +63,7 @@ export class MCPToolAdapter extends BladeTool {
    */
   protected async executeInternal(
     params: Record<string, any>,
-    context: ToolExecutionContext
+    _context: ToolExecutionContext
   ): Promise<BladeToolResult> {
     try {
       // 检查 MCP 会话连接状态
@@ -185,7 +185,7 @@ export class MCPToolAdapter extends BladeTool {
   private convertPropertyToZod(prop: any): z.ZodTypeAny {
     switch (prop.type) {
       case 'string':
-        let stringSchema: z.ZodTypeAny = z.string();
+        let stringSchema = z.string();
         if (prop.minLength) stringSchema = stringSchema.min(prop.minLength);
         if (prop.maxLength) stringSchema = stringSchema.max(prop.maxLength);
         if (prop.pattern) stringSchema = stringSchema.regex(new RegExp(prop.pattern));

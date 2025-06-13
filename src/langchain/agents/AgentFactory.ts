@@ -126,8 +126,8 @@ export class AgentFactory {
     }
   ): BladeAgent {
     const llm = new QwenChatModel({
-      apiKey: options?.apiKey || process.env.QWEN_API_KEY,
-      modelName: options?.modelName || 'qwen-turbo',
+      apiKey: options?.apiKey || process.env.QWEN_API_KEY || '',
+      model: options?.modelName || 'qwen-turbo',
       baseURL: options?.baseURL,
     });
 
@@ -148,9 +148,9 @@ export class AgentFactory {
     }
   ): BladeAgent {
     const llm = new VolcEngineChatModel({
-      apiKey: options?.apiKey || process.env.VOLCENGINE_API_KEY,
-      modelName: options?.modelName || 'ep-20250530171222-q42h8',
-      baseURL: options?.baseURL,
+      apiKey: options?.apiKey || process.env.VOLCENGINE_API_KEY || '',
+      model: options?.modelName || 'ep-20250530171222-q42h8',
+      endpoint: options?.baseURL,
     });
 
     return AgentFactory.createFromPreset(preset, llm, options);

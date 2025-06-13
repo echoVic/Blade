@@ -13,6 +13,7 @@ specifiers:
   axios: ^1.9.0
   chalk: ^5.4.1
   commander: ^14.0.0
+  dotenv: ^16.5.0
   eslint: ^8.57.0
   inquirer: ^12.6.3
   langchain: ^0.3.2
@@ -32,6 +33,7 @@ dependencies:
   axios: 1.9.0
   chalk: 5.4.1
   commander: 14.0.0
+  dotenv: 16.5.0
   inquirer: 12.6.3_@types+node@22.15.24
   langchain: 0.3.27_mujchjybpx52r7ibdwghmxpplm
   openai: 5.1.0_ws@8.18.2+zod@3.25.56
@@ -1976,6 +1978,11 @@ packages:
     dependencies:
       esutils: 2.0.3
     dev: true
+
+  /dotenv/16.5.0:
+    resolution: {integrity: sha512-m/C+AwOAr9/W1UOIZUo232ejMNnJAJtYQjUbHoNTBNTJSvqzzDh7vnrei3o3r3m9blf6ZoDkvcw0VmozNRFJxg==}
+    engines: {node: '>=12'}
+    dev: false
 
   /dunder-proto/1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}

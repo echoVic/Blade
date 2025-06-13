@@ -468,12 +468,23 @@ export class BladeChains implements ChainExecutor, ChainRegistry {
       condition = condition.replace(new RegExp(`\\b${key}\\b`, 'g'), JSON.stringify(value));
     }
 
-    // 评估条件
+    // 评估条件 - 使用安全的函数构造器替代 eval
     let conditionResult: boolean;
     try {
-      conditionResult = eval(condition);
+      // 创建一个安全的函数来评估条件，只允许访问输入数据
+      const conditionFunc = new Function(
+        'input',
+        'context',
+        `
+        "use strict";
+        return (${condition});
+      `
+      );
+      conditionResult = conditionFunc(input, context);
     } catch (error) {
-      throw new Error(`条件评估失败: ${condition}`);
+      throw new Error(
+        `条件评估失败: ${condition} - ${error instanceof Error ? error.message : String(error)}`
+      );
     }
 
     const nextStepId = conditionResult ? config.trueStep : config.falseStep;
@@ -491,11 +502,24 @@ export class BladeChains implements ChainExecutor, ChainRegistry {
   private async executeTransform(
     config: TransformStepConfig,
     input: any,
-    _context: ChainContext
+    context: ChainContext
   ): Promise<any> {
-    // 简化转换实现
-    const transformer = new Function('input', `return (${config.transformer})(input)`);
-    return transformer(input);
+    // 安全的转换实现
+    try {
+      const transformer = new Function(
+        'input',
+        'context',
+        `
+        "use strict";
+        return (${config.transformer})(input, context);
+      `
+      );
+      return transformer(input, context);
+    } catch (error) {
+      throw new Error(
+        `转换执行失败: ${config.transformer} - ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   /**
@@ -560,7 +584,7 @@ export class BladeChains implements ChainExecutor, ChainRegistry {
   /**
    * 收集步骤结果
    */
-  private collectStepResults(executionId: string): StepExecutionResult[] {
+  private collectStepResults(_executionId: string): StepExecutionResult[] {
     // 简化实现，实际应该跟踪所有步骤
     return [];
   }

@@ -91,19 +91,7 @@ export interface ToolkitConfig {
   defaultRiskLevel?: RiskLevel;
 }
 
-/**
- * 工具转换器配置
- */
-export interface ToolConverterConfig {
-  /** 是否保留原始参数结构 */
-  preserveParameters?: boolean;
-  /** 是否添加错误处理 */
-  addErrorHandling?: boolean;
-  /** 是否启用参数验证 */
-  enableValidation?: boolean;
-  /** 自定义参数映射 */
-  parameterMapping?: Record<string, string>;
-}
+// ToolConverterConfig removed - not needed
 
 /**
  * 传统工具定义（用于转换）

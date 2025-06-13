@@ -5,6 +5,7 @@ export default defineConfig({
   format: ['esm'],
   dts: true,
   clean: true,
+  external: ['dotenv'],
   banner: ({ format }) => {
     if (format === 'esm') {
       return {
@@ -13,4 +14,4 @@ export default defineConfig({
     }
     return {};
   },
-}); 
+});

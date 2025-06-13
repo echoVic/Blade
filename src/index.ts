@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { Command } from 'commander';
 import 'dotenv/config';
 import { readFileSync } from 'fs';
@@ -78,7 +76,23 @@ export type {
 // 类型定义
 export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
 
-export * from './mcp/index.js';
+// MCP 模块 - 明确导出以避免命名冲突
+export {
+  MCPClient, // 重命名避免冲突
+  MCPClientConfig,
+  MCPConfig,
+  mcpConfig,
+  MCPConfigFile,
+  MCPConnectionConfig,
+  MCPServerConfig as MCPOriginalServerConfig,
+  MCPServer,
+  MCPServerConfigFile,
+  MCPSession,
+  MCPTool,
+  MCPToolCall,
+  MCPToolResult,
+} from './mcp/index.js';
+
 export * from './tools/index.js';
 
 const program = new Command();

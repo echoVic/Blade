@@ -4,18 +4,7 @@
  */
 
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
-import {
-  BaseMemory,
-  BufferMemory,
-  BufferWindowMemory,
-  ChatMessageHistory,
-  CombinedMemory,
-  ConversationSummaryBufferMemory,
-  ConversationSummaryMemory,
-  ConversationTokenBufferMemory,
-  EntityMemory,
-  VectorStoreRetrieverMemory,
-} from 'langchain/memory';
+import { BaseMemory, BufferMemory, BufferWindowMemory, ChatMessageHistory } from 'langchain/memory';
 import {
   MemoryEntry,
   MemoryEvent,
@@ -26,23 +15,10 @@ import {
 } from './types.js';
 
 export interface LangChainMemoryConfig {
-  type: 'buffer' | 'window' | 'summary' | 'token' | 'entity' | 'vector' | 'combined';
+  type: 'buffer' | 'window';
   options?: {
     // Buffer Window 配置
     k?: number; // 保留消息数量
-
-    // Token Buffer 配置
-    maxTokenLimit?: number;
-
-    // Summary 配置
-    maxTokenLimit?: number;
-
-    // Vector Store 配置
-    vectorStore?: any;
-    retriever?: any;
-
-    // Combined 配置
-    memories?: BaseMemory[];
   };
 }
 
@@ -94,55 +70,6 @@ export class LangChainMemoryManager implements MemoryManager {
           k: options.k || 10,
         });
 
-      case 'summary':
-        return new ConversationSummaryMemory({
-          chatHistory: messageHistory,
-          returnMessages: true,
-          memoryKey: 'chat_history',
-          maxTokenLimit: options.maxTokenLimit || 2000,
-        });
-
-      case 'token':
-        return new ConversationTokenBufferMemory({
-          chatHistory: messageHistory,
-          returnMessages: true,
-          memoryKey: 'chat_history',
-          maxTokenLimit: options.maxTokenLimit || 2000,
-        });
-
-      case 'entity':
-        return new EntityMemory({
-          chatHistory: messageHistory,
-          memoryKey: 'entities',
-          entityExtractionPrompt: undefined, // 使用默认提示
-          entitySummarizationPrompt: undefined, // 使用默认提示
-        });
-
-      case 'vector':
-        if (!options.vectorStore) {
-          throw new Error('Vector store is required for vector memory');
-        }
-        return new VectorStoreRetrieverMemory({
-          vectorStoreRetriever: options.retriever || options.vectorStore.asRetriever(),
-          memoryKey: 'chat_history',
-        });
-
-      case 'combined':
-        const subMemories = options.memories || [
-          new BufferMemory({
-            chatHistory: messageHistory,
-            memoryKey: 'chat_history',
-          }),
-          new EntityMemory({
-            chatHistory: messageHistory,
-            memoryKey: 'entities',
-          }),
-        ];
-
-        return new CombinedMemory({
-          memories: subMemories,
-        });
-
       default:
         return new BufferMemory({
           chatHistory: messageHistory,
@@ -190,8 +117,7 @@ export class LangChainMemoryManager implements MemoryManager {
     });
   }
 
-  async listSessions(userId?: string): Promise<string[]> {
-    // 简化实现：返回当前活跃的会话列表
+  async listSessions(): Promise<string[]> {
     return Array.from(this.memories.keys());
   }
 
@@ -204,9 +130,7 @@ export class LangChainMemoryManager implements MemoryManager {
     content: any,
     metadata?: Record<string, any>
   ): Promise<string> {
-    const memory = await this.getOrCreateMemory(sessionId);
     const messageHistory = this.messageHistories.get(sessionId)!;
-
     const id = `${sessionId}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
     if (type === MemoryType.CONVERSATION) {
@@ -222,7 +146,7 @@ export class LangChainMemoryManager implements MemoryManager {
         await messageHistory.addMessage(new SystemMessage({ content: message }));
       }
     } else {
-      // 其他类型记忆：作为系统消息存储，包含结构化数据
+      // 其他类型记忆：作为系统消息存储
       const structuredContent = {
         type: type,
         data: content,
@@ -250,7 +174,6 @@ export class LangChainMemoryManager implements MemoryManager {
   }
 
   async recall(sessionId: string, query?: string, type?: MemoryType): Promise<MemoryEntry[]> {
-    const memory = await this.getOrCreateMemory(sessionId);
     const messageHistory = this.messageHistories.get(sessionId);
 
     if (!messageHistory) {
@@ -265,7 +188,11 @@ export class LangChainMemoryManager implements MemoryManager {
       const msg = messages[i];
       const entryId = `${sessionId}_${i}`;
 
-      if (msg instanceof SystemMessage && msg.content.startsWith('[')) {
+      if (
+        msg instanceof SystemMessage &&
+        typeof msg.content === 'string' &&
+        msg.content.startsWith('[')
+      ) {
         // 解析结构化数据
         try {
           const match = msg.content.match(/\[(\w+)\] (.+)/);
@@ -300,7 +227,7 @@ export class LangChainMemoryManager implements MemoryManager {
           type: MemoryType.CONVERSATION,
           content: {
             role,
-            message: msg.content,
+            message: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
             timestamp: new Date(),
           },
           createdAt: new Date(),
@@ -318,26 +245,6 @@ export class LangChainMemoryManager implements MemoryManager {
       });
     }
 
-    // 利用 LangChain 的高级功能
-    if (memory instanceof EntityMemory) {
-      // 如果是实体记忆，获取提取的实体
-      const variables = await memory.loadMemoryVariables({});
-      if (variables.entities) {
-        entries.push({
-          id: `${sessionId}_entities`,
-          sessionId,
-          type: MemoryType.CONTEXT,
-          content: {
-            entities: variables.entities,
-            extracted_at: new Date(),
-          },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          importance: 0.8,
-        });
-      }
-    }
-
     this.emitEvent({
       type: 'access',
       sessionId,
@@ -348,52 +255,26 @@ export class LangChainMemoryManager implements MemoryManager {
     return entries;
   }
 
-  async forget(sessionId: string, entryId: string): Promise<void> {
-    // LangChain 不支持选择性删除，这是一个设计限制
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async forget(_sessionId: string, _entryId: string): Promise<void> {
     console.warn('LangChain memory 不支持选择性删除单个条目');
-    console.log('如需清空整个会话，请使用 deleteSession()');
-
-    this.emitEvent({
-      type: 'error',
-      sessionId,
-      entryId,
-      timestamp: new Date(),
-      error: 'LangChain memory 不支持选择性删除',
-    });
   }
 
-  async update(sessionId: string, entryId: string, updates: Partial<MemoryEntry>): Promise<void> {
-    // LangChain 不支持直接更新，这是一个设计限制
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async update(
+    _sessionId: string,
+    _entryId: string,
+    _updates: Partial<MemoryEntry>
+  ): Promise<void> {
     console.warn('LangChain memory 不支持直接更新条目');
-    console.log('建议重新添加新的记忆条目');
-
-    this.emitEvent({
-      type: 'error',
-      sessionId,
-      entryId,
-      timestamp: new Date(),
-      error: 'LangChain memory 不支持直接更新',
-    });
   }
 
   /**
-   * 高级功能 - 利用 LangChain 的强大能力
+   * 高级功能
    */
-  async summarize(sessionId: string, maxEntries?: number): Promise<string> {
-    const memory = await this.getOrCreateMemory(sessionId);
-
-    // 如果是摘要类型的 memory，直接获取摘要
-    if (
-      memory instanceof ConversationSummaryMemory ||
-      memory instanceof ConversationSummaryBufferMemory
-    ) {
-      const variables = await memory.loadMemoryVariables({});
-      return variables.history || variables.summary || '暂无对话摘要';
-    }
-
-    // 对于其他类型，获取最近的对话
+  async summarize(sessionId: string, maxEntries = 50): Promise<string> {
     const entries = await this.recall(sessionId, undefined, MemoryType.CONVERSATION);
-    const recentEntries = entries.slice(-maxEntries || -50);
+    const recentEntries = entries.slice(-maxEntries);
 
     if (recentEntries.length === 0) {
       return '暂无对话记录';
@@ -409,32 +290,7 @@ export class LangChainMemoryManager implements MemoryManager {
     return `会话摘要 (${recentEntries.length} 条消息):\n${conversations}`;
   }
 
-  async compress(sessionId: string): Promise<number> {
-    const memory = await this.getOrCreateMemory(sessionId);
-
-    // 对于支持自动压缩的 memory，触发压缩
-    if (
-      memory instanceof ConversationSummaryMemory ||
-      memory instanceof ConversationTokenBufferMemory
-    ) {
-      const beforeCount = (await this.recall(sessionId)).length;
-
-      // 重新加载 memory 变量会触发内部的压缩逻辑
-      await memory.loadMemoryVariables({});
-
-      const afterCount = (await this.recall(sessionId)).length;
-      const compressed = Math.max(0, beforeCount - afterCount);
-
-      this.emitEvent({
-        type: 'cleanup',
-        sessionId,
-        timestamp: new Date(),
-        data: { beforeCount, afterCount, compressed },
-      });
-
-      return compressed;
-    }
-
+  async compress(): Promise<number> {
     return 0;
   }
 
@@ -458,7 +314,6 @@ export class LangChainMemoryManager implements MemoryManager {
   }
 
   async getStats(sessionId: string): Promise<MemoryStats> {
-    const memory = await this.getOrCreateMemory(sessionId);
     const entries = await this.recall(sessionId);
 
     // 计算类型分布
@@ -483,9 +338,8 @@ export class LangChainMemoryManager implements MemoryManager {
       }
     }
 
-    // 获取 LangChain memory 的特定统计
-    const variables = await memory.loadMemoryVariables({});
-    const memorySize = JSON.stringify(variables).length;
+    const memoryVars = await this.getMemoryVariables(sessionId);
+    const memorySize = JSON.stringify(memoryVars).length;
 
     return {
       sessionId,
@@ -495,13 +349,11 @@ export class LangChainMemoryManager implements MemoryManager {
       oldestEntry: oldestDate,
       newestEntry: newestDate,
       averageImportance: entries.length > 0 ? totalImportance / entries.length : 0,
-      memoryType: this.config.type,
-      langchainVariables: Object.keys(variables),
-    } as MemoryStats & { memoryType: string; langchainVariables: string[] };
+    };
   }
 
   /**
-   * 获取 LangChain memory 实例（用于高级操作）
+   * 获取 LangChain memory 实例
    */
   async getMemoryInstance(sessionId: string): Promise<BaseMemory> {
     return this.getOrCreateMemory(sessionId);
@@ -563,7 +415,7 @@ export class LangChainMemoryManager implements MemoryManager {
    * 清理资源
    */
   async dispose(): Promise<void> {
-    for (const [sessionId, messageHistory] of this.messageHistories) {
+    for (const [, messageHistory] of this.messageHistories) {
       await messageHistory.clear();
     }
 

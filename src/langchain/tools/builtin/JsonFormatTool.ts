@@ -152,7 +152,7 @@ export class JsonFormatTool extends BladeTool {
    * 格式化JSON
    */
   private formatJSON(parsed: any, indent: number, sortKeys: boolean): any {
-    const replacer = sortKeys ? this.createSortingReplacer() : null;
+    const replacer = sortKeys ? this.createSortingReplacer() : undefined;
     const formatted = JSON.stringify(parsed, replacer, indent);
 
     return {
@@ -170,7 +170,7 @@ export class JsonFormatTool extends BladeTool {
    * 压缩JSON
    */
   private minifyJSON(parsed: any, sortKeys: boolean): any {
-    const replacer = sortKeys ? this.createSortingReplacer() : null;
+    const replacer = sortKeys ? this.createSortingReplacer() : undefined;
     const minified = JSON.stringify(parsed, replacer);
     const original = JSON.stringify(parsed, null, 2);
 

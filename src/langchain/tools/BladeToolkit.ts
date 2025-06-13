@@ -6,10 +6,8 @@
 
 import { Tool } from '@langchain/core/tools';
 import { BladeTool } from './base/BladeTool.js';
-import { ConvertedTool, ToolConverter } from './base/ToolConverter.js';
 import type {
   BatchToolConfig,
-  LegacyTool,
   ToolCategory,
   ToolkitConfig,
   ToolMetrics,
@@ -73,38 +71,6 @@ export class BladeToolkit {
         }
       }
     }
-  }
-
-  /**
-   * 从传统工具转换并注册
-   */
-  public registerLegacyTool(
-    legacyTool: LegacyTool,
-    options: ToolRegistrationOptions = {}
-  ): ConvertedTool {
-    const convertedTool = ToolConverter.convertTool(legacyTool);
-    this.registerTool(convertedTool, options);
-    return convertedTool;
-  }
-
-  /**
-   * 批量转换并注册传统工具
-   */
-  public registerLegacyTools(
-    legacyTools: LegacyTool[],
-    options: ToolRegistrationOptions = {}
-  ): ConvertedTool[] {
-    const convertedTools = ToolConverter.convertTools(legacyTools);
-
-    convertedTools.forEach(tool => {
-      try {
-        this.registerTool(tool, options);
-      } catch (error) {
-        console.error(`❌ 注册转换工具失败 ${tool.name}:`, error);
-      }
-    });
-
-    return convertedTools;
   }
 
   /**

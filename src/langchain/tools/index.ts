@@ -4,7 +4,7 @@
 
 // 基础类和类型
 export { BladeTool } from './base/BladeTool.js';
-export { ConvertedTool, ToolConverter } from './base/ToolConverter.js';
+
 export * from './types.js';
 
 // 工具包管理器
