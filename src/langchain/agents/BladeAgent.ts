@@ -2,30 +2,31 @@
  * Blade Agent - LangChain 原生 Agent 实现
  */
 
-import { PromptTemplate } from '@langchain/core/prompts';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { AgentExecutor, createReactAgent } from 'langchain/agents';
 import { pull } from 'langchain/hub';
 import { BladeToolkit } from '../tools/BladeToolkit.js';
 
-import type {
-  AgentContext,
-  AgentEvent,
-  AgentEventTypeValue,
-  AgentExecutionHistory,
-  AgentPlugin,
-  AgentResponse,
-  AgentStats,
-  AgentStatusType,
-  BladeAgentConfig,
+import {
+  type AgentContext,
+  type AgentEvent,
+  type AgentEventTypeValue,
+  type AgentExecutionHistory,
+  type AgentPlugin,
+  type AgentResponse,
+  type AgentStats,
+  type AgentStatusType,
+  type BladeAgentConfig,
+  AgentEventType,
+  AgentStatus,
 } from './types.js';
-import { AgentEventType, AgentStatus } from './types.js';
 
 /**
  * Blade Agent - 智能代理核心实现
  *
- * 使用 LangChain 原生 Agent 功能：
+ * 使用 LangChain 原生 ReAct Agent 功能：
  * - 原生 ReAct Agent (createReactAgent)
  * - AgentExecutor 管理
  * - 工具调用和确认
@@ -55,7 +56,7 @@ export class BladeAgent extends EventEmitter {
       ...config,
     };
 
-    // 初始化 LangChain Agent
+    // 初始化 LangChain ReAct Agent
     this.initializeLangChainAgent();
 
     // 设置工具确认回调
@@ -65,15 +66,15 @@ export class BladeAgent extends EventEmitter {
   }
 
   /**
-   * 初始化 LangChain Agent Executor
+   * 初始化 LangChain ReAct Agent
    */
   private async initializeLangChainAgent(): Promise<void> {
     const tools = this.config.toolkit?.toLangChainTools() || [];
 
-    // 创建提示模板
-    const prompt = await this.createPromptTemplate();
+    // 创建标准 ReAct 提示模板
+    const prompt = await this.createReactPromptTemplate();
 
-    // 创建 ReAct Agent
+    // 创建 ReAct Agent（适合通义千问等开源模型）
     const agent = await createReactAgent({
       llm: this.config.llm!,
       tools,
@@ -87,42 +88,24 @@ export class BladeAgent extends EventEmitter {
       maxIterations: this.config.maxIterations,
       verbose: this.config.debug,
       handleParsingErrors: true,
+      returnIntermediateSteps: true,
     });
   }
 
   /**
-   * 创建提示模板
+   * 创建标准 ReAct 提示模板
+   *
+   * ReAct (Reasoning + Acting) 提示模板遵循：
+   * 1. 思考 (Thought)
+   * 2. 行动 (Action)
+   * 3. 观察 (Observation)
+   * 的循环模式
    */
-  private async createPromptTemplate(): Promise<PromptTemplate> {
-    try {
-      // 尝试从 LangChain Hub 拉取标准 ReAct 提示模板
-      return await pull('hwchase17/react');
-    } catch {
-      // 如果失败，使用自定义提示模板
-      const template = `${this.config.systemPrompt || '你是一个智能助手，可以使用工具来帮助用户解决问题。'}
-
-你有权访问以下工具：
-
-{tools}
-
-使用以下格式：
-
-Question: 用户输入的问题
-Thought: 我需要思考该怎么做
-Action: 要使用的工具，应该是 [{tool_names}] 中的一个
-Action Input: 工具的输入参数
-Observation: 工具执行的结果
-... (这个Thought/Action/Action Input/Observation序列可以重复N次)
-Thought: 我现在知道最终答案了
-Final Answer: 对原始输入问题的最终答案
-
-开始!
-
-Question: {input}
-Thought:{agent_scratchpad}`;
-
-      return PromptTemplate.fromTemplate(template);
-    }
+  private async createReactPromptTemplate(): Promise<ChatPromptTemplate> {
+    // 使用 LangChain Hub 的官方 ReAct 提示模板
+    // 这个模板包含了所有必需的输入变量: tools, tool_names, agent_scratchpad
+    const prompt = await pull<ChatPromptTemplate>('hwchase17/react');
+    return prompt;
   }
 
   /**
