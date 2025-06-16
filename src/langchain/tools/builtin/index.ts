@@ -15,12 +15,29 @@ function createReadFileTool(): Tool {
     name: 'read_file',
     description: 'Read the contents of a file',
     func: async (input: string) => {
+      console.log(`🔧 [read_file] 工具被调用，参数: ${input}`);
       try {
         const fs = await import('fs/promises');
-        const content = await fs.readFile(input, 'utf-8');
+        const path = await import('path');
+
+        // 解析文件路径
+        const resolvedPath = path.resolve(input.trim());
+        console.log(`🔧 [read_file] 解析路径: ${resolvedPath}`);
+
+        // 检查文件是否存在
+        const stats = await fs.stat(resolvedPath);
+        console.log(`🔧 [read_file] 文件存在，大小: ${stats.size} 字节`);
+
+        // 读取文件内容
+        const content = await fs.readFile(resolvedPath, 'utf-8');
+        console.log(`🔧 [read_file] 成功读取文件，内容长度: ${content.length} 字符`);
+        console.log(`🔧 [read_file] 文件内容预览: ${content.substring(0, 200)}...`);
+
         return content;
       } catch (error) {
-        return `Error reading file: ${error instanceof Error ? error.message : String(error)}`;
+        const errorMsg = `Error reading file: ${error instanceof Error ? error.message : String(error)}`;
+        console.log(`🔧 [read_file] 错误: ${errorMsg}`);
+        return errorMsg;
       }
     },
   });
