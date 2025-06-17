@@ -27,7 +27,7 @@ export class VolcEngineChatModel extends BaseChatModel {
     });
 
     this.config = {
-      model: 'ep-20250417144747-rgffm',
+      model: 'ep-20250617131345-rshkp',
       temperature: 0.7,
       maxTokens: 2048,
       topP: 0.8,
@@ -51,11 +51,40 @@ export class VolcEngineChatModel extends BaseChatModel {
   /**
    * 将 LangChain BaseMessage 转换为 OpenAI 格式
    */
-  private convertMessagesToOpenAI(messages: BaseMessage[]) {
-    return messages.map(msg => ({
-      role: msg._getType() as 'system' | 'user' | 'assistant',
-      content: msg.content as string,
-    }));
+  private convertMessagesToOpenAI(messages: BaseMessage[]): any[] {
+    return messages.map(msg => {
+      const messageType = msg._getType();
+      // 修复角色映射：LangChain 的 "human" 需要映射为豆包 API 的 "user"
+
+      switch (messageType) {
+        case 'human':
+          return {
+            role: 'user' as const,
+            content: msg.content as string,
+          };
+        case 'ai':
+          return {
+            role: 'assistant' as const,
+            content: msg.content as string,
+          };
+        case 'system':
+          return {
+            role: 'system' as const,
+            content: msg.content as string,
+          };
+        case 'tool':
+          // 工具消息需要特殊处理，但豆包 API 可能不支持，转为用户消息
+          return {
+            role: 'user' as const,
+            content: `工具输出: ${msg.content as string}`,
+          };
+        default:
+          return {
+            role: 'user' as const,
+            content: msg.content as string,
+          };
+      }
+    });
   }
 
   /**

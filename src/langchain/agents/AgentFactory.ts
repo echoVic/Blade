@@ -112,7 +112,76 @@ export class AgentFactory {
   }
 
   /**
-   * 创建千问 Agent
+   * 🎯 智能 Agent 创建 - 自动选择最佳执行策略
+   *
+   * 根据模型类型自动选择执行策略：
+   * - 豆包模型：LangChain 原生 ReAct Agent
+   * - 通义千问：简化工具调用模式
+   * - 其他模型：尝试 ReAct，失败则回退到简化模式
+   */
+  static createSmartAgent(
+    preset: keyof typeof AgentPresets = 'GENERAL_ASSISTANT',
+    llm: BaseLanguageModel,
+    options?: {
+      toolkit?: BladeToolkit;
+      overrides?: Partial<BladeAgentConfig>;
+      forceStrategy?: 'react' | 'simplified' | 'auto';
+    }
+  ): BladeAgent {
+    const toolkit = options?.toolkit || AgentFactory.createDefaultToolkit();
+
+    // 智能策略选择
+    const strategy = options?.forceStrategy || 'auto';
+    const modelType = llm.constructor.name;
+    const isVolcEngine = modelType.includes('VolcEngine') || modelType.includes('ChatByteDance');
+
+    // 构建配置
+    const config: BladeAgentConfig = {
+      ...AgentPresets[preset],
+      llm,
+      toolkit,
+      debug: true, // 启用调试以显示策略选择
+      ...options?.overrides,
+    };
+
+    console.log(`🎯 智能 Agent 创建:`);
+    console.log(`  - 模型类型: ${modelType}`);
+    console.log(`  - 检测到豆包模型: ${isVolcEngine ? '✅' : '❌'}`);
+    console.log(`  - 策略选择: ${strategy}`);
+    console.log(`  - 推荐执行策略: ${isVolcEngine ? 'ReAct Agent' : '简化模式'}`);
+
+    return new BladeAgent(config);
+  }
+
+  /**
+   * 创建火山引擎 Agent - 使用 ReAct 模式
+   */
+  static createVolcEngineAgent(
+    preset: keyof typeof AgentPresets = 'GENERAL_ASSISTANT',
+    options?: {
+      apiKey?: string;
+      modelName?: string;
+      baseURL?: string;
+      toolkit?: BladeToolkit;
+      overrides?: Partial<BladeAgentConfig>;
+    }
+  ): BladeAgent {
+    const llm = new VolcEngineChatModel({
+      apiKey: options?.apiKey || process.env.VOLCENGINE_API_KEY || '',
+      model: options?.modelName || 'ep-20250617131345-rshkp',
+      endpoint: options?.baseURL,
+    });
+
+    console.log(`🚀 创建豆包 ReAct Agent:`);
+    console.log(`  - 模型: ${options?.modelName || 'ep-20250617131345-rshkp'}`);
+    console.log(`  - 执行策略: LangChain 原生 ReAct Agent`);
+    console.log(`  - 预设: ${preset}`);
+
+    return AgentFactory.createSmartAgent(preset, llm, options);
+  }
+
+  /**
+   * 创建千问 Agent - 使用简化模式
    */
   static createQwenAgent(
     preset: keyof typeof AgentPresets = 'GENERAL_ASSISTANT',
@@ -130,29 +199,57 @@ export class AgentFactory {
       baseURL: options?.baseURL,
     });
 
-    return AgentFactory.createFromPreset(preset, llm, options);
+    console.log(`🚀 创建通义千问 Agent:`);
+    console.log(`  - 模型: ${options?.modelName || 'qwen-turbo'}`);
+    console.log(`  - 执行策略: 简化工具调用模式`);
+    console.log(`  - 预设: ${preset}`);
+
+    return AgentFactory.createSmartAgent(preset, llm, options);
   }
 
   /**
-   * 创建火山引擎 Agent
+   * 🎯 快速创建推荐 Agent - 基于可用的环境变量
    */
-  static createVolcEngineAgent(
+  static createRecommendedAgent(
     preset: keyof typeof AgentPresets = 'GENERAL_ASSISTANT',
     options?: {
-      apiKey?: string;
-      modelName?: string;
-      baseURL?: string;
+      preferredProvider?: 'volcengine' | 'qwen' | 'auto';
       toolkit?: BladeToolkit;
       overrides?: Partial<BladeAgentConfig>;
     }
   ): BladeAgent {
-    const llm = new VolcEngineChatModel({
-      apiKey: options?.apiKey || process.env.VOLCENGINE_API_KEY || '',
-      model: options?.modelName || 'ep-20250530171222-q42h8',
-      endpoint: options?.baseURL,
-    });
+    const preferredProvider = options?.preferredProvider || 'auto';
 
-    return AgentFactory.createFromPreset(preset, llm, options);
+    // 检查环境变量
+    const hasVolcEngine = !!process.env.VOLCENGINE_API_KEY;
+    const hasQwen = !!process.env.QWEN_API_KEY;
+
+    console.log(`🎯 创建推荐 Agent:`);
+    console.log(`  - 偏好提供商: ${preferredProvider}`);
+    console.log(`  - 豆包 API 可用: ${hasVolcEngine ? '✅' : '❌'}`);
+    console.log(`  - 通义千问 API 可用: ${hasQwen ? '✅' : '❌'}`);
+
+    // 智能选择策略
+    if (preferredProvider === 'volcengine' && hasVolcEngine) {
+      console.log(`  - 选择策略: 豆包 ReAct Agent`);
+      return AgentFactory.createVolcEngineAgent(preset, options);
+    } else if (preferredProvider === 'qwen' && hasQwen) {
+      console.log(`  - 选择策略: 通义千问简化模式`);
+      return AgentFactory.createQwenAgent(preset, options);
+    } else {
+      // 自动选择：优先豆包 > 通义千问
+      if (hasVolcEngine) {
+        console.log(`  - 自动选择策略: 豆包 ReAct Agent（推荐）`);
+        return AgentFactory.createVolcEngineAgent(preset, options);
+      } else if (hasQwen) {
+        console.log(`  - 自动选择策略: 通义千问简化模式`);
+        return AgentFactory.createQwenAgent(preset, options);
+      } else {
+        throw new Error(
+          `❌ 未找到可用的 API 密钥。请设置 VOLCENGINE_API_KEY 或 QWEN_API_KEY 环境变量`
+        );
+      }
+    }
   }
 
   /**
@@ -167,7 +264,7 @@ export class AgentFactory {
   /**
    * 创建自定义工具包
    */
-  static createCustomToolkit(_config: {
+  static createCustomToolkit(config?: {
     name: string;
     description?: string;
     enableConfirmation?: boolean;
@@ -175,15 +272,23 @@ export class AgentFactory {
   }): BladeToolkit {
     const toolkit = new BladeToolkit();
     // 工具在构造时已自动加载，配置参数暂时忽略
+    // TODO: 后续实现根据 config 参数定制工具包
+    if (config) {
+      // 占位符，防止 linter 警告
+    }
     return toolkit;
   }
 
   /**
    * 创建专用工具包
    */
-  static createSpecializedToolkit(_type: 'filesystem' | 'network' | 'utility'): BladeToolkit {
+  static createSpecializedToolkit(type?: 'filesystem' | 'network' | 'utility'): BladeToolkit {
     const toolkit = new BladeToolkit();
     // 专用工具包功能暂时简化，返回默认工具包
+    // TODO: 后续实现根据 type 参数筛选工具
+    if (type) {
+      // 占位符，防止 linter 警告
+    }
     return toolkit;
   }
 

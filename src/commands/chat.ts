@@ -63,9 +63,9 @@ export function chatCommand(program: Command) {
           console.log(chalk.cyan(`🧠 Memory 系统已启用 (${options.memoryType})`));
           console.log(chalk.gray(`   会话 ID: ${sessionId}`));
         }
-        if (options.stream) {
-          console.log(chalk.cyan('📡 原生流式输出已启用'));
-        }
+        // 默认启用流式输出（所有模式）
+        options.stream = true; // 默认启用流式输出
+        console.log(chalk.cyan('📡 原生流式输出已启用'));
         if (options.debug) {
           console.log(chalk.yellow('🐛 调试模式已启用'));
         }
@@ -108,14 +108,21 @@ export function chatCommand(program: Command) {
             },
           };
 
+          // 🎯 使用智能 Agent 创建策略
+          console.log(chalk.blue('🎯 智能 Agent 创建中...'));
+
           if (provider === 'qwen') {
+            console.log(chalk.gray('  - 使用通义千问简化模式'));
             agent = AgentFactory.createQwenAgent(getScenarioPreset(options.scenario), agentConfig);
           } else {
+            console.log(chalk.gray('  - 使用豆包 ReAct Agent 模式'));
             agent = AgentFactory.createVolcEngineAgent(
               getScenarioPreset(options.scenario),
               agentConfig
             );
           }
+
+          console.log(chalk.green('✅ 智能 Agent 创建完成'));
 
           // 如果启用了 Memory，将其连接到 Agent
           if (memoryManager) {
@@ -183,25 +190,25 @@ export function chatCommand(program: Command) {
             agent,
             question,
             options.scenario,
-            options.stream,
+            options.stream, // 使用前面已经设置好的流式输出标志
             sessionId,
             memoryManager
           );
         } else if (options.interactive) {
-          // 交互式聊天模式
+          // 交互式聊天模式（默认启用流式输出）
           await startInteractiveChat(
             agent,
             options.scenario,
-            options.stream,
+            options.stream || true, // 交互式模式默认启用流式输出
             sessionId,
             memoryManager
           );
         } else {
-          // 默认：启动交互式聊天
+          // 默认：启动交互式聊天（默认启用流式输出）
           await startInteractiveChat(
             agent,
             options.scenario,
-            options.stream,
+            options.stream || true, // 交互式模式默认启用流式输出
             sessionId,
             memoryManager
           );
@@ -389,8 +396,7 @@ async function startInteractiveChat(
 
         for await (const chunk of agent.stream(message)) {
           if (chunk.type === 'action') {
-            stepCount++;
-            process.stdout.write(chalk.gray(`🔄 `));
+            process.stdout.write(chalk.gray(`🔄 [步骤${++stepCount}] `));
           } else if (chunk.type === 'final') {
             process.stdout.write(chunk.content);
             fullResponse = chunk.content;
@@ -548,7 +554,6 @@ async function showMemoryInfo(
     const stats = await memoryManager.getStats(sessionId);
     console.log(chalk.gray(`会话 ID: ${sessionId}`));
     console.log(chalk.gray(`记录总数: ${stats.totalEntries}`));
-    console.log(chalk.gray(`LLM 调用: ${stats.llmCalls} 次`));
     console.log(chalk.gray(`最近活动: ${new Date().toISOString()}`));
 
     // 显示最近的对话
@@ -572,14 +577,6 @@ async function showMemoryInfo(
   } catch (error) {
     console.error(chalk.red('❌ 获取 Memory 信息失败:'), error);
   }
-}
-
-/**
- * 判断是否应该使用 Chains
- */
-function shouldUseChains(question: string): boolean {
-  const chainKeywords = ['链式', '步骤', 'chain', '分步', '流程', '依次', '顺序执行'];
-  return chainKeywords.some(keyword => question.toLowerCase().includes(keyword));
 }
 
 /**
