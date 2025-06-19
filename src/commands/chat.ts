@@ -256,24 +256,50 @@ async function answerSingleQuestion(
       let stepCount = 0;
       const startTime = Date.now();
 
-      for await (const chunk of agent.stream(question)) {
-        if (chunk.type === 'action') {
-          // 显示 Agent 执行的动作
-          stepCount++;
-          process.stdout.write(chalk.gray(`🔄 [步骤${stepCount}] `));
-        } else if (chunk.type === 'final') {
-          // 显示最终结果
-          process.stdout.write(chunk.content);
-          fullResponse = chunk.content;
-        } else if (chunk.type === 'error') {
-          console.error(chalk.red('\n❌ 流式处理错误:'), chunk.content);
-          return;
+      // 检查是否是 QwenReActAgent (通过检查特有属性)
+      const isQwenReActAgent =
+        (agent as any).constructor.name === 'QwenReActAgent' ||
+        (typeof (agent as any).parser !== 'undefined' &&
+          typeof (agent as any).currentIteration !== 'undefined');
+
+      if (isQwenReActAgent) {
+        // 使用 QwenReActAgent 的流式输出
+        console.log(chalk.blue('🧠 通义千问 ReAct 推理过程:'));
+
+        for await (const chunk of (agent as any).stream(question)) {
+          if (chunk.type === 'thinking') {
+            process.stdout.write(chalk.gray(`💭 ${chunk.content}\n`));
+          } else if (chunk.type === 'action') {
+            stepCount++;
+            process.stdout.write(chalk.yellow(`🔄 [步骤${stepCount}] ${chunk.content}\n`));
+          } else if (chunk.type === 'observation') {
+            process.stdout.write(chalk.cyan(`👁️ ${chunk.content}\n`));
+          } else if (chunk.type === 'final') {
+            process.stdout.write(chalk.green(`✅ 最终答案: ${chunk.content}\n`));
+            fullResponse = chunk.content;
+          }
+        }
+      } else {
+        // 使用标准 BladeAgent 的流式输出
+        for await (const chunk of agent.stream(question)) {
+          if (chunk.type === 'action') {
+            // 显示 Agent 执行的动作
+            stepCount++;
+            process.stdout.write(chalk.gray(`🔄 [步骤${stepCount}] `));
+          } else if (chunk.type === 'final') {
+            // 显示最终结果
+            process.stdout.write(chunk.content);
+            fullResponse = chunk.content;
+          } else if (chunk.type === 'error') {
+            console.error(chalk.red('\n❌ 流式处理错误:'), chunk.content);
+            return;
+          }
         }
       }
 
       const endTime = Date.now();
       console.log(
-        chalk.gray(`\n\n📊 流式执行完成: ${stepCount} 个步骤, 耗时 ${endTime - startTime}ms`)
+        chalk.gray(`\n📊 流式执行完成: ${stepCount} 个步骤, 耗时 ${endTime - startTime}ms`)
       );
 
       // 记录 AI 响应到 Memory
@@ -394,18 +420,42 @@ async function startInteractiveChat(
         let fullResponse = '';
         let stepCount = 0;
 
-        for await (const chunk of agent.stream(message)) {
-          if (chunk.type === 'action') {
-            process.stdout.write(chalk.gray(`🔄 [步骤${++stepCount}] `));
-          } else if (chunk.type === 'final') {
-            process.stdout.write(chunk.content);
-            fullResponse = chunk.content;
-          } else if (chunk.type === 'error') {
-            console.error(chalk.red('\n❌ 流式处理错误:'), chunk.content);
-            break;
+        // 检查是否是 QwenReActAgent (通过检查特有属性)
+        const isQwenReActAgent =
+          (agent as any).constructor.name === 'QwenReActAgent' ||
+          (typeof (agent as any).parser !== 'undefined' &&
+            typeof (agent as any).currentIteration !== 'undefined');
+
+        if (isQwenReActAgent) {
+          // 使用 QwenReActAgent 的流式输出
+          for await (const chunk of (agent as any).stream(message)) {
+            if (chunk.type === 'thinking') {
+              process.stdout.write(chalk.gray(`💭 ${chunk.content}\n`));
+            } else if (chunk.type === 'action') {
+              stepCount++;
+              process.stdout.write(chalk.yellow(`🔄 [步骤${stepCount}] ${chunk.content}\n`));
+            } else if (chunk.type === 'observation') {
+              process.stdout.write(chalk.cyan(`👁️ ${chunk.content}\n`));
+            } else if (chunk.type === 'final') {
+              process.stdout.write(chalk.green(`✅ 最终答案: ${chunk.content}\n`));
+              fullResponse = chunk.content;
+            }
+          }
+        } else {
+          // 使用标准 BladeAgent 的流式输出
+          for await (const chunk of agent.stream(message)) {
+            if (chunk.type === 'action') {
+              process.stdout.write(chalk.gray(`🔄 [步骤${++stepCount}] `));
+            } else if (chunk.type === 'final') {
+              process.stdout.write(chunk.content);
+              fullResponse = chunk.content;
+            } else if (chunk.type === 'error') {
+              console.error(chalk.red('\n❌ 流式处理错误:'), chunk.content);
+              break;
+            }
           }
         }
-        console.log('\n');
+        console.log('');
 
         // 记录 AI 响应到 Memory
         if (memoryManager && fullResponse) {

@@ -7,6 +7,7 @@ import { QwenChatModel } from '../models/QwenChatModel.js';
 import { VolcEngineChatModel } from '../models/VolcEngineChatModel.js';
 import { BladeToolkit } from '../tools/BladeToolkit.js';
 import { BladeAgent } from './BladeAgent.js';
+import { QwenReActAgent } from './QwenReActAgent.js';
 import type { BladeAgentConfig } from './types.js';
 
 /**
@@ -140,7 +141,7 @@ export class AgentFactory {
       ...AgentPresets[preset],
       llm,
       toolkit,
-      debug: true, // 启用调试以显示策略选择
+      debug: options?.overrides?.debug ?? false,
       ...options?.overrides,
     };
 
@@ -181,7 +182,7 @@ export class AgentFactory {
   }
 
   /**
-   * 创建千问 Agent - 使用简化模式
+   * 创建千问 Agent - 使用自定义 ReAct 模式
    */
   static createQwenAgent(
     preset: keyof typeof AgentPresets = 'GENERAL_ASSISTANT',
@@ -201,10 +202,26 @@ export class AgentFactory {
 
     console.log(`🚀 创建通义千问 Agent:`);
     console.log(`  - 模型: ${options?.modelName || 'qwen-turbo'}`);
-    console.log(`  - 执行策略: 简化工具调用模式`);
+    console.log(`  - 执行策略: 自定义中文 ReAct Agent`);
+    console.log(`  - 特色: 支持中文关键字解析`);
     console.log(`  - 预设: ${preset}`);
 
-    return AgentFactory.createSmartAgent(preset, llm, options);
+    // 直接使用自定义 ReAct Agent 的逻辑，但返回兼容的类型
+    const toolkit = options?.toolkit || AgentFactory.createDefaultToolkit();
+    const presetConfig = AgentPresets[preset];
+
+    const qwenConfig = {
+      llm: llm as any, // 临时类型断言
+      tools: toolkit,
+      maxIterations: presetConfig.maxIterations,
+      systemPrompt: presetConfig.systemPrompt,
+      debug: options?.overrides?.debug ?? false,
+      ...options?.overrides,
+    };
+
+    // 创建 QwenReActAgent 并作为 BladeAgent 返回
+    const qwenAgent = QwenReActAgent.create(qwenConfig);
+    return qwenAgent as any; // 类型断言确保兼容性
   }
 
   /**
@@ -234,7 +251,7 @@ export class AgentFactory {
       console.log(`  - 选择策略: 豆包 ReAct Agent`);
       return AgentFactory.createVolcEngineAgent(preset, options);
     } else if (preferredProvider === 'qwen' && hasQwen) {
-      console.log(`  - 选择策略: 通义千问简化模式`);
+      console.log(`  - 选择策略: 通义千问自定义 ReAct Agent`);
       return AgentFactory.createQwenAgent(preset, options);
     } else {
       // 自动选择：优先豆包 > 通义千问
@@ -242,7 +259,7 @@ export class AgentFactory {
         console.log(`  - 自动选择策略: 豆包 ReAct Agent（推荐）`);
         return AgentFactory.createVolcEngineAgent(preset, options);
       } else if (hasQwen) {
-        console.log(`  - 自动选择策略: 通义千问简化模式`);
+        console.log(`  - 自动选择策略: 通义千问自定义 ReAct Agent`);
         return AgentFactory.createQwenAgent(preset, options);
       } else {
         throw new Error(
@@ -264,31 +281,20 @@ export class AgentFactory {
   /**
    * 创建自定义工具包
    */
-  static createCustomToolkit(config?: {
-    name: string;
-    description?: string;
-    enableConfirmation?: boolean;
-    tools?: string[]; // 指定要包含的工具名称
-  }): BladeToolkit {
+  static createCustomToolkit(): BladeToolkit {
     const toolkit = new BladeToolkit();
     // 工具在构造时已自动加载，配置参数暂时忽略
     // TODO: 后续实现根据 config 参数定制工具包
-    if (config) {
-      // 占位符，防止 linter 警告
-    }
     return toolkit;
   }
 
   /**
    * 创建专用工具包
    */
-  static createSpecializedToolkit(type?: 'filesystem' | 'network' | 'utility'): BladeToolkit {
+  static createSpecializedToolkit(): BladeToolkit {
     const toolkit = new BladeToolkit();
     // 专用工具包功能暂时简化，返回默认工具包
-    // TODO: 后续实现根据 type 参数筛选工具
-    if (type) {
-      // 占位符，防止 linter 警告
-    }
+    // TODO: 后续实现根据类型参数筛选工具
     return toolkit;
   }
 
