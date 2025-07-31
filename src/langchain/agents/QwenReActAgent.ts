@@ -9,8 +9,8 @@ import { AgentAction, AgentFinish } from '@langchain/core/agents';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { Tool } from '@langchain/core/tools';
+import { QwenReActOutputParser } from 'langchain-react-chinese-parser';
 import { BladeToolkit } from '../tools/BladeToolkit.js';
-import { QwenReActOutputParser } from './parsers/QwenReActOutputParser.js';
 
 /**
  * 通义千问 ReAct Agent 配置

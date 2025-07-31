@@ -17,6 +17,7 @@ specifiers:
   eslint: ^8.57.0
   inquirer: ^12.6.3
   langchain: ^0.3.2
+  langchain-react-chinese-parser: ^1.0.2
   openai: ^5.1.0
   prettier: ^3.2.5
   ts-node: ^10.9.2
@@ -36,6 +37,7 @@ dependencies:
   dotenv: 16.5.0
   inquirer: 12.6.3_@types+node@22.15.24
   langchain: 0.3.27_mujchjybpx52r7ibdwghmxpplm
+  langchain-react-chinese-parser: 1.0.2_@langchain+core@0.3.58
   openai: 5.1.0_ws@8.18.2+zod@3.25.56
   ws: 8.18.2
   zod: 3.25.56
@@ -2728,6 +2730,15 @@ packages:
     dependencies:
       json-buffer: 3.0.1
     dev: true
+
+  /langchain-react-chinese-parser/1.0.2_@langchain+core@0.3.58:
+    resolution: {integrity: sha512-gr4F2HuKtSH/bwa145O8KVahXaSpgcHkrpzpj9WvFRX2SMbdDynJZhEBggLenBZVOD6jNzPIIYwmJNJ3Jjq8XQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@langchain/core': ^0.3.0
+    dependencies:
+      '@langchain/core': 0.3.58_openai@5.1.0
+    dev: false
 
   /langchain/0.3.27_mujchjybpx52r7ibdwghmxpplm:
     resolution: {integrity: sha512-XfOuXetMSpkS11Mt6YJkDmvuSGTMPUsks5DJz4RCZ3y2dcbLkOe5kecjx2SWVJYqQIqcMMwsjsve3/ZjnRe7rQ==}
