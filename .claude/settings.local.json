@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:platform.iflow.cn)",
+      "Bash(npm run type-check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run build)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git clean:*)",
+      "Bash(git commit:*)",
+      "Bash(pnpm run type-check)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
