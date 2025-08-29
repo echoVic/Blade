@@ -7,6 +7,7 @@ Blade是一款基于**平铺三要素配置**的AI命令行工具，支持任意
 - [首页](./index.md) - 文档索引
 - [快速开始](./QUICK_START.md) - 三步上手指南
 - [配置系统](./CONFIGURATION.md) - 分层配置详解
+- [主题系统](./THEMES.md) - 13种内置主题和自定义主题
 - [命令参考](./COMMANDS.md) - CLI命令大全
 - [API文档](./API.md) - 编程接口参考
 

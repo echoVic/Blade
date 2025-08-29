@@ -22,6 +22,7 @@ export function agentLlmCommand(program: Command) {
     .option('-m, --model <name>', '模型名称')
     .option('-s, --system <prompt>', '系统提示词')
     .option('-i, --interactive', '交互式对话')
+    .option('--theme <name>', '界面主题 (default|dark|dracula|nord|tokyo-night|github|monokai|ayu-dark|solarized-light|solarized-dark|gruvbox|one-dark|catppuccin|rose-pine|kanagawa)')
     .action(async (message, options) => {
       await handleChat(message, options);
     });
@@ -41,6 +42,7 @@ async function handleChat(
     model?: string;
     system?: string;
     interactive?: boolean;
+    theme?: string;
   }
 ): Promise<void> {
   try {
@@ -52,6 +54,12 @@ async function handleChat(
 
     // 创建Agent实例
     const agent = new Agent(configUpdates);
+
+    // 设置主题
+    if (options.theme) {
+      const { themeManager } = await import('../ui/themes/index.js');
+      themeManager.setTheme(options.theme);
+    }
 
     // 交互式模式
     if (options.interactive || !message) {

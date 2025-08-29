@@ -9,11 +9,12 @@ import { UIInput } from './components/Input.js';
 import { UILayout } from './components/Layout.js';
 import { UIList } from './components/List.js';
 import { UIProgress } from './components/Progress.js';
-import { UIColors, UIStyles } from './themes/index.js';
+import { UIColors, UIStyles, ThemeManager, themeManager } from './themes/index.js';
 import { UIFormatter, UIValidator } from './utils/index.js';
 
 // 导出各个组件
 export {
+  ThemeManager,
   UIAnimation,
   UIColors,
   UIDisplay,
@@ -24,6 +25,7 @@ export {
   UIProgress,
   UIStyles,
   UIValidator,
+  themeManager,
 };
 
 // 便捷导出
@@ -34,4 +36,5 @@ export const UI = {
   Progress: UIProgress,
   List: UIList,
   Layout: UILayout,
+  Theme: themeManager,
 };
