@@ -1,77 +1,43 @@
 /**
- * Blade 极简配置管理器
- * 平铺式配置加载
+ * Blade 配置管理器 (向后兼容封装)
+ * 基于新的统一配置管理器，保持原有接口不变
  */
 
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { UnifiedConfigManager } from './UnifiedConfigManager.js';
 import type { BladeConfig } from './types.js';
-import { DEFAULT_CONFIG, ENV_MAPPING } from './defaults.js';
 
 export class ConfigManager {
+  private unifiedManager: UnifiedConfigManager;
   private config: BladeConfig;
 
   constructor() {
-    this.config = DEFAULT_CONFIG;
+    this.unifiedManager = new UnifiedConfigManager();
+    this.config = {} as BladeConfig;
     this.loadConfiguration();
   }
 
-  private loadConfiguration(): void {
-    // 1. 默认值 (已包含在DEFAULT_CONFIG)
+  private async loadConfiguration(): Promise<void> {
+    try {
+      await this.unifiedManager.initialize();
+      this.config = this.unifiedManager.getConfig();
+    } catch (error) {
+      console.warn('配置加载失败，使用默认配置:', error);
+      // 保持原有默认配置加载逻辑作为降级方案
+      this.loadDefaultConfiguration();
+    }
+  }
+
+  private loadDefaultConfiguration(): void {
+    // 原有的默认配置加载逻辑
+    const { DEFAULT_CONFIG, ENV_MAPPING } = require('./defaults.js');
+    this.config = { ...DEFAULT_CONFIG } as BladeConfig;
     
-    // 2. 用户全局配置
-    this.loadUserConfig();
-    
-    // 3. 项目级配置
-    this.loadProjectConfig();
-    
-    // 4. 环境变量 (平铺式)
+    // 加载环境变量
     this.loadFromEnvironment();
   }
 
-  private loadUserConfig(): void {
-    const configPath = path.join(os.homedir(), '.blade', 'config.json');
-    try {
-      if (fs.existsSync(configPath)) {
-        const file = fs.readFileSync(configPath, 'utf-8');
-        const userConfig = JSON.parse(file);
-        Object.assign(this.config, userConfig);
-      }
-    } catch (error) {
-      // 忽略错误
-    }
-  }
-
-  private loadProjectConfig(): void {
-    const configPaths = [
-      path.join(process.cwd(), '.blade', 'settings.local.json'),
-      path.join(process.cwd(), 'package.json'),
-    ];
-    
-    for (const configPath of configPaths) {
-      try {
-        if (fs.existsSync(configPath)) {
-          const file = fs.readFileSync(configPath, 'utf-8');
-          const config = JSON.parse(file);
-          const projectConfig = configPath.endsWith('package.json') ? config.blade : config;
-          
-          // 只合并非敏感配置项（不包括apiKey, baseUrl, modelName）
-          const safeConfig: Partial<BladeConfig> = {};
-          for (const [key, value] of Object.entries(projectConfig)) {
-            if (!['apiKey', 'baseUrl', 'modelName'].includes(key)) {
-              (safeConfig as any)[key] = value;
-            }
-          }
-          Object.assign(this.config, safeConfig);
-        }
-      } catch (error) {
-        // 忽略错误
-      }
-    }
-  }
-
   private loadFromEnvironment(): void {
+    const { ENV_MAPPING } = require('./defaults.js');
     for (const [envKey, configKey] of Object.entries(ENV_MAPPING)) {
       const value = process.env[envKey];
       if (value !== undefined) {
@@ -80,19 +46,78 @@ export class ConfigManager {
     }
   }
 
-  getConfig(): BladeConfig {
-    return { ...this.config };
+  async getConfig(): Promise<BladeConfig> {
+    try {
+      this.config = this.unifiedManager.getConfig();
+      return { ...this.config };
+    } catch (error) {
+      console.warn('获取最新配置失败，返回缓存配置:', error);
+      return { ...this.config };
+    }
   }
 
-  updateConfig(updates: Partial<BladeConfig>): void {
-    Object.assign(this.config, updates);
+  async updateConfig(updates: Partial<BladeConfig>): Promise<void> {
+    try {
+      await this.unifiedManager.updateConfig(updates);
+      this.config = this.unifiedManager.getConfig();
+    } catch (error) {
+      console.error('配置更新失败:', error);
+      throw error;
+    }
   }
 
-  get(key: keyof BladeConfig): any {
-    return this.config[key];
+  async get(key: keyof BladeConfig): Promise<any> {
+    try {
+      return this.unifiedManager.get(key as string);
+    } catch (error) {
+      console.warn(`获取配置项 ${String(key)} 失败，返回缓存值:`, error);
+      return this.config[key];
+    }
   }
 
-  set(key: keyof BladeConfig, value: any): void {
-    (this.config as any)[key] = value;
+  async set(key: keyof BladeConfig, value: any): Promise<void> {
+    try {
+      await this.unifiedManager.set(key as string, value);
+      this.config = this.unifiedManager.getConfig();
+    } catch (error) {
+      console.error(`设置配置项 ${String(key)} 失败:`, error);
+      throw error;
+    }
+  }
+
+  async reload(): Promise<BladeConfig> {
+    try {
+      const reloadedConfig = await this.unifiedManager.reload();
+      this.config = reloadedConfig;
+      return { ...this.config };
+    } catch (error) {
+      console.error('重新加载配置失败:', error);
+      throw error;
+    }
+  }
+
+  enableHotReload(): void {
+    try {
+      this.unifiedManager.enableHotReload();
+    } catch (error) {
+      console.warn('启用热重载失败:', error);
+    }
+  }
+
+  disableHotReload(): void {
+    try {
+      this.unifiedManager.disableHotReload();
+    } catch (error) {
+      console.warn('禁用热重载失败:', error);
+    }
+  }
+
+  subscribe(callback: (config: BladeConfig) => void): () => void {
+    try {
+      return this.unifiedManager.subscribe(callback);
+    } catch (error) {
+      console.warn('订阅配置变更失败:', error);
+      return () => {};
+    }
   }
 }
