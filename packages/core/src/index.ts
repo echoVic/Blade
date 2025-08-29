@@ -9,6 +9,7 @@ export type { BladeConfig } from '@blade-ai/types';
 
 // 配置管理
 export { ConfigManager } from './config/ConfigManager.js';
+export { ConfigurationManager } from './config/ConfigurationManager.js';
 
 // LLM 管理
 export * from './llm/index.js';
