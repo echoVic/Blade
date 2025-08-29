@@ -1,16 +1,13 @@
-import { BaseComponent } from '../agent/BaseComponent.js';
-
 /**
- * LLM 消息接口
+ * 极简通用LLM基类
+ * 适配开放AI协议的通用调用
  */
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
-/**
- * LLM 请求参数
- */
 export interface LLMRequest {
   messages: LLMMessage[];
   model?: string;
@@ -19,9 +16,6 @@ export interface LLMRequest {
   stream?: boolean;
 }
 
-/**
- * LLM 响应接口
- */
 export interface LLMResponse {
   content: string;
   usage?: {
@@ -32,9 +26,6 @@ export interface LLMResponse {
   model?: string;
 }
 
-/**
- * 重试配置
- */
 export interface RetryConfig {
   maxRetries: number;
   baseDelay: number;
@@ -43,28 +34,19 @@ export interface RetryConfig {
 }
 
 /**
- * 基础 LLM 组件类
+ * 极简通用LLM基类
+ * 提供最基本的重试和调用机制
  */
-export abstract class BaseLLM extends BaseComponent {
+export abstract class BaseLLM {
   protected retryConfig: RetryConfig;
-  protected defaultModel: string;
 
-  constructor(name: string, defaultModel: string = 'gpt-3.5-turbo') {
-    super(name);
-    this.defaultModel = defaultModel;
+  constructor() {
     this.retryConfig = {
       maxRetries: 3,
       baseDelay: 1000,
       maxDelay: 10000,
       backoffFactor: 2,
     };
-  }
-
-  /**
-   * 设置重试配置
-   */
-  public setRetryConfig(config: Partial<RetryConfig>): void {
-    this.retryConfig = { ...this.retryConfig, ...config };
   }
 
   /**
@@ -76,11 +58,6 @@ export abstract class BaseLLM extends BaseComponent {
    * 公共方法：带重试机制的聊天
    */
   public async chat(request: LLMRequest): Promise<LLMResponse> {
-    // 设置默认模型
-    if (!request.model) {
-      request.model = this.defaultModel;
-    }
-
     return this.withRetry(async () => {
       return await this.sendRequest(request);
     });
@@ -91,28 +68,10 @@ export abstract class BaseLLM extends BaseComponent {
    */
   public async sendMessage(
     content: string,
-    role: 'user' | 'system' = 'user',
-    options?: Partial<LLMRequest>
+    role: 'user' | 'system' = 'user'
   ): Promise<string> {
     const request: LLMRequest = {
       messages: [{ role, content }],
-      ...options,
-    };
-
-    const response = await this.chat(request);
-    return response.content;
-  }
-
-  /**
-   * 便捷方法：多轮对话
-   */
-  public async conversation(
-    messages: LLMMessage[],
-    options?: Partial<LLMRequest>
-  ): Promise<string> {
-    const request: LLMRequest = {
-      messages,
-      ...options,
     };
 
     const response = await this.chat(request);
@@ -136,11 +95,6 @@ export abstract class BaseLLM extends BaseComponent {
           throw lastError;
         }
 
-        // 检查是否应该重试
-        if (!this.shouldRetry(error as Error)) {
-          throw lastError;
-        }
-
         // 计算延迟时间
         const delay = this.calculateDelay(attempt);
         await this.sleep(delay);
@@ -148,40 +102,6 @@ export abstract class BaseLLM extends BaseComponent {
     }
 
     throw lastError!;
-  }
-
-  /**
-   * 判断是否应该重试
-   */
-  protected shouldRetry(error: Error): boolean {
-    // 检查错误类型，某些错误不应该重试
-    const errorMessage = error.message.toLowerCase();
-
-    // 网络错误或临时服务错误应该重试
-    if (
-      errorMessage.includes('network') ||
-      errorMessage.includes('timeout') ||
-      errorMessage.includes('rate limit') ||
-      errorMessage.includes('503') ||
-      errorMessage.includes('502') ||
-      errorMessage.includes('500')
-    ) {
-      return true;
-    }
-
-    // 认证错误、参数错误等不应该重试
-    if (
-      errorMessage.includes('unauthorized') ||
-      errorMessage.includes('invalid') ||
-      errorMessage.includes('400') ||
-      errorMessage.includes('401') ||
-      errorMessage.includes('403')
-    ) {
-      return false;
-    }
-
-    // 默认重试
-    return true;
   }
 
   /**
@@ -197,20 +117,5 @@ export abstract class BaseLLM extends BaseComponent {
    */
   protected sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * 验证请求参数
-   */
-  protected validateRequest(request: LLMRequest): void {
-    if (!request.messages || request.messages.length === 0) {
-      throw new Error('Messages array cannot be empty');
-    }
-
-    for (const message of request.messages) {
-      if (!message.role || !message.content) {
-        throw new Error('Each message must have role and content');
-      }
-    }
   }
 }
