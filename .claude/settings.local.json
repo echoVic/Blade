@@ -22,7 +22,8 @@
       "Bash(BLADE_API_KEY=\"sk-test-key\" node ./bin/blade.js chat \"你好\")",
       "Bash(BLADE_MODEL=\"test-model\" node ./bin/blade.js chat \"请告诉我你是谁\")",
       "Bash(npm uninstall:*)",
-      "Bash(npm info:*)"
+      "Bash(npm info:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": [],
