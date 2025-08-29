@@ -19,25 +19,22 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const version = packageJson.version;
 
 // 导出 Agent 和 LLM 相关模块
-export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
+export { Agent } from './agent/Agent.js';
 export { BaseComponent } from './agent/BaseComponent.js';
 export { LoggerComponent } from './agent/LoggerComponent.js';
 export { ToolComponent, ToolComponentConfig } from './agent/ToolComponent.js';
 
 // LLM 模块
 export { BaseLLM } from './llm/BaseLLM.js';
-export { QwenLLM } from './llm/QwenLLM.js';
-export { VolcEngineLLM } from './llm/VolcEngineLLM.js';
+export { LLMManager, type LLMMessage, type LLMRequest, type LLMResponse } from './llm/LLMManager.js';
 
 // 配置模块
 export {
   DEFAULT_CONFIG,
   getProviderConfig,
-  getSupportedProviders,
   isProviderSupported,
   loadConfigFromEnv,
 } from './config/defaults.js';
-export type { DefaultConfig, LLMProviderConfig } from './config/defaults.js';
 
 // 工具模块
 export {
@@ -69,11 +66,11 @@ export type {
   ToolRegistrationOptions,
 } from './tools/index.js';
 
-// 类型定义
-export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
-
 // MCP 模块
 export * from './mcp/index.js';
+
+// 类型定义
+export type { BladeConfig } from './config/types.js';
 
 const program = new Command();
 

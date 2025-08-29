@@ -11,9 +11,21 @@
       "Bash(git rm:*)",
       "Bash(git clean:*)",
       "Bash(git commit:*)",
-      "Bash(pnpm run type-check)"
+      "Bash(pnpm run type-check)",
+      "Bash(pnpm run build)",
+      "Bash(node ./bin/blade.js config show:*)",
+      "Bash(BLADE_API_KEY=\"sk-env-test\" node ./bin/blade.js config show)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(BLADE_API_KEY=\"sk-test-key\" node ./bin/blade.js config show)",
+      "Bash(cat:*)",
+      "Bash(BLADE_API_KEY=\"sk-test-key\" node ./bin/blade.js chat \"你好\")",
+      "Bash(BLADE_MODEL=\"test-model\" node ./bin/blade.js chat \"请告诉我你是谁\")"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "/Users/bytedance"
+    ]
   }
 }

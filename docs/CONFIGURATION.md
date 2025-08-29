@@ -1,420 +1,148 @@
-# 🗡️ Blade 配置系统文档
+# 🛠️ Blade 配置系统
 
-Blade 实现了分层配置系统，灵感来源于 [iflow](https://platform.iflow.cn/cli/configuration/settings) 的配置架构。
-
-## 📊 配置分层架构
-
-Blade 使用以下优先级顺序加载配置（从低到高）：
-
-```
-默认值 < 用户全局配置 < 项目级配置 < 环境变量 < CLI参数
-```
-
-### 配置优先级解释
-
-| 来源类型 | 优先级 | 描述 |
-|---------|--------|------|
-| **默认值** | 0 | 内置在 Blade 中的默认设置 |
-| **用户全局配置** | 1 | 保存在 `~/.blade/config.json` 中的用户级设置 |
-| **项目级配置** | 2 | 保存在项目根目录的 `.blade.json` 或 `package.json#blade` |
-| **环境变量** | 3 | 以 `BLADE_` 前缀的环境变量 |
-| **CLI参数** | 4 | 通过命令行参数传入的配置 |
-
-## 🔧 配置使用方式
-
-### 1. 用户全局配置
-创建用户级配置文件：
-```bash
-blade config init --global
-```
-
-文件位置：`~/.blade/config.json`
-
-示例：
-```json
-{
-  "debug": false,
-  "llm": {
-    "provider": "qwen",
-    "apiKey": "your-api-key",
-    "modelName": "qwen-turbo",
-    "temperature": 0.7
-  },
-  "ui": {
-    "theme": "dark",
-    "vimMode": true
-  }
-}
-```
-
-### 2. 项目级配置
-
-在项目根目录创建：
-
-#### 方式1：`.blade.json`
-```bash
-blade config init --project
-```
-
-#### 方式2：package.json
-```json
-{
-  "name": "your-project",
-  "blade": {
-    "debug": true,
-    "llm": {
-      "modelName": "qwen-plus",
-      "baseUrl": "https://custom-api.com"
-    },
-    "security": {
-      "maxFileSize": 5242880
-    }
-  }
-}
-```
-
-### 3. 环境变量配置
-
-所有配置项都支持环境变量，使用 `BLADE_` 前缀：
-
-```bash
-# 设置 API 密钥
-export BLADE_API_KEY="your-api-key"
-
-# 设置提供商
-export BLADE_PROVIDER="qwen"
-
-# 设置调试模式
-export BLADE_DEBUG="true"
-
-# 设置主题
-export BLADE_THEME="dark"
-```
-
-完整的环境变量映射表：
-
-| 环境变量 | 配置路径 | 示例值 |
-|----------|----------|---------|
-| `BLADE_API_KEY` | `llm.apiKey` | `your-api-key` |
-| `BLADE_PROVIDER` | `llm.provider` | `qwen`, `volcengine` |
-| `BLADE_BASE_URL` | `llm.baseUrl` | `https://api.example.com` |
-| `BLADE_MODEL` | `llm.modelName` | `qwen-turbo` |
-| `BLADE_TEMPERATURE` | `llm.temperature` | `0.7` |
-| `BLADE_MAX_TOKENS` | `llm.maxTokens` | `2048` |
-| `BLADE_DEBUG` | `debug` | `false` |
-| `BLADE_THEME` | `ui.theme` | `light`, `dark`, `auto` |
-| `BLADE_VIM_MODE` | `ui.vimMode` | `true`, `false` |
-
-### 4. CLI参数配置
-
-通过命令行参数直接设置配置：
-
-```bash
-# 设置提供商和密钥
-blade chat --provider qwen --api-key your-key "你的问题"
-
-# 设置模型和温度
-blade chat --model qwen-plus --temperature 0.8 "生成代码"
-```
-
-## 📋 配置命令
-
-### 基本命令
-
-```bash
-# 显示当前配置
-blade config show
-
-# 显示配置来源（查看各层级配置）
-blade config show --source
-
-# 显示特定配置项
-blade config show --path llm.apiKey
-
-# 设置配置值
-blade config set llm.apiKey "your-key" --global
-blade config set ui.theme "dark" --project
-
-# 验证配置
-blade config validate
-
-# 初始化配置文件
-blade config init --global
-blade config init --project
-```
-
-### 配置向导
-
-使用交互式向导快速配置：
-
-```bash
-blade config wizard
-```
-
-逐步引导完成：
-1. 选择 LLM 提供商
-2. 输入 API 密钥
-3. 选择模型
-4. 设置偏好
+Blade采用清晰的分层配置架构，将敏感信息和项目设置分离。
 
 ## 📁 配置文件结构
 
-### 完整配置格式
+### 用户级别配置（敏感信息）
+**位置**: `~/.blade/config.json`
 
-```typescript
-interface BladeConfig {
-  debug?: boolean;
-  
-  llm: {
-    provider?: 'qwen' | 'volcengine' | 'openai' | 'anthropic';
-    apiKey?: string;
-    baseUrl?: string;
-    modelName?: string;
-    temperature?: number;
-    maxTokens?: number;
-    stream?: boolean;
-    timeout?: number;
-    retryCount?: number;
-  };
-  
-  tools: {
-    enabled?: boolean;
-    includeBuiltinTools?: boolean;
-    excludeTools?: string[];
-    includeCategories?: string[];
-    autoConfirm?: boolean;
-  };
-  
-  context: {
-    enabled?: boolean;
-    storagePath?: string;
-    maxTurns?: number;
-    compressionEnabled?: boolean;
-  };
-  
-  mcp: {
-    enabled?: boolean;
-    servers?: string[];
-    configPath?: string;
-    timeout?: number;
-  };
-  
-  logging: {
-    level?: 'debug' | 'info' | 'warn' | 'error';
-    file?: string;
-    console?: boolean;
-  };
-  
-  ui: {
-    theme?: 'light' | 'dark' | 'auto';
-    vimMode?: boolean;
-    compactOutput?: boolean;
-    showProgress?: boolean;
-  };
-  
-  security: {
-    sandboxEnabled?: boolean;
-    confirmDangerousOperations?: boolean;
-    maxFileSize?: number;
-    allowedExtensions?: string[];
-  };
+包含API密钥等私密信息：
+```json
+{
+  "apiKey": "sk-你的API密钥",
+  "baseUrl": "https://api.example.com",
+  "modelName": "kimi-k2"
 }
 ```
 
-## 🔧 示例配置
+### 项目级别配置（非敏感设置）
+**位置**: `./.blade/settings.local.json`
 
-### 开发环境
-
+包含项目特定设置：
 ```json
 {
-  "debug": true,
-  "llm": {
-    "provider": "qwen",
-    "apiKey": "sk-dev-key",
-    "modelName": "qwen-turbo",
-    "temperature": 0.8,
-    "maxTokens": 1000
+  "projectName": "Blade AI Project",
+  "version": "1.0.0",
+  "features": {
+    "enableTools": true,
+    "enableMCP": false,
+    "enableContext": true
   },
   "ui": {
-    "theme": "light"
-  },
-  "logging": {
-    "level": "debug",
-    "file": "blade-debug.log"
-  }
-}
-```
-
-### 生产环境
-
-```json
-{
-  "debug": false,
-  "llm": {
-    "provider": "volcengine",
-    "apiKey": "sk-prod-key",
-    "modelName": "ep-20250612135125-br9k7",
-    "timeout": 30000,
-    "retryCount": 3
+    "theme": "dark",
+    "compactOutput": false
   },
   "security": {
     "sandboxEnabled": true,
-    "confirmDangerousOperations": true,
     "maxFileSize": 10485760
   }
 }
 ```
 
-### 团队成员共享
+## 🔧 配置方式
 
-```json
-{
-  "llm": {
-    "provider": "qwen",
-    "modelName": "qwen-plus",
-    "temperature": 0.7
-  },
-  "ui": {
-    "theme": "auto",
-    "showProgress": true
-  },
-  "tools": {
-    "autoConfirm": false
-  }
-}
+### 1. 环境变量（最高优先级）
+```bash
+export BLADE_API_KEY="sk-xxx"
+export BLADE_BASE_URL="https://api.example.com"
+export BLADE_MODEL="my-model"
 ```
 
-## ⚡ 快速开始
+### 2. 用户配置文件
+```bash
+# 创建用户配置
+mkdir -p ~/.blade
+echo '{"apiKey":"sk-xxx"}' > ~/.blade/config.json
+```
 
-### 首次使用
+### 3. 项目配置文件
+```bash
+# 创建项目配置目录
+mkdir -p .blade
 
-1. **使用向导**：
-   ```bash
-   blade config wizard
-   ```
+# 创建项目设置
+echo '{
+  "features": {"enableTools": true},
+  "ui": {"theme": "dark"}
+}' > .blade/settings.local.json
+```
 
-2. **手动设置 API**：
-   ```bash
-   # 方式1: 直接设置
-   blade config set llm.apiKey "your-key" --global
-   blade config set llm.provider "qwen" --global
-   
-   # 方式2: 环境变量
-   export BLADE_API_KEY="your-key"
-   ```
+### 4. CLI命令行参数
+```bash
+blade chat -k "sk-xxx" -u "https://api.example.com" -m "my-model" "你好"
+```
 
-3. **验证配置**：
-   ```bash
-   blade config validate
-   blade config show
-   ```
+## ⚡ 配置优先级
 
-### 环境变量快速设置
+```
+CLI参数 > 环境变量 > 用户配置文件 > 项目配置文件 > 默认值
+```
+
+## 🎯 核心配置项
+
+### 敏感配置（仅用户配置文件）
+- `apiKey`: API密钥
+- `baseUrl`: API基础URL
+- `modelName`: 模型名称
+
+### 项目配置（项目设置文件）
+- `features.*`: 功能开关
+- `ui.*`: 界面设置
+- `security.*`: 安全配置
+
+## 📋 使用示例
+
+### 快速开始
+```bash
+# 1. 设置API密钥
+echo '{"apiKey":"sk-你的密钥"}' > ~/.blade/config.json
+
+# 2. 开始使用
+blade chat "你好世界"
+```
+
+### 团队协作
+```bash
+# 项目设置（可版本控制）
+echo '{"features":{"enableTools":true}}' > .blade/settings.local.json
+
+# 个人API密钥（不应提交）
+echo '{"apiKey":"sk-你的密钥"}' > ~/.blade/config.json
+```
+
+## 🔍 配置管理命令
 
 ```bash
-# 在终端中设置
-export BLADE_API_KEY="your-api-key"
-export BLADE_PROVIDER="qwen"
-export BLADE_MODEL="qwen-turbo"
+# 查看当前配置
+blade config show
 
-# 添加到 .bashrc 或 .zshrc
-echo 'export BLADE_API_KEY="your-key"' >> ~/.zshrc
+# 验证配置
+blade config validate
+
+# 重置配置
+blade config reset
 ```
 
-## 🛠️ 配置管理工具
+## 🛡️ 安全建议
 
-### 编程接口
+1. **用户配置文件** (`~/.blade/config.json`) 包含敏感信息，不应提交到版本控制
+2. **项目配置文件** (`./.blade/settings.local.json`) 可以团队共享
+3. 使用环境变量在CI/CD环境中注入敏感配置
+4. 定期轮换API密钥
 
-```typescript
-import { ConfigManager } from 'blade-ai';
+## 📂 目录结构最佳实践
 
-// 创建配置管理器
-const configManager = new ConfigManager();
+```
+项目根目录/
+├── .blade/
+│   └── settings.local.json  # 项目设置（可共享）
+├── src/
+└── package.json
 
-// 获取配置
-const config = configManager.getConfig();
-console.log(config.llm.apiKey);
-
-// 设置配置
-configManager.updateConfig({
-  llm: { modelName: 'qwen-plus' }
-});
-
-// 保存到用户配置
-await configManager.saveUserConfig({
-  ui: { theme: 'dark' }
-});
-
-// 验证配置
-const validation = configManager.validate();
+用户主目录/
+└── .blade/
+    └── config.json          # 用户API配置（私有）
 ```
 
-### 高级用例
-
-#### 多环境配置
-
-```bash
-# 开发环境
-export BLADE_DEBUG=true
-export BLADE_MODEL=qwen-turbo
-
-# 生产环境
-export BLADE_DEBUG=false
-export BLADE_MODEL=ep-20250612135125-br9k7
-```
-
-#### 项目专用配置
-
-在项目根目录创建 `.blade.json`：
-
-```json
-{
-  "llm": {
-    "apiKey": "${PROJECT_API_KEY}",
-    "modelName": "qwen-coder-plus"
-  },
-  "tools": {
-    "excludeTools": ["git_push", "git_tag"]
-  }
-}
-```
-
-## 📚 配置验证
-
-Blade 会自动验证配置：
-
-- **API密钥必备性**：检查是否配置了 API 密钥
-- **数值范围**：验证 temperature (0-2), maxTokens > 0
-- **枚举值验证**：provider、theme 等枚举值的正确性
-- **文件存在性**：检查配置文件的存在性和可读性
-
-验证警告示例：
-```
-❌ 配置验证失败：
-  • API密钥未配置
-  • 温度值必须在 0-2 之间
-  • 最大tokens必须大于0
-```
-
-## 🔄 迁移指南
-
-从旧配置文件迁移：
-
-### 配置文件升级
-
-1. 备份现有配置
-2. 使用新的配置命令：
-   ```bash
-   blade config init --global  # 创建新格式
-   blade config wizard        # 向导式配置
-   ```
-
-3. 手动迁移关键配置项
-
-### 向后兼容性
-
-- `AgentConfig` 接口仍然可用
-- 新的配置系统优先级更高
-- 老的用户配置文件将被继续使用
-
-这就是完整的 Blade 分层配置系统文档！
+这样设计确保了敏感信息安全，同时项目设置可以方便地团队协作。

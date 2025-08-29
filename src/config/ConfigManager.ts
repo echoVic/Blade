@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import os from 'path';
+import os from 'os';
 import type { BladeConfig } from './types.js';
 import { DEFAULT_CONFIG, ENV_MAPPING } from './defaults.js';
 
@@ -38,13 +38,15 @@ export class ConfigManager {
         const userConfig = JSON.parse(file);
         Object.assign(this.config, userConfig);
       }
-    } catch {}
+    } catch (error) {
+      // 忽略错误
+    }
   }
 
   private loadProjectConfig(): void {
     const configPaths = [
-      path.join(process.cwd(), '.blade.json'),
-      path.join(process.cwd(), 'package.json')
+      path.join(process.cwd(), '.blade', 'settings.local.json'),
+      path.join(process.cwd(), 'package.json'),
     ];
     
     for (const configPath of configPaths) {
@@ -53,9 +55,19 @@ export class ConfigManager {
           const file = fs.readFileSync(configPath, 'utf-8');
           const config = JSON.parse(file);
           const projectConfig = configPath.endsWith('package.json') ? config.blade : config;
-          Object.assign(this.config, projectConfig);
+          
+          // 只合并非敏感配置项（不包括apiKey, baseUrl, modelName）
+          const safeConfig: Partial<BladeConfig> = {};
+          for (const [key, value] of Object.entries(projectConfig)) {
+            if (!['apiKey', 'baseUrl', 'modelName'].includes(key)) {
+              (safeConfig as any)[key] = value;
+            }
+          }
+          Object.assign(this.config, safeConfig);
         }
-      } catch {}
+      } catch (error) {
+        // 忽略错误
+      }
     }
   }
 

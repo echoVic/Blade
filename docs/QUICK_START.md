@@ -7,15 +7,18 @@
 #### 方式A：环境变量（推荐）
 ```bash
 export BLADE_API_KEY="sk-你的API密钥"
-export BLADE_BASE_URL="https://apis.iflow.cn/v1"
-export BLADE_MODEL="Qwen3-Coder"
+export BLADE_BASE_URL="https://apis.iflow.cn/v1/chat/completions"
+export BLADE_MODEL="kimi-k2"
 ```
 
-#### 方式B：配置文件
+#### 方式B：用户配置文件
 ```bash
+mkdir -p ~/.blade
 echo '{
-  "apiKey": "sk-你的API密钥"
-}' > .blade.json
+  "apiKey": "sk-你的API密钥",
+  "baseUrl": "https://apis.iflow.cn/v1/chat/completions",
+  "modelName": "kimi-k2"
+}' > ~/.blade/config.json
 ```
 
 #### 方式C：命令行参数
@@ -36,12 +39,23 @@ blade chat -i
 blade chat -s "你是一个代码助手" "帮我写一个Python冒泡排序"
 ```
 
-### 步骤3：享受AI能力
+### 步骤3：项目配置（可选）
 
-- 💬 智能问答对话
-- 💻 代码生成辅助  
-- 📚 文本内容创作
-- 🛠️ 各种实用工具
+```bash
+# 创建项目配置目录
+mkdir -p .blade
+
+# 设置项目特定功能
+echo '{
+  "features": {
+    "enableTools": true,
+    "enableContext": true
+  },
+  "ui": {
+    "theme": "dark"
+  }
+}' > .blade/settings.local.json
+```
 
 ## 📋 常用命令示例
 
@@ -60,11 +74,27 @@ blade config show
 blade config set apiKey "sk-xxx"
 ```
 
-## 🛠️ 核心配置三要素
+## 🛠️ 配置文件结构
 
-1. **apiKey** - API密钥（必需）
-2. **baseUrl** - 服务地址（默认：https://apis.iflow.cn/v1）
-3. **modelName** - 模型名称（默认：Qwen3-Coder）
+### 用户配置（私有）
+```json
+~/.blade/config.json
+{
+  "apiKey": "sk-xxx",           # API密钥
+  "baseUrl": "https://api.com", # 基础URL
+  "modelName": "model-name"     # 模型名称
+}
+```
+
+### 项目配置（可共享）
+```json
+./.blade/settings.local.json
+{
+  "features": {"enableTools": true},
+  "ui": {"theme": "dark"},
+  "security": {"sandboxEnabled": true}
+}
+```
 
 ## ✅ 验证安装
 
