@@ -16,6 +16,34 @@
 - 🛡️ **安全确认**：统一的命令确认机制，智能风险评估
 - 🌟 **多模型支持**：千问(Qwen)、豆包(VolcEngine)
 - 🚀 **开箱即用**：零配置快速开始
+- 🏗️ **现代化架构**：基于 Monorepo 的分层设计，支持扩展
+
+## 🏗️ 架构概览
+
+Blade 采用现代化的 **Monorepo 分层架构** 设计：
+
+```
+packages/
+├── cli/             # 用户界面层 (CLI 包)
+│   ├── src/ui/      # 终端 UI 组件和 Hooks
+│   ├── src/services/ # 业务服务层
+│   └── src/config/  # CLI 配置管理
+├── core/            # 核心业务层 (@blade-ai/core)
+│   ├── src/core/    # 核心业务引擎
+│   ├── src/agent/   # Agent 核心组件
+│   ├── src/tools/   # 工具系统
+│   ├── src/services/ # 核心服务
+│   ├── src/ide/     # IDE 集成
+│   ├── src/mcp/     # MCP 协议支持
+│   └── src/telemetry/ # 遥测系统
+└── types/           # 共享类型定义
+```
+
+**设计特点：**
+- **关注点分离**：CLI 包专注 UI，Core 包专注业务逻辑
+- **模块化组织**：功能按领域分组，服务独立
+- **可扩展性**：支持插件机制和外部集成
+- **类型安全**：全面的 TypeScript 覆盖
 
 ## 🚀 快速开始
 
@@ -273,16 +301,44 @@ const result = await toolManager.callTool({
 });
 ```
 
+### 核心服务
+
+```typescript
+import { FileSystemService, GitService } from '@blade-ai/core';
+
+// 文件系统服务
+const fileService = new FileSystemService(config);
+await fileService.writeFile('/path/file.txt', '内容');
+
+// Git 服务
+const gitService = new GitService(config);
+await gitService.commit('/repo', '提交信息');
+
+// 遥测服务
+import { TelemetrySDK } from '@blade-ai/core';
+const telemetry = new TelemetrySDK(config);
+telemetry.trackEvent('user_action', { action: 'click' });
+```
+
 ## 🔧 开发
 
 ### 项目结构
 
 ```
 packages/
-├── core/            # 核心AI功能 (@blade-ai/core)
-├── cli/             # 命令行界面 (@blade-ai/cli)
-├── types/           # 共享类型定义 (@blade-ai/types)
-└── blade/           # 旧版代码（将被移除）
+├── cli/             # 用户界面层 (CLI 包)
+│   ├── src/ui/      # 终端 UI 组件和 Hooks
+│   ├── src/services/ # 业务服务层
+│   └── src/config/  # CLI 配置管理
+├── core/            # 核心业务层 (@blade-ai/core)
+│   ├── src/core/    # 核心业务引擎
+│   ├── src/agent/   # Agent 核心组件
+│   ├── src/tools/   # 工具系统
+│   ├── src/services/ # 核心服务
+│   ├── src/ide/     # IDE 集成
+│   ├── src/mcp/     # MCP 协议支持
+│   └── src/telemetry/ # 遥测系统
+└── types/           # 共享类型定义
 ```
 
 ### 开发命令
@@ -302,8 +358,23 @@ npm run type-check
 
 # 代码格式化
 npm run format
+
+# 运行测试
+npm test
+npm run test:coverage
 ```
 
+## 🧪 测试架构
+
+Blade 拥有完整的测试覆盖：
+
+```
+tests/
+├── unit/           # 单元测试
+├── integration/    # 集成测试
+├── e2e/           # 端到端测试
+└── security/      # 安全测试
+```
 
 ## 🤝 贡献
 
