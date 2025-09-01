@@ -24,7 +24,9 @@
       "Bash(npm uninstall:*)",
       "Bash(npm info:*)",
       "Bash(mkdir:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm test)"
     ],
     "deny": [],
     "ask": [],
