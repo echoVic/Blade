@@ -26,7 +26,8 @@
       "Bash(mkdir:*)",
       "Bash(ls:*)",
       "Bash(pnpm install)",
-      "Bash(pnpm test)"
+      "Bash(pnpm test)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": [],

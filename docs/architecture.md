@@ -24,42 +24,49 @@ Blade 采用现代化的 **Monorepo 分层架构** 设计：
 ```
 packages/
 ├── cli/             # 用户界面层 (CLI 包)
-│   ├── src/ui/      # 终端 UI 组件和 Hooks
-│   ├── src/services/ # 业务服务层
-│   └── src/config/  # CLI 配置管理
-├── core/            # 核心业务层 (@blade-ai/core)
-│   ├── src/core/    # 核心业务引擎
-│   ├── src/agent/   # Agent 核心组件
-│   ├── src/tools/   # 工具系统
-│   ├── src/services/ # 核心服务
-│   ├── src/ide/     # IDE 集成
-│   ├── src/mcp/     # MCP 协议支持
-│   └── src/telemetry/ # 遥测系统
-└── types/           # 共享类型定义
+│   ├── src/contexts/ # 会话状态管理
+│   ├── src/config/   # CLI 配置管理
+│   ├── src/services/ # 业务流程编排
+│   ├── src/components/ # 终端 UI 组件
+│   └── tests/        # E2E 测试
+└── core/             # 核心业务层 (@blade-ai/core)
+    ├── src/agent/    # Agent 核心组件系统
+    ├── src/config/   # 统一配置系统
+    ├── src/context/  # 上下文管理系统
+    ├── src/llm/      # LLM 提供商实现
+    ├── src/mcp/      # MCP 协议支持
+    ├── src/services/ # 核心业务服务
+    ├── src/tools/    # 工具系统
+    ├── src/telemetry/ # 遥测系统
+    ├── src/types/    # 共享类型定义
+    ├── src/utils/    # 通用工具函数
+    ├── tests/        # 单元测试和集成测试
+    └── dist/         # 编译输出
 ```
 
 ## 分层设计
 
-### CLI 层 (用户界面层)
+### CLI 层 (应用层)
 
-**职责**: 处理用户交互和界面展示
+**职责**: 处理用户交互和界面展示，作为纯粹的应用层
 
 **主要组件**:
-- **UI 组件系统**: 基于 React 和 Ink 构建的 50+ 终端组件
-- **React Hooks**: 20+ 个自定义 Hooks 处理状态和逻辑
-- **Context 管理**: 全局状态管理和上下文提供
-- **配置管理**: CLI 专用配置系统
-- **命令服务**: 命令解析和执行服务
+- **REPL 界面**: 基于 React 和 Ink 构建的会话式终端界面
+- **会话管理**: 使用 React Context 管理会话状态
+- **配置服务**: 通过 @blade-ai/core 包加载和管理配置
+- **流程编排**: 命令解析、执行编排和结果展示
 
 ### Core 层 (核心业务层)
 
-**职责**: 提供核心功能和服务
+**职责**: 提供独立的、可重用的核心功能和服务
 
 **主要组件**:
-- **Agent 核心**: 统一的 AI Agent 入口点
+- **Agent 核心**: 统一的 AI Agent 入口点，嵌入 LLM 能力
+- **配置系统**: 纯函数式的分层配置合并和验证系统
 - **工具系统**: 25+ 内置工具和智能工具
 - **核心服务**: 文件系统、Git、聊天记录等核心服务
-- **IDE 集成**: 开发环境深度集成
+- **LLM 管理**: 多提供商 LLM 实现
+- **上下文管理**: 会话上下文和内存管理
 - **MCP 支持**: Model Context Protocol 协议支持
 - **遥测系统**: 使用数据收集和分析
 

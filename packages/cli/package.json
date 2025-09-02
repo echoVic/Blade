@@ -20,8 +20,6 @@
   "dependencies": {
     "@blade-ai/core": "workspace:*",
     "commander": "^14.0.0",
-    "inquirer": "^12.6.3",
-    "chalk": "^5.4.1",
     "ink": "^6.2.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

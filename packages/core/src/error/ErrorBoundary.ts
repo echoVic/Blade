@@ -40,7 +40,7 @@ export interface ErrorTrace {
   stack?: string;
   context?: Record<string, any>;
   executionTime?: number;
- .memoryUsage?: NodeJS.MemoryUsage;
+  memoryUsage?: NodeJS.MemoryUsage;
 }
 
 /**

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { Spinner } from './ui/ink/Spinner.js';
+import { Spinner } from '../ui/ink/Spinner.js';
 
 interface SplashScreenProps {
   progress?: number;

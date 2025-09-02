@@ -14,6 +14,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js';
 import { PerformanceProvider } from './ui/ink/PerformanceOptimizer.js';
 import { ResponsiveProvider } from './ui/ink/ResponsiveAdapter.js';
 import { ThemeProvider } from './ui/themes/theme-manager.js';
+import { SessionProvider, useSession } from './contexts/SessionContext.js';
 // import { useTheme } from './ui/themes/theme-manager.js';
 
 interface AppProps {
@@ -37,6 +38,7 @@ export const BladeApp: React.FC<AppProps> = ({
   // const theme = useTheme();
   const { state, dispatch } = useAppState();
   const { navigate, currentView } = useAppNavigation();
+  const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
 
   // 初始化应用
   const initializeApp = useCallback(async () => {
