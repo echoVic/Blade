@@ -3,10 +3,21 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
-  dts: true,
-  splitting: false,
-  sourcemap: true,
+  dts: false,  // 暂时禁用类型声明生成以简化调试
   clean: true,
-  target: 'es2020',
-  outDir: 'dist',
+  external: [
+    'react',
+    'react-dom',
+    'ink',
+    'zod',
+    'axios',
+    'child_process',
+    'fs',
+    'path',
+    'os',
+    'https',
+    'crypto',
+    'util',
+    'events'
+  ]
 });

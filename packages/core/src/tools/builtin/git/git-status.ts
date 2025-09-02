@@ -9,7 +9,7 @@ import {
 import {
   ErrorFactory,
   globalErrorMonitor
-} from '../../../../error/index.js';
+} from '../../../error/index.js';
 
 const execAsync = promisify(exec);
 

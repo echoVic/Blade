@@ -388,3 +388,5 @@ export class ErrorHandler {
     }
   }
 }
+// 创建默认实例导出
+export const errorHandler = new ErrorHandler();

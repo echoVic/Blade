@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname, join, resolve } from 'path';
-import { ErrorFactory, FileSystemError, globalErrorMonitor } from '../../../error/index.js';
+import { ErrorFactory, FileSystemError, globalErrorMonitor } from '../../error/index.js';
 import {
   CommandPreCheckResult,
   ConfirmableToolBase,

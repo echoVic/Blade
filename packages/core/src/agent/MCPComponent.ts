@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { MCPClient, MCPConnectionConfig, MCPResource, MCPSession, MCPTool } from '../mcp/index.js';
+import { McpClient as MCPClient, MCPConnectionConfig, MCPResource, MCPSession, MCPTool } from '../mcp/index.js';
 import { BaseComponent } from './BaseComponent.js';
 
 /**

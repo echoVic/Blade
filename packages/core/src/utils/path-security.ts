@@ -182,3 +182,5 @@ export class PathSecurity {
     ];
   }
 }
+// 创建默认实例导出
+export const pathSecurity = new PathSecurity();
