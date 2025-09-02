@@ -4,7 +4,7 @@
   "description": "Blade AI CLI - 智能AI助手命令行界面",
   "type": "module",
   "bin": {
-    "blade": "../bin/blade.js"
+    "blade": "dist/cli.js"
   },
   "files": [
     "dist"
