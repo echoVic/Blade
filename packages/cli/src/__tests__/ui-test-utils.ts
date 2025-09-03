@@ -2,7 +2,7 @@
  * UI 测试工具和辅助函数
  */
 
-import { jest } from '@jest/globals';
+import { expect } from 'vitest';
 import React from 'react';
 
 // 类型定义
@@ -139,7 +139,7 @@ export class UIComponentTestUtils {
   ): void {
     const actualProps = component.props;
     Object.keys(expectedProps).forEach(key => {
-      expect(actualProps[key]).toEqual(expectedProps[key]);
+      expect(actualProps[key]).toEqual(expectedProps[key as keyof Props]);
     });
   }
 
@@ -150,10 +150,10 @@ export class UIComponentTestUtils {
     context: React.Context<T>,
     value: T
   ): React.FC<{ children: React.ReactNode }> {
-    return ({ children }) => (
-      <context.Provider value={value}>
-        {children}
-      </context.Provider>
+    return ({ children }) => React.createElement(
+      context.Provider,
+      { value },
+      children
     );
   }
 
@@ -306,7 +306,7 @@ export const UITestMatchers = {
   /**
    * 检查元素是否可见
    */
-  toBeVisible(received: HTMLElement): jest.CustomMatcherResult {
+  toBeVisible(received: HTMLElement): { pass: boolean; message: () => string } {
     const isHidden = received.style.display === 'none' || 
                      received.style.visibility === 'hidden' ||
                      received.hidden;
@@ -322,7 +322,7 @@ export const UITestMatchers = {
   /**
    * 检查元素是否启用
    */
-  toBeEnabled(received: HTMLElement): jest.CustomMatcherResult {
+  toBeEnabled(received: HTMLElement): { pass: boolean; message: () => string } {
     const isDisabled = received.hasAttribute('disabled') || 
                        received.getAttribute('aria-disabled') === 'true';
     
@@ -337,7 +337,7 @@ export const UITestMatchers = {
   /**
    * 检查元素是否有特定类名
    */
-  toHaveClass(received: HTMLElement, className: string): jest.CustomMatcherResult {
+  toHaveClass(received: HTMLElement, className: string): { pass: boolean; message: () => string } {
     const hasClass = received.classList.contains(className);
     
     return {
@@ -351,7 +351,7 @@ export const UITestMatchers = {
   /**
    * 检查元素是否有特定属性
    */
-  toHaveAttribute(received: HTMLElement, name: string, value?: string): jest.CustomMatcherResult {
+  toHaveAttribute(received: HTMLElement, name: string, value?: string): { pass: boolean; message: () => string } {
     const hasAttribute = value !== undefined 
       ? received.getAttribute(name) === value
       : received.hasAttribute(name);
@@ -365,15 +365,13 @@ export const UITestMatchers = {
   }
 };
 
-// 扩展 Jest 期望
-declare global {
-  namespace jest {
-    interface Matchers<R> {
-      toBeVisible(): R;
-      toBeEnabled(): R;
-      toHaveClass(className: string): R;
-      toHaveAttribute(name: string, value?: string): R;
-    }
+// 扩展 Vitest 期望
+declare module 'vitest' {
+  interface Assertion<T = any> {
+    toBeVisible(): T;
+    toBeEnabled(): T;
+    toHaveClass(className: string): T;
+    toHaveAttribute(name: string, value?: string): T;
   }
 }
 

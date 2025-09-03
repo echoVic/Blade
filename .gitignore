@@ -1,6 +1,7 @@
 # 依赖目录
 node_modules/
 dist/
+bundle/
 
 # pnpm 相关文件
 .pnpm/

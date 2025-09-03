@@ -18,8 +18,11 @@
     "README.md"
   ],
   "scripts": {
-    "dev": "tsup --watch",
+    "dev": "tsc --build --watch",
     "build": "pnpm -r build",
+    "build:bundle": "node scripts/build-bundle.js --all",
+    "build:bundle:core": "node scripts/build-bundle.js core",
+    "build:bundle:cli": "node scripts/build-bundle.js cli",
     "start": "node bin/blade.js",
     "test": "vitest",
     "test:watch": "vitest --watch",
@@ -87,21 +90,22 @@
     "@testing-library/react": "^16.2.0",
     "@testing-library/user-event": "^14.5.0",
     "@types/inquirer": "^9.0.8",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.15.24",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "esbuild": "^0.24.2",
     "eslint": "^8.57.0",
     "eslint-plugin-security": "^3.0.1",
     "jsdom": "^26.0.0",
     "prettier": "^3.2.5",
     "ts-node": "^10.9.2",
-    "tsup": "^8.5.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.0.0",
-    "@vitest/coverage-v8": "^3.0.0"
+    "vitest": "^3.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

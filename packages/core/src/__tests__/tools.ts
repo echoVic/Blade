@@ -3,7 +3,7 @@
  * 提供 Blade 项目测试中常用的工具方法
  */
 
-import { jest } from '@jest/globals';
+import { vi, expect } from 'vitest';
 
 // 类型定义
 export interface TestTimerOptions {
@@ -18,13 +18,16 @@ export interface MockFunctionOptions {
   callCount?: number;
 }
 
+// 重新导出 vi.Mock 作为 Mock 类型
+export type Mock<T = any> = ReturnType<typeof vi.fn>;
+
 // 测试工具类
 export class TestTools {
   /**
    * 创建 Mock 函数
    */
-  static createMock<T = any>(options: MockFunctionOptions = {}): jest.Mock<T> {
-    const mockFn = jest.fn();
+  static createMock<T = any>(options: MockFunctionOptions = {}): Mock<T> {
+    const mockFn = vi.fn();
     
     if (options.implementation) {
       mockFn.mockImplementation(options.implementation);
@@ -163,7 +166,7 @@ export class TestTools {
   /**
    * 验证 Mock 调用
    */
-  static verifyMockCalls(mockFn: jest.Mock, expectedCalls: number, expectedArgs?: any[][]): void {
+  static verifyMockCalls(mockFn: Mock, expectedCalls: number, expectedArgs?: any[][]): void {
     expect(mockFn).toHaveBeenCalledTimes(expectedCalls);
     
     if (expectedArgs) {

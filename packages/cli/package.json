@@ -4,14 +4,16 @@
   "description": "Blade AI CLI - 智能AI助手命令行界面",
   "type": "module",
   "bin": {
-    "blade": "dist/cli.js"
+    "blade": "bundle/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "bundle"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsc --build",
+    "build:bundle": "node ../../scripts/build-bundle.js cli",
+    "dev": "tsc --build --watch",
     "type-check": "tsc --noEmit",
     "test": "vitest",
     "test:watch": "vitest --watch",
@@ -29,7 +31,6 @@
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "typescript": "^5.9.2",
-    "tsup": "^8.5.0",
     "@testing-library/react": "^16.2.0",
     "vitest": "^3.0.0"
   }

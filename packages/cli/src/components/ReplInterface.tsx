@@ -71,7 +71,7 @@ export const ReplInterface: React.FC<ReplInterfaceProps> = ({ onCommandSubmit })
 
       {/* 输入区域 */}
       <Box flexDirection="row" alignItems="center">
-        <Text color="green">> </Text>
+        <Text color="green">{'>'} </Text>
         <Text>{input}</Text>
         {isProcessing && <Text color="yellow">|</Text>}
       </Box>
