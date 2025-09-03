@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Box, Text, useInput, useApp, Spacer } from 'ink';
+import { Box, Text, useInput, useApp } from 'ink';
 import { useSession } from '../contexts/SessionContext.js';
 import { CommandResult } from '../services/CommandOrchestrator.js';
 
@@ -100,77 +100,73 @@ export const EnhancedReplInterface: React.FC<EnhancedReplInterfaceProps> = ({
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      {/* 标题栏 */}
-      <Box flexDirection="row" justifyContent="space-between" paddingX={1} paddingY={0}>
-        <Text color="blue">🤖 Blade AI 助手</Text>
-        <Text color="gray">Ctrl+C 退出 | Ctrl+L 清屏</Text>
+      {/* Claude Code 风格标题栏 */}
+      <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={1} borderStyle="round">
+        <Text color="cyan" bold>⚡ Blade AI</Text>
+        <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
       </Box>
 
-      {/* 分隔线 */}
-      <Box height={1} width="100%">
-        <Text color="gray">─</Text>
-        <Spacer />
-        <Text color="gray">─</Text>
-      </Box>
-
-      {/* 消息显示区域 - 可滚动 */}
-      <Box flexDirection="column" flexGrow={1} paddingX={1} paddingY={0}>
-        {sessionState.messages.length === 0 && !sessionState.error && (
-          <Box flexDirection="column" paddingY={1}>
-            <Text color="blue">🚀 欢迎使用 Blade AI 助手!</Text>
-            <Text> </Text>
-            <Text color="gray">输入 /help 查看可用命令</Text>
-            <Text color="gray">直接输入问题开始对话</Text>
+      {/* 主要内容区域 */}
+      <Box flexDirection="column" flexGrow={1} padding={1}>
+        {/* 欢迎信息或消息历史 */}
+        {sessionState.messages.length === 0 && !sessionState.error ? (
+          <Box flexDirection="column" gap={1}>
+            <Text color="green">Welcome to Blade AI Assistant!</Text>
+            <Text color="gray">• Type your question to start chatting</Text>
+            <Text color="gray">• Use /help to see available commands</Text>
+            <Text color="gray">• Press Ctrl+L to clear the screen</Text>
           </Box>
-        )}
-
-        {sessionState.messages.map((message) => (
-          <Box key={message.id} flexDirection="column" marginBottom={1}>
-            <Box>
-              <Text color={message.role === 'user' ? 'green' : 'blue'}>
-                {message.role === 'user' ? '👤 你: ' : '🤖 助手: '}
-              </Text>
-            </Box>
-            <Box marginLeft={3}>
-              <Text>{message.content}</Text>
-            </Box>
-          </Box>
-        ))}
-        
-        {isProcessing && (
-          <Box flexDirection="column" marginBottom={1}>
-            <Box>
-              <Text color="yellow">⏳ 助手正在思考...</Text>
-            </Box>
-          </Box>
-        )}
-        
-        {sessionState.error && (
-          <Box flexDirection="column" marginBottom={1}>
-            <Box>
-              <Text color="red">❌ 错误: </Text>
-            </Box>
-            <Box marginLeft={3}>
-              <Text color="red">{sessionState.error}</Text>
-            </Box>
+        ) : (
+          <Box flexDirection="column">
+            {sessionState.messages.map((message) => (
+              <Box key={message.id} flexDirection="column" marginBottom={1}>
+                {message.role === 'user' ? (
+                  <Box flexDirection="row" gap={1}>
+                    <Text color="blue" bold>You:</Text>
+                    <Text>{message.content}</Text>
+                  </Box>
+                ) : (
+                  <Box flexDirection="column" gap={1}>
+                    <Text color="green" bold>Assistant:</Text>
+                    <Box marginLeft={2}>
+                      <Text>{message.content}</Text>
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            ))}
+            
+            {isProcessing && (
+              <Box flexDirection="row" gap={1}>
+                <Text color="green" bold>Assistant:</Text>
+                <Text color="yellow">Thinking...</Text>
+              </Box>
+            )}
+            
+            {sessionState.error && (
+              <Box flexDirection="row" gap={1}>
+                <Text color="red" bold>Error:</Text>
+                <Text color="red">{sessionState.error}</Text>
+              </Box>
+            )}
           </Box>
         )}
       </Box>
 
-      {/* 输入区域 */}
-      <Box flexDirection="row" alignItems="center" paddingX={1} paddingY={1}>
-        <Text color="green">{'>>> '}</Text>
+      {/* Claude Code 风格输入区域 */}
+      <Box flexDirection="row" paddingX={2} paddingY={1} borderStyle="round" borderColor="gray">
+        <Text color="blue" bold>{'> '}</Text>
         <Text>{input}</Text>
-        {isProcessing && <Text color="yellow">|</Text>}
+        {isProcessing && <Text color="yellow">█</Text>}
       </Box>
 
-      {/* 状态栏 */}
-      <Box flexDirection="row" justifyContent="space-between" paddingX={1} paddingY={0}>
-        <Text color="gray">
-          {sessionState.messages.length > 0 ? `${sessionState.messages.length} 条消息` : '暂无消息'}
+      {/* 简洁状态栏 */}
+      <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
+        <Text color="gray" dimColor>
+          {sessionState.messages.length > 0 && `${sessionState.messages.length} messages`}
         </Text>
-        <Text color="gray">
-          {isProcessing ? '处理中...' : '就绪'}
+        <Text color="gray" dimColor>
+          {isProcessing ? 'Processing...' : 'Ready'}
         </Text>
       </Box>
     </Box>

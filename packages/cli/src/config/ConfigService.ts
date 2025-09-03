@@ -123,10 +123,25 @@ export class ConfigService {
     // 全局配置通常是硬编码的默认值
     return {
       auth: {
+        // 基础认证
         apiKey: '',
         baseUrl: 'https://apis.iflow.cn/v1',
+        
+        // LLM 模型配置 (统一在auth下)
         modelName: 'Qwen3-Coder',
+        temperature: 0.7,
+        maxTokens: 4000,
+        stream: true,
+        
+        // 高级参数
+        topP: 0.9,
+        topK: 50,
+        frequencyPenalty: 0,
+        presencePenalty: 0,
+        
+        // 其他
         searchApiKey: '',
+        timeout: 30000,
       },
       ui: {
         theme: 'GitHub',

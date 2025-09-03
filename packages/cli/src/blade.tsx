@@ -1,6 +1,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { render, Box, Text, useApp } from 'ink';
+import { useMemoizedFn } from 'ahooks';
 import { Command } from 'commander';
 
 // --- UI Components & Contexts ---
@@ -29,9 +30,30 @@ const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
   const { addAssistantMessage, addUserMessage, clearMessages, resetSession } = useSession();
   const { exit } = useApp();
 
-  const initializeApp = useCallback(async () => {
+  const initializeApp = useMemoizedFn(async () => {
     try {
       await configService.initialize();
+      const config = configService.getConfig();
+      
+      // 检查API Key配置
+      if (!config.auth.apiKey || config.auth.apiKey.trim() === '') {
+        setIsInitialized(true);
+        addAssistantMessage('🚀 欢迎使用 Blade AI 助手！');
+        addAssistantMessage('');
+        addAssistantMessage('⚠️  检测到尚未配置 API 密钥');
+        addAssistantMessage('');
+        addAssistantMessage('📝 请使用以下方式之一配置API密钥：');
+        addAssistantMessage('');
+        addAssistantMessage('方式1: 环境变量');
+        addAssistantMessage('export BLADE_API_KEY="your-api-key"');
+        addAssistantMessage('');
+        addAssistantMessage('方式2: 配置文件');
+        addAssistantMessage('编辑 ~/.blade/config.json，设置 auth.apiKey');
+        addAssistantMessage('');
+        addAssistantMessage('💡 配置完成后输入任何消息即可开始对话');
+        return;
+      }
+
       const orchestrator = CommandOrchestrator.getInstance();
       await orchestrator.initialize();
       setCommandOrchestrator(orchestrator);
@@ -40,17 +62,38 @@ const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
     } catch (error) {
       addAssistantMessage(`❌ 初始化失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
-  }, [configService, addAssistantMessage]);
+  });
 
-  const handleCommandSubmit = useCallback(async (input: string): Promise<CommandResult> => {
-    if (!commandOrchestrator) {
-      return { success: false, error: '命令编排器未初始化' };
-    }
+  const handleCommandSubmit = useMemoizedFn(async (input: string): Promise<CommandResult> => {
     addUserMessage(input);
+    
+    // 如果没有初始化orchestrator，尝试重新初始化（用于API Key配置后的首次使用）
+    if (!commandOrchestrator) {
+      try {
+        // 重新加载配置以获取最新的API密钥
+        await configService.reload();
+        const config = configService.getConfig();
+        if (!config.auth.apiKey) {
+          addAssistantMessage('❌ 仍未检测到API密钥，请先配置API密钥');
+          return { success: false, error: 'API密钥未配置' };
+        }
+        
+        // 重新初始化
+        const orchestrator = CommandOrchestrator.getInstance();
+        await orchestrator.initialize();
+        setCommandOrchestrator(orchestrator);
+        addAssistantMessage('✅ API密钥配置成功，正在处理您的请求...');
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        addAssistantMessage(`❌ 初始化失败: ${errorMessage}`);
+        return { success: false, error: `初始化失败: ${errorMessage}` };
+      }
+    }
+
     try {
       const result = input.startsWith('/')
-        ? await commandOrchestrator.executeSlashCommand(input.slice(1).split(' ')[0], input.slice(1).split(' ').slice(1))
-        : await commandOrchestrator.executeNaturalLanguage(input);
+        ? await commandOrchestrator!.executeSlashCommand(input.slice(1).split(' ')[0], input.slice(1).split(' ').slice(1))
+        : await commandOrchestrator!.executeNaturalLanguage(input);
       
       if (result.success && result.output) {
         addAssistantMessage(result.output);
@@ -64,13 +107,13 @@ const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
       addAssistantMessage(`❌ ${result.error}`);
       return result;
     }
-  }, [commandOrchestrator, addUserMessage, addAssistantMessage]);
+  });
 
   const handleClear = useCallback(() => {
     clearMessages();
   }, [clearMessages]);
 
-  const handleExit = useCallback(async () => {
+  const handleExit = useMemoizedFn(async () => {
     try {
       if (commandOrchestrator) {
         await commandOrchestrator.cleanup();
@@ -79,7 +122,7 @@ const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
     } catch (error) {
       console.error('清理资源时出错:', error);
     }
-  }, [commandOrchestrator, resetSession]);
+  });
 
   useEffect(() => {
     if (!isInitialized) {
@@ -88,7 +131,7 @@ const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
     return () => {
       handleExit();
     };
-  }, [isInitialized, initializeApp, handleExit]);
+  }, [isInitialized]); // 只依赖isInitialized，因为initializeApp和handleExit已经被useMemoizedFn缓存
 
   if (!isInitialized) {
     return (
@@ -140,7 +183,7 @@ export async function main() {
 
   // 如果解析后没有匹配到任何已知命令（除了默认的 help, version），则也启动交互式UI
   // commander 在没有匹配到命令时，args 数组会是空的
-  if (program.args.length === 0 && !program.matchedCommand) {
+  if (program.args.length === 0) {
      render(React.createElement(BladeApp, { debug: program.opts().debug }));
   }
 }

@@ -32,7 +32,14 @@
       "Bash(./bin/blade.js:*)",
       "Bash(npm run start:*)",
       "Bash(pnpm install:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(BLADE_MODEL=\"gpt-4\" BLADE_API_KEY=\"sk-test-key\" ./bin/blade.js llm \"Hello\")",
+      "Bash(BLADE_MODEL=\"gpt-3.5-turbo\" BLADE_API_KEY=\"sk-test\" BLADE_BASE_URL=\"https://api.openai.com/v1\" ./bin/blade.js llm \"Hello\")",
+      "Bash(BLADE_MODEL=\"gpt-4\" BLADE_BASE_URL=\"https://api.example.com/v1\" ./bin/blade.js config show)",
+      "Bash(sed:*)",
+      "Bash(BLADE_API_KEY=\"sk-test-key\" ./bin/blade.js chat \"你好\")",
+      "Bash(BLADE_API_KEY=\"sk-test-key\" ./bin/blade.js config show)",
+      "Bash(pnpm add:*)"
     ],
     "deny": [],
     "ask": [],

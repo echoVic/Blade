@@ -14,26 +14,30 @@ export interface BladeConfig {
     tempDirectory: string;
   };
   
-  // 认证配置
+  // 认证配置 - 统一所有LLM调用参数 (类似Claude Code设计)
   auth: {
+    // 基础认证
     apiKey: string;
     apiSecret: string;
-    tokenStorage: 'memory' | 'file' | 'system';
-    tokenRefreshInterval: number;
-    providers: AuthProvider[];
-  };
-  
-  // LLM配置
-  llm: {
-    provider: 'qwen' | 'volcengine' | 'openai' | 'custom';
-    model: string;
+    baseUrl: string;
+    
+    // LLM 模型配置
+    modelName: string;
     temperature: number;
     maxTokens: number;
+    stream: boolean;
+    
+    // 高级参数
     topP: number;
     topK: number;
     frequencyPenalty: number;
     presencePenalty: number;
-    stream: boolean;
+    
+    // 其他
+    tokenStorage: 'memory' | 'file' | 'system';
+    tokenRefreshInterval: number;
+    timeout: number;
+    providers: AuthProvider[];
   };
   
   // MCP配置
@@ -331,22 +335,28 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     tempDirectory: process.env.TEMP || '/tmp',
   },
   auth: {
+    // 基础认证
     apiKey: '',
     apiSecret: '',
-    tokenStorage: 'file',
-    tokenRefreshInterval: 3600,
-    providers: [],
-  },
-  llm: {
-    provider: 'qwen',
-    model: 'qwen-turbo',
+    baseUrl: 'https://apis.iflow.cn/v1',
+    
+    // LLM 模型配置 (统一在auth下)
+    modelName: 'Qwen3-Coder',
     temperature: 0.7,
     maxTokens: 4000,
+    stream: true,
+    
+    // 高级参数
     topP: 0.9,
     topK: 50,
     frequencyPenalty: 0,
     presencePenalty: 0,
-    stream: true,
+    
+    // 其他
+    tokenStorage: 'file',
+    tokenRefreshInterval: 3600,
+    timeout: 30000,
+    providers: [],
   },
   mcp: {
     enabled: false,
@@ -356,7 +366,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     maxConnections: 5,
   },
   ui: {
-    theme: 'default',
+    theme: 'GitHub',
     fontSize: 14,
     fontFamily: 'monospace',
     lineHeight: 1.4,

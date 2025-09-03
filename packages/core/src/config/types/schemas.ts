@@ -4,16 +4,27 @@
 
 import { z } from 'zod';
 
-// 认证配置 Schema
+// 认证配置 Schema - 统一所有LLM调用参数到auth下
 export const AuthConfigSchema = z.object({
+  // 基础认证
   apiKey: z.string().default(''),
   baseUrl: z.string().url().default('https://apis.iflow.cn/v1'),
+  
+  // LLM 模型配置 (统一在auth下，类似Claude Code)
   modelName: z.string().default('Qwen3-Coder'),
+  temperature: z.number().min(0).max(2).default(0.7),
+  maxTokens: z.number().min(1).max(100000).default(4000),
+  stream: z.boolean().default(true),
+  
+  // 高级参数
+  topP: z.number().min(0).max(1).default(0.9),
+  topK: z.number().min(1).max(100).default(50),
+  frequencyPenalty: z.number().min(-2).max(2).default(0),
+  presencePenalty: z.number().min(-2).max(2).default(0),
+  
+  // 其他
   searchApiKey: z.string().default(''),
   timeout: z.number().min(1000).max(300000).default(30000),
-  maxTokens: z.number().min(1).max(100000).default(4000),
-  temperature: z.number().min(0).max(2).default(0.7),
-  stream: z.boolean().default(true),
 });
 
 // UI 配置 Schema
@@ -364,15 +375,19 @@ export interface BladeConfig {
 
 // 预定义的环境变量映射
 export const ENV_MAPPING: EnvMapping = {
-  // 认证配置
+  // 认证配置 - 统一LLM参数
   BLADE_API_KEY: 'auth.apiKey',
   BLADE_BASE_URL: 'auth.baseUrl',
   BLADE_MODEL: 'auth.modelName',
-  BLADE_SEARCH_API_KEY: 'auth.searchApiKey',
-  BLADE_TIMEOUT: 'auth.timeout',
-  BLADE_MAX_TOKENS: 'auth.maxTokens',
   BLADE_TEMPERATURE: 'auth.temperature',
+  BLADE_MAX_TOKENS: 'auth.maxTokens',
   BLADE_STREAM: 'auth.stream',
+  BLADE_TOP_P: 'auth.topP',
+  BLADE_TOP_K: 'auth.topK',
+  BLADE_FREQUENCY_PENALTY: 'auth.frequencyPenalty',
+  BLADE_PRESENCE_PENALTY: 'auth.presencePenalty',
+  BLADE_TIMEOUT: 'auth.timeout',
+  BLADE_SEARCH_API_KEY: 'auth.searchApiKey',
   
   // UI 配置
   BLADE_THEME: 'ui.theme',

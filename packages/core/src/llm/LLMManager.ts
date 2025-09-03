@@ -96,8 +96,9 @@ export class LLMManager {
     // 使用重试管理器执行API调用
     return globalRetryManager.execute(async () => {
       try {
-        // 通用API调用实现
-        const response = await fetch(config.baseUrl!, {
+        // 通用API调用实现 - 使用标准OpenAI兼容接口
+        const apiUrl = `${config.baseUrl!.replace(/\/$/, '')}/chat/completions`;
+        const response = await fetch(apiUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),

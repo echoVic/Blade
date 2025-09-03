@@ -41,12 +41,9 @@ export class CommandOrchestrator {
       
       // 初始化 core 服务
       this.agent = new Agent({
-        llm: {
-          provider: config.auth.apiKey ? 'qwen' : 'volcengine',
-          apiKey: config.auth.apiKey,
-          baseUrl: config.auth.baseUrl,
-          modelName: config.auth.modelName,
-        },
+        apiKey: config.auth.apiKey,
+        baseUrl: config.auth.baseUrl,
+        modelName: config.auth.modelName,
       });
 
       await this.agent.init();
@@ -177,7 +174,7 @@ export class CommandOrchestrator {
     const config = this.configService.getConfig();
     const status = {
       agent: this.agent ? '已初始化' : '未初始化',
-      llm: config.auth.modelName || '未设置',
+      model: config.auth.modelName || '未设置',
       tools: (this.toolComponent && typeof this.toolComponent.getToolCount === 'function') ? this.toolComponent.getToolCount() : 0,
       context: (this.contextComponent && typeof this.contextComponent.getMessageCount === 'function') ? this.contextComponent.getMessageCount() : 0,
     };
@@ -185,7 +182,7 @@ export class CommandOrchestrator {
     const statusText = `
 📊 系统状态:
   🤖 Agent: ${status.agent}
-  🧠 LLM: ${status.llm}
+  🧠 模型: ${status.model}
   🛠️  工具: ${status.tools} 个
   💬 上下文: ${status.context} 条消息
     `;

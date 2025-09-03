@@ -101,7 +101,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const addUserMessage = (content: string) => {
     const message: SessionMessage = {
-      id: Date.now().toString(),
+      id: `user-${Date.now()}-${Math.random()}`,
       role: 'user',
       content,
       timestamp: Date.now(),
@@ -111,7 +111,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const addAssistantMessage = (content: string) => {
     const message: SessionMessage = {
-      id: Date.now().toString(),
+      id: `assistant-${Date.now()}-${Math.random()}`,
       role: 'assistant',
       content,
       timestamp: Date.now(),
