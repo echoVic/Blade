@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { Agent } from '../agent/Agent.js';
+import { Agent } from '@blade-ai/core';
 
 /**
  * 注册 LLM 相关命令

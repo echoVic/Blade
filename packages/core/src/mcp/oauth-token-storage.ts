@@ -26,7 +26,13 @@ export class OAuthTokenStorage {
     try {
       // 确保存储目录存在
       const dir = path.dirname(this.storagePath);
-      await fs.mkdir(dir, { recursive: true });
+      try {
+        await fs.mkdir(dir, { recursive: true });
+      } catch (error: any) {
+        if (error.code !== 'EEXIST') {
+          throw error;
+        }
+      }
 
       // 加载现有令牌
       const tokens = await this.loadAllTokens();
@@ -93,8 +99,8 @@ export class OAuthTokenStorage {
     try {
       await fs.unlink(this.storagePath);
       console.log('所有令牌已清除');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
         console.error('清除令牌失败:', error);
         throw error;
       }
@@ -141,8 +147,8 @@ export class OAuthTokenStorage {
       await fs.access(this.storagePath);
       const content = await fs.readFile(this.storagePath, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
         return {};
       }
       throw error;
@@ -193,7 +199,7 @@ export class OAuthTokenStorage {
       
       const decipher = crypto.createDecipheriv(algorithm, key, iv);
       
-      let decrypted = decipher.update(storedToken.accessToken, 'hex', 'utf8');
+      let decrypted = decipher.update(storedToken.accessToken!, 'hex', 'utf8');
       decrypted += decipher.final('utf8');
       
       const token: OAuthToken = JSON.parse(decrypted);
@@ -284,8 +290,8 @@ export class OAuthTokenStorage {
     try {
       await fs.copyFile(this.storagePath, backupPath);
       console.log(`令牌备份已创建: ${backupPath}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
         console.log('没有令牌需要备份');
       } else {
         console.error('令牌备份失败:', error);

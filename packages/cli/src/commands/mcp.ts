@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
-import { MCPClient, mcpConfig, MCPConnectionConfig, MCPServer } from '../mcp/index.js';
-import { createToolManager } from '../tools/index.js';
+import { MCPClient, MCPServer, MCPConnectionConfig } from '@modelcontextprotocol/sdk';
+import { ToolComponent } from '@blade-ai/core';
 import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
 
 /**

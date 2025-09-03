@@ -119,6 +119,40 @@ export interface LogMiddleware {
 }
 
 /**
+ * 日志器接口
+ */
+export interface Logger {
+  /** 记录调试日志 */
+  debug(message: string, metadata?: Record<string, any>): void;
+  /** 记录信息日志 */
+  info(message: string, metadata?: Record<string, any>): void;
+  /** 记录警告日志 */
+  warn(message: string, metadata?: Record<string, any>): void;
+  /** 记录错误日志 */
+  error(message: string, error?: Error, metadata?: Record<string, any>): void;
+  /** 记录致命错误日志 */
+  fatal(message: string, error?: Error, metadata?: Record<string, any>): void;
+  /** 记录指定级别的日志 */
+  log(level: LogLevel, message: string, metadata?: Record<string, any>): void;
+  /** 日志器名称 */
+  readonly name: string;
+  /** 日志器配置 */
+  config: LoggerConfig;
+  /** 添加传输器 */
+  addTransport(transport: LogTransport): void;
+  /** 移除传输器 */
+  removeTransport(name: string): void;
+  /** 添加中间件 */
+  addMiddleware(middleware: LogMiddleware): void;
+  /** 移除中间件 */
+  removeMiddleware(name: string): void;
+  /** 刷新所有传输器 */
+  flush(): Promise<void>;
+  /** 关闭日志器 */
+  close(): Promise<void>;
+}
+
+/**
  * 日志配置接口
  */
 export interface LoggerConfig {

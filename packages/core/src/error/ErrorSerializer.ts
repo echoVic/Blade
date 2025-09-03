@@ -4,7 +4,7 @@
  */
 
 import { BladeError } from './BladeError.js';
-import type { ErrorDetails, ErrorReport } from './types.js';
+import type { ErrorDetails, ErrorReport, ErrorCodeModule, ErrorSeverity, ErrorCategory } from './types.js';
 
 /**
  * 序列化错误详情接口
@@ -107,7 +107,7 @@ export class ErrorSerializer {
   serializeReport(report: ErrorReport): any {
     return {
       ...report,
-      error: this.serialize(report.error)
+      error: this.serialize(report.error as any)
     };
   }
 
@@ -117,12 +117,12 @@ export class ErrorSerializer {
   deserialize(serialized: SerializedError): BladeError {
     // 重新创建 BladeError 实例
     const error = new BladeError(
-      serialized.module as any,
+      serialized.module as ErrorCodeModule,
       serialized.code,
       serialized.message,
       {
-        severity: serialized.severity as any,
-        category: serialized.category as any,
+        severity: serialized.severity as ErrorSeverity,
+        category: serialized.category as ErrorCategory,
         context: serialized.context,
         timestamp: serialized.timestamp,
         retryable: serialized.retryable,
@@ -134,7 +134,7 @@ export class ErrorSerializer {
 
     // 恢复相关错误
     if (serialized.relatedErrors) {
-      error.relatedErrors = serialized.relatedErrors.map(e => this.deserialize(e));
+      (error as any).relatedErrors = serialized.relatedErrors.map(e => this.deserialize(e));
     }
 
     return error;

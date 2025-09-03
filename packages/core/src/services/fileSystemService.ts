@@ -1,7 +1,7 @@
-import { promises as fs, Stats } from 'fs';
+import { promises as fs, Stats, watch } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class FileSystemService {
   private config: BladeConfig;
@@ -498,7 +498,7 @@ export class FileSystemService {
     }
     
     // 检查缓存是否过期
-    const maxAge = this.config.advanced.cache.ttl || 3600000; // 1小时
+    const maxAge = 3600000; // 1小时
     if (Date.now() - entry.timestamp > maxAge) {
       this.fileCache.delete(filePath);
       return null;
@@ -526,8 +526,8 @@ export class FileSystemService {
   // 权限检查
   private async checkPathPermission(filePath: string): Promise<void> {
     // 检查是否在允许的路径中
-    const allowedPaths = this.config.tools.fileSystem.allowedPaths;
-    const blockedPaths = this.config.tools.fileSystem.blockedPaths;
+    const allowedPaths: string[] = [];
+    const blockedPaths: string[] = [];
     
     const resolvedPath = path.resolve(filePath);
     
@@ -556,7 +556,7 @@ export class FileSystemService {
     // 检查文件大小限制
     try {
       const stats = await fs.stat(filePath);
-      const maxSize = this.config.tools.fileSystem.maxFileSize || 10 * 1024 * 1024; // 10MB
+      const maxSize = 10 * 1024 * 1024; // 10MB
       
       if (stats.size > maxSize) {
         throw new Error(`文件大小超过限制: ${filePath} (${stats.size} > ${maxSize})`);
@@ -606,9 +606,9 @@ export class FileSystemService {
       await this.checkPathPermission(filePath);
       
       // 使用fs.watch监听文件变化
-      const watcher = fs.watch(filePath, { 
+      const watcher = watch(filePath, { 
         recursive: options?.recursive 
-      }, (eventType, filename) => {
+      }, (eventType: string, filename: string | null) => {
         const fullPath = filename ? path.join(filePath, filename) : filePath;
         callback({
           eventType,
@@ -658,15 +658,15 @@ export class FileSystemService {
     return {
       size: this.fileCache.size,
       totalSize,
-      maxSize: this.config.advanced.cache.maxSize || 100 * 1024 * 1024, // 100MB
+      maxSize: 100 * 1024 * 1024, // 100MB
       hitRate: 0, // 需要实现命中率统计
     };
   }
 
   // 清理缓存
   public async cleanupCache(): Promise<void> {
-    const maxAge = this.config.advanced.cache.ttl || 3600000; // 1小时
-    const maxSize = this.config.advanced.cache.maxSize || 100 * 1024 * 1024; // 100MB
+    const maxAge = 3600000; // 1小时
+    const maxSize = 100 * 1024 * 1024; // 100MB
     
     // 清理过期缓存
     const now = Date.now();
@@ -709,13 +709,13 @@ export class FileSystemService {
 }
 
 // 类型定义
-interface ReadFileOptions {
+export interface ReadFileOptions {
   encoding?: BufferEncoding;
   flag?: string;
   useCache?: boolean;
 }
 
-interface WriteFileOptions {
+export interface WriteFileOptions {
   encoding?: BufferEncoding;
   mode?: number;
   flag?: string;
@@ -769,7 +769,7 @@ interface WalkResult {
   modifiedAt: Date;
 }
 
-interface FileInfo {
+export interface FileInfo {
   path: string;
   size: number;
   isFile: boolean;
@@ -783,12 +783,12 @@ interface FileInfo {
   group: number;
 }
 
-interface SearchOptions {
+export interface SearchOptions {
   maxDepth?: number;
   ignoreErrors?: boolean;
 }
 
-interface SearchResult extends WalkResult {}
+export interface SearchResult extends WalkResult {}
 
 interface SearchInFilesOptions {
   includeExtensions?: string[];

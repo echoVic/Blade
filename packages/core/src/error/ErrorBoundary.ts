@@ -5,6 +5,8 @@
 
 import { BladeError } from './BladeError.js';
 import { ErrorPersistenceManager } from './ErrorSerializer.js';
+import { ErrorCodeModule } from './types.js';
+
 
 /**
  * 错误边界配置
@@ -40,7 +42,7 @@ export interface ErrorTrace {
   stack?: string;
   context?: Record<string, any>;
   executionTime?: number;
-  memoryUsage?: NodeJS.MemoryUsage;
+  memoryUsage?: any;
 }
 
 /**
@@ -109,7 +111,7 @@ export class ErrorBoundary {
     } catch (error) {
       const bladeError = error instanceof BladeError 
         ? error 
-        : BladeError.from(error);
+        : BladeError.from(error as Error);
       
       await this.handleError(bladeError, context);
       
@@ -134,7 +136,7 @@ export class ErrorBoundary {
     } catch (error) {
       const bladeError = error instanceof BladeError 
         ? error 
-        : BladeError.from(error);
+        : BladeError.from(error as Error);
       
       this.handleSyncError(bladeError, context);
       
@@ -152,7 +154,7 @@ export class ErrorBoundary {
   async handleError(error: BladeError, context?: Record<string, any>): Promise<void> {
     // 添加上下文
     if (context) {
-      error.context = { ...error.context, ...context };
+      (error as any).context = { ...error.context, ...context };
     }
 
     // 更新状态
@@ -192,7 +194,7 @@ export class ErrorBoundary {
   private handleSyncError(error: BladeError, context?: Record<string, any>): void {
     // 立即添加上下文
     if (context) {
-      error.context = { ...error.context, ...context };
+      (error as any).context = { ...error.context, ...context };
     }
 
     // 更新状态
@@ -280,7 +282,7 @@ export class ErrorBoundary {
       process.on('uncaughtException', async (error) => {
         const bladeError = error instanceof Error 
           ? BladeError.from(error)
-          : new BladeError('CORE', '0005', string(error));
+          : new BladeError(ErrorCodeModule.CORE, 'INTERNAL_ERROR', String(error));
         
         await this.handleError(bladeError, {
           source: 'uncaughtException',
@@ -299,7 +301,7 @@ export class ErrorBoundary {
           ? reason 
           : new Error(String(reason));
         
-        const bladeError = BladeError.from(error);
+        const bladeError = BladeError.from(error as Error, ErrorCodeModule.CORE);
         
         await this.handleError(bladeError, {
           source: 'unhandledRejection',
@@ -345,7 +347,7 @@ export class ErrorDebugTools {
     const trace: ErrorTrace = {
       id: this.generateTraceId(),
       timestamp: Date.now(),
-      error: new BladeError('CORE', '0004', '追踪开始', {
+      error: new BladeError(ErrorCodeModule.CORE, '0004', '追踪开始', {
         category: 'DEBUG' as any,
         severity: 'DEBUG' as any,
         context
@@ -377,7 +379,7 @@ export class ErrorDebugTools {
     if (error) {
       trace.error = error instanceof BladeError 
         ? error 
-        : BladeError.from(error);
+        : BladeError.from(error as Error);
     }
 
     if (this.config.captureExecutionTime) {
@@ -583,7 +585,7 @@ export function withDebugTrace(operationId?: string) {
         debugTools.endTrace(opId);
         return result;
       } catch (error) {
-        debugTools.endTrace(opId, error);
+        debugTools.endTrace(opId, error as Error | BladeError);
         throw error;
       }
     };

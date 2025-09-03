@@ -4,7 +4,7 @@
  */
 
 import { BladeError } from './BladeError.js';
-import type { RetryConfig } from './types.js';
+import { ErrorCodeModule, type RetryConfig } from './types.js';
 
 /**
  * 重试状态
@@ -72,7 +72,7 @@ export class RetryManager {
       const circuitState = this.getCircuitState(id);
       if (circuitState.state === CircuitState.OPEN) {
         throw new BladeError(
-          'CORE',
+          ErrorCodeModule.CORE,
           '0004',
           `操作 "${id}" 被熔断器拒绝`,
           {
@@ -95,7 +95,7 @@ export class RetryManager {
       } catch (error) {
         const bladeError = error instanceof BladeError 
           ? error 
-          : BladeError.from(error);
+          : BladeError.from(error as Error);
         
         retryState.errors.push(bladeError);
         retryState.attempts++;
@@ -138,7 +138,7 @@ export class RetryManager {
       new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new BladeError(
-            'CORE',
+            ErrorCodeModule.CORE,
             '0004',
             `操作 "${id}" 超时`,
             {
@@ -182,7 +182,7 @@ export class RetryManager {
     
     // 清理熔断器状态
     if (this.circuitBreakerConfig) {
-      for (const [id, circuitState] of this.circuitStates.entries()) {
+      for (const [, circuitState] of this.circuitStates.entries()) {
         if (circuitState.state === CircuitState.OPEN && 
             now - circuitState.lastFailure > this.circuitBreakerConfig.recoveryTimeout) {
           // 熔断器超时，进入半开状态

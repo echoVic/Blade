@@ -8,15 +8,13 @@ import path from 'path';
 import os from 'os';
 import { 
   BladeConfig, 
-  BladeUnifiedConfig, 
-  UserConfig, 
-  ProjectConfig,
   CONFIG_PATHS 
 } from '../types/index.js';
 import {
+  UserConfig,
+  ProjectConfig,
   UserConfigSchema,
-  ProjectConfigSchema,
-  BladeUnifiedConfigSchema
+  ProjectConfigSchema
 } from '../types/schemas.js';
 
 /**
@@ -126,7 +124,7 @@ export class ConfigMigrationTool {
       }
 
       // 读取现有配置
-      const configContent = await fs.readFile(configPath, 'utf-8');
+      const configContent = await fs.readFile(configPath as string, 'utf-8');
       const config = JSON.parse(configContent);
 
       // 检测版本
@@ -244,7 +242,7 @@ export class ConfigMigrationTool {
       }
 
       // 读取现有配置
-      const configContent = await fs.readFile(configPath, 'utf-8');
+      const configContent = await fs.readFile(configPath as string, 'utf-8');
       const config = JSON.parse(configContent);
 
       // 检测版本
@@ -384,20 +382,22 @@ export class ConfigMigrationTool {
       tools: {
         toolDiscoveryCommand: config.toolDiscoveryCommand || 'bin/get_tools',
         toolCallCommand: config.toolCallCommand || 'bin/call_tool',
-        summarizeToolOutput: config.summarizeToolOutput || {},
+        summarizeToolOutput: (config as any).tools?.summarizeToolOutput || {},
+        autoUpdate: true,
+        toolTimeout: 30000,
       },
       mcp: {
-        mcpServers: config.mcpServers || {
+        mcpServers: (config as any).mcp?.mcpServers || {
           main: {
             command: 'bin/mcp_server.py',
           },
         },
       },
       telemetry: {
-        enabled: config.telemetry?.enabled || true,
-        target: config.telemetry?.target || 'local',
-        otlpEndpoint: config.telemetry?.otlpEndpoint || 'http://localhost:4317',
-        logPrompts: config.telemetry?.logPrompts || false,
+        enabled: (config as any).telemetry?.enabled ?? true,
+        target: (config as any).telemetry?.target || 'local',
+        otlpEndpoint: (config as any).telemetry?.otlpEndpoint || 'http://localhost:4317',
+        logPrompts: (config as any).telemetry?.logPrompts ?? false,
       },
       usage: {
         usageStatisticsEnabled: config.usageStatisticsEnabled || true,
@@ -609,15 +609,15 @@ export class ConfigMigrationTool {
   /**
    * 创建备份
    */
-  private async createBackup(configPath: string, version: string, type = 'user'): Promise<string> {
+  async createBackup(configPath: string, version: string, type = 'user'): Promise<string> {
     await this.ensureDirectoryExists(this.backupDir);
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupFileName = `config-${type}-v${version}-${timestamp}.json`;
     const backupPath = path.join(this.backupDir, backupFileName);
 
-    const configContent = await fs.readFile(configPath, 'utf-8');
-    await fs.writeFile(backupPath, configContent, 'utf-8');
+    const configContent = await fs.readFile(configPath as string, 'utf-8');
+    await fs.writeFile(backupPath as string, configContent, 'utf-8');
 
     return backupPath;
   }
@@ -630,7 +630,7 @@ export class ConfigMigrationTool {
     await this.ensureDirectoryExists(path.dirname(configPath));
     
     const configContent = JSON.stringify(config, null, 2);
-    await fs.writeFile(configPath, configContent, 'utf-8');
+    await fs.writeFile(configPath as string, configContent, 'utf-8');
   }
 
   /**
@@ -641,7 +641,7 @@ export class ConfigMigrationTool {
     await this.ensureDirectoryExists(path.dirname(configPath));
     
     const configContent = JSON.stringify(config, null, 2);
-    await fs.writeFile(configPath, configContent, 'utf-8');
+    await fs.writeFile(configPath as string, configContent, 'utf-8');
   }
 
   /**
@@ -649,7 +649,7 @@ export class ConfigMigrationTool {
    */
   private validateUserConfig(config: any): { valid: boolean; errors: string[]; warnings: string[] } {
     try {
-      const validConfig = UserConfigSchema.parse(config);
+      UserConfigSchema.parse(config);
       return { valid: true, errors: [], warnings: [] };
     } catch (error) {
       if (error instanceof Error) {
@@ -672,7 +672,7 @@ export class ConfigMigrationTool {
    */
   private validateProjectConfig(config: any): { valid: boolean; errors: string[]; warnings: string[] } {
     try {
-      const validConfig = ProjectConfigSchema.parse(config);
+      ProjectConfigSchema.parse(config);
       return { valid: true, errors: [], warnings: [] };
     } catch (error) {
       if (error instanceof Error) {
@@ -731,7 +731,7 @@ export class ConfigMigrationTool {
         return null;
       }
 
-      const content = await fs.readFile(configPath, 'utf-8');
+      const content = await fs.readFile(configPath as string, 'utf-8');
       const config = JSON.parse(content);
       return config.version || '1.0.0';
     } catch {
@@ -744,14 +744,16 @@ export class ConfigMigrationTool {
    */
   async cleanupOldBackups(keepCount: number = 5): Promise<void> {
     try {
-      const files = await fs.readdir(this.backupDir);
-      const backupFiles = files
-        .filter(file => file.endsWith('.json'))
-        .map(file => ({
-          name: file,
-          path: path.join(this.backupDir, file),
-          stat: fs.stat(path.join(this.backupDir, file)),
-        }));
+      const files = await fs.readdir(this.backupDir as string);
+      const backupFiles = await Promise.all(
+        files
+          .filter(file => file.endsWith('.json'))
+          .map(async file => ({
+            name: file,
+            path: path.join(this.backupDir, file),
+            stat: await fs.stat(path.join(this.backupDir, file) as string),
+          }))
+      );
 
       // 按修改时间排序
       const sortedBackups = backupFiles.sort((a, b) => 
@@ -761,7 +763,7 @@ export class ConfigMigrationTool {
       // 删除旧备份
       const toDelete = sortedBackups.slice(keepCount);
       for (const backup of toDelete) {
-        await fs.unlink(backup.path);
+        await fs.unlink(backup.path as string);
         console.log(`删除旧备份: ${backup.name}`);
       }
     } catch (error) {

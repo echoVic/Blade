@@ -1,6 +1,19 @@
 import { EventEmitter } from 'events';
-import { McpClient as MCPClient, MCPConnectionConfig, MCPResource, MCPSession, MCPTool } from '../mcp/index.js';
+import { McpClient as MCPClient, McpResource, McpTool } from '../mcp/index.js';
 import { BaseComponent } from './BaseComponent.js';
+
+/**
+ * MCP 会话接口
+ */
+export interface MCPSession {
+  id: string;
+  serverId: string;
+  serverName: string;
+  status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  connectedAt?: number;
+  disconnectedAt?: number;
+  error?: string;
+}
 
 /**
  * MCP 组件配置
@@ -15,7 +28,7 @@ export interface MCPComponentConfig {
 /**
  * MCP 资源信息
  */
-export interface MCPResourceInfo extends MCPResource {
+export interface MCPResourceInfo extends McpResource {
   serverId: string;
   serverName: string;
 }
@@ -23,7 +36,7 @@ export interface MCPResourceInfo extends MCPResource {
 /**
  * MCP 工具信息
  */
-export interface MCPToolInfo extends MCPTool {
+export interface MCPToolInfo extends McpTool {
   serverId: string;
   serverName: string;
 }
@@ -82,77 +95,46 @@ export class MCPComponent extends BaseComponent {
       return;
     }
 
-    this.client = new MCPClient();
-
-    // 设置事件监听
-    this.client.on('connected', session => {
-      this.log(`MCP 服务器连接成功: ${session.config.name}`);
-      this.sessions.set(session.config.name, session);
-      this.emit('serverConnected', session);
-    });
-
-    this.client.on('disconnected', sessionId => {
-      this.log(`MCP 服务器断开连接: ${sessionId}`);
-      // 清理相关数据
-      for (const [name, session] of this.sessions.entries()) {
-        if (session.id === sessionId) {
-          this.sessions.delete(name);
-          this.resources.delete(sessionId);
-          this.tools.delete(sessionId);
-          break;
-        }
+    try {
+      // 初始化 MCP 客户端
+      this.client = new MCPClient({} as any); // 临时使用空配置
+      await this.client.initialize();
+      
+      // 自动连接到配置的服务器
+      if (this.config.autoConnect && this.config.servers) {
+        await this.connectToServers(this.config.servers);
       }
-      this.emit('serverDisconnected', sessionId);
-    });
-
-    this.client.on('error', error => {
-      this.log(`MCP 客户端错误: ${error.message}`);
+      
+      this.log('MCP 组件初始化完成');
+    } catch (error) {
+      this.log(`MCP 组件初始化失败: ${error}`);
       this.emit('error', error);
-    });
-
-    // 自动连接配置的服务器
-    if (this.config.autoConnect && this.config.servers) {
-      await this.connectToServers(this.config.servers);
+      throw error;
     }
-
-    this.log('MCP 组件初始化完成');
   }
 
   /**
-   * 销毁 MCP 组件
+   * 销毁组件
    */
   async destroy(): Promise<void> {
     if (this.client) {
-      // 断开所有连接
-      for (const session of this.sessions.values()) {
-        await this.client.disconnect(session.id);
-      }
+      await this.client.destroy();
     }
-
     this.sessions.clear();
     this.resources.clear();
     this.tools.clear();
-
-    this.log('MCP 组件已销毁');
+    this.eventEmitter.removeAllListeners();
   }
 
   /**
    * 连接到多个服务器
    */
   async connectToServers(serverNames: string[]): Promise<void> {
-    const { mcpConfig } = await import('../mcp/index.js');
-
     for (const serverName of serverNames) {
       try {
-        const serverConfig = mcpConfig.getServer(serverName);
-        if (!serverConfig) {
-          this.log(`未找到服务器配置: ${serverName}`);
-          continue;
-        }
-
-        await this.connectToServer(serverConfig);
+        await this.connectToServer(serverName);
       } catch (error) {
-        this.log(`连接服务器失败 ${serverName}: ${error}`);
+        this.emit('error', { serverName, error });
       }
     }
   }
@@ -160,18 +142,27 @@ export class MCPComponent extends BaseComponent {
   /**
    * 连接到单个服务器
    */
-  async connectToServer(config: MCPConnectionConfig): Promise<MCPSession> {
+  async connectToServer(serverId: string): Promise<MCPSession> {
     if (!this.client) {
       throw new Error('MCP 客户端未初始化');
     }
 
-    this.log(`连接到 MCP 服务器: ${config.name}`);
-    const session = await this.client.connect(config);
-
-    // 获取服务器资源和工具
-    await this.loadServerResources(session.id);
-    await this.loadServerTools(session.id);
-
+    await this.client.connectToServer(serverId);
+    
+    const session: MCPSession = {
+      id: serverId,
+      serverId,
+      serverName: serverId,
+      status: 'connected',
+      connectedAt: Date.now()
+    };
+    
+    this.sessions.set(serverId, session);
+    
+    // 加载服务器资源和工具
+    await this.loadServerResources(serverId);
+    await this.loadServerTools(serverId);
+    
     return session;
   }
 
@@ -179,31 +170,31 @@ export class MCPComponent extends BaseComponent {
    * 断开服务器连接
    */
   async disconnectFromServer(serverName: string): Promise<void> {
-    const session = this.sessions.get(serverName);
-    if (session && this.client) {
-      await this.client.disconnect(session.id);
+    if (this.client) {
+      await this.client.disconnectFromServer(serverName);
+      this.sessions.delete(serverName);
     }
   }
 
   /**
    * 加载服务器资源
    */
-  async loadServerResources(sessionId: string): Promise<void> {
+  async loadServerResources(serverId: string): Promise<void> {
     if (!this.client) return;
 
     try {
-      const resources = await this.client.listResources(sessionId);
-      const session = this.getSessionById(sessionId);
+      const resources = await this.client.listResources(serverId);
+      const session = this.sessions.get(serverId);
 
       if (session) {
         const resourcesWithServer = resources.map(resource => ({
           ...resource,
-          serverId: sessionId,
-          serverName: session.config.name,
+          serverId,
+          serverName: session.serverName,
         }));
 
-        this.resources.set(sessionId, resourcesWithServer);
-        this.log(`加载了 ${resources.length} 个资源从 ${session.config.name}`);
+        this.resources.set(serverId, resourcesWithServer);
+        this.log(`加载了 ${resources.length} 个资源从 ${session.serverName}`);
       }
     } catch (error) {
       this.log(`加载服务器资源失败: ${error}`);
@@ -213,22 +204,22 @@ export class MCPComponent extends BaseComponent {
   /**
    * 加载服务器工具
    */
-  async loadServerTools(sessionId: string): Promise<void> {
+  async loadServerTools(serverId: string): Promise<void> {
     if (!this.client) return;
 
     try {
-      const tools = await this.client.listTools(sessionId);
-      const session = this.getSessionById(sessionId);
+      const tools = await this.client.listTools(serverId);
+      const session = this.sessions.get(serverId);
 
       if (session) {
         const toolsWithServer = tools.map(tool => ({
           ...tool,
-          serverId: sessionId,
-          serverName: session.config.name,
+          serverId,
+          serverName: session.serverName,
         }));
 
-        this.tools.set(sessionId, toolsWithServer);
-        this.log(`加载了 ${tools.length} 个工具从 ${session.config.name}`);
+        this.tools.set(serverId, toolsWithServer);
+        this.log(`加载了 ${tools.length} 个工具从 ${session.serverName}`);
       }
     } catch (error) {
       this.log(`加载服务器工具失败: ${error}`);
@@ -261,17 +252,19 @@ export class MCPComponent extends BaseComponent {
    * 读取资源内容
    */
   async readResource(uri: string): Promise<string | null> {
-    if (!this.client) return null;
+    if (!this.client) {
+      return null;
+    }
 
     // 查找包含该资源的服务器
-    for (const [sessionId, resources] of this.resources.entries()) {
+    for (const [serverId, resources] of this.resources.entries()) {
       const resource = resources.find(r => r.uri === uri);
       if (resource) {
         try {
-          const content = await this.client.readResource(sessionId, uri);
-          return content.text || null;
+          const content = await this.client.readResource(serverId, uri);
+          return content;
         } catch (error) {
-          this.log(`读取资源失败 ${uri}: ${error}`);
+          this.emit('error', { serverId, uri, error });
           return null;
         }
       }
@@ -281,7 +274,7 @@ export class MCPComponent extends BaseComponent {
   }
 
   /**
-   * 调用 MCP 工具
+   * 调用工具
    */
   async callTool(toolName: string, args: Record<string, any>): Promise<any> {
     if (!this.client) {
@@ -289,28 +282,19 @@ export class MCPComponent extends BaseComponent {
     }
 
     // 查找包含该工具的服务器
-    for (const [sessionId, tools] of this.tools.entries()) {
+    for (const [serverId, tools] of this.tools.entries()) {
       const tool = tools.find(t => t.name === toolName);
       if (tool) {
         try {
-          const result = await this.client.callTool(sessionId, {
-            name: toolName,
-            arguments: args,
-          });
-
-          if (result.isError) {
-            throw new Error(`工具执行错误: ${result.content[0]?.text || '未知错误'}`);
-          }
-
-          return result.content[0]?.text || result;
+          return await this.client.callTool(serverId, toolName, args);
         } catch (error) {
-          this.log(`调用 MCP 工具失败 ${toolName}: ${error}`);
+          this.emit('error', { serverId, toolName, args, error });
           throw error;
         }
       }
     }
 
-    throw new Error(`未找到 MCP 工具: ${toolName}`);
+    throw new Error(`工具未找到: ${toolName}`);
   }
 
   /**
@@ -331,10 +315,9 @@ export class MCPComponent extends BaseComponent {
    */
   searchTools(query: string): MCPToolInfo[] {
     const allTools = this.getAllTools();
-    return allTools.filter(
-      tool =>
-        tool.name.toLowerCase().includes(query.toLowerCase()) ||
-        tool.description.toLowerCase().includes(query.toLowerCase())
+    return allTools.filter(tool => 
+      tool.name.toLowerCase().includes(query.toLowerCase()) ||
+      (tool.description && tool.description.toLowerCase().includes(query.toLowerCase()))
     );
   }
 
@@ -348,8 +331,8 @@ export class MCPComponent extends BaseComponent {
     toolCount: number;
   }> {
     return Array.from(this.sessions.values()).map(session => ({
-      serverName: session.config.name,
-      connected: session.connected,
+      serverName: session.serverName,
+      connected: session.status === 'connected',
       resourceCount: this.resources.get(session.id)?.length || 0,
       toolCount: this.tools.get(session.id)?.length || 0,
     }));
@@ -359,12 +342,7 @@ export class MCPComponent extends BaseComponent {
    * 根据 ID 获取会话
    */
   private getSessionById(sessionId: string): MCPSession | undefined {
-    for (const session of this.sessions.values()) {
-      if (session.id === sessionId) {
-        return session;
-      }
-    }
-    return undefined;
+    return this.sessions.get(sessionId);
   }
 
   /**

@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import type { BladeConfig } from './schemas.js';
 
 // 配置基类类型
 export interface Config {
@@ -143,3 +144,6 @@ export interface ConfigHotReload {
   addWatchPath(path: string): void;
   removeWatchPath(path: string): void;
 }
+
+// 重新导出类型
+export type { BladeConfig };

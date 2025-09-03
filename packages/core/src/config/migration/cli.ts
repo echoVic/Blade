@@ -30,28 +30,65 @@ program
   .option('--verbose', '显示详细输出')
   .option('--force', '强制执行迁移，忽略版本检查')
   .option('--target-version <version>', '目标版本', '1.3.0')
-  .action(async (options) => {
+  .action(async (options: any) => {
     try {
       console.log(chalk.blue.bold('🚀 开始配置迁移...\n'));
 
       const migrationOptions = {
-        createBackup: options.backup,
+        createBackup: !options.noBackup,
         dryRun: options.dryRun,
         verbose: options.verbose,
         force: options.force,
         targetVersion: options.targetVersion,
       };
 
-      let result;
-      
       if (options.user) {
         console.log(chalk.yellow('📄 迁移用户配置...'));
-        result = await migrationTool.migrateUserConfig(migrationOptions);
+        const result = await migrationTool.migrateUserConfig(migrationOptions);
         console.log(result);
+        
+        // 显示结果
+        if (result.success) {
+          console.log(chalk.green.bold('\n✅ 迁移完成！'));
+          
+          if (migrationOptions.dryRun) {
+            console.log(chalk.yellow('⚠️  这是模拟运行，没有实际修改文件'));
+          }
+          
+          if (options.backup && !migrationOptions.dryRun) {
+            console.log(chalk.blue('📦 备份数据已保存'));
+          }
+        } else {
+          console.log(chalk.red.bold('\n❌ 迁移失败！'));
+        }
       } else if (options.project) {
         console.log(chalk.yellow('📁 迁移项目配置...'));
-        result = await migrationTool.migrateProjectConfig(migrationOptions);
+        const result = await migrationTool.migrateProjectConfig(migrationOptions);
         console.log(result);
+        
+        // 显示结果
+        if (result.success) {
+          console.log(chalk.green.bold('\n✅ 迁移完成！'));
+          
+          if (migrationOptions.dryRun) {
+            console.log(chalk.yellow('⚠️  这是模拟运行，没有实际修改文件'));
+          }
+          
+          if (options.backup && !migrationOptions.dryRun) {
+            console.log(chalk.blue('📦 备份数据已保存'));
+          }
+        } else {
+          console.log(chalk.red.bold('\n❌ 迁移失败！'));
+          if (result.errors.length > 0) {
+            console.log(chalk.red('错误信息:'));
+            result.errors.forEach((error: string) => console.log(chalk.red(`  - ${error}`)));
+          }
+        }
+
+        if (result.warnings.length > 0) {
+          console.log(chalk.yellow('\n⚠️  警告信息:'));
+          result.warnings.forEach((warning: string) => console.log(chalk.yellow(`  - ${warning}`)));
+        }
       } else {
         console.log(chalk.yellow('🔄 迁移所有配置...'));
         const allResults = await migrationTool.migrateAll(migrationOptions);
@@ -64,31 +101,33 @@ program
         console.log(`总警告: ${allResults.summary.totalWarnings}`);
         console.log(`成功: ${allResults.summary.success ? chalk.green('✅') : chalk.red('❌')}`);
         
-        result = allResults.summary;
-      }
-
-      // 显示结果
-      if (result.success) {
-        console.log(chalk.green.bold('\n✅ 迁移完成！'));
+        const result = allResults.summary;
         
-        if (migrationOptions.dryRun) {
-          console.log(chalk.yellow('⚠️  这是模拟运行，没有实际修改文件'));
+        // 显示结果
+        if (result.success) {
+          console.log(chalk.green.bold('\n✅ 迁移完成！'));
+          
+          if (migrationOptions.dryRun) {
+            console.log(chalk.yellow('⚠️  这是模拟运行，没有实际修改文件'));
+          }
+          
+          if (options.backup && !migrationOptions.dryRun) {
+            console.log(chalk.blue('📦 备份数据已保存'));
+          }
+        } else {
+          console.log(chalk.red.bold('\n❌ 迁移失败！'));
+          const allErrors = [...allResults.user.errors, ...allResults.project.errors];
+          if (allErrors.length > 0) {
+            console.log(chalk.red('错误信息:'));
+            allErrors.forEach((error: string) => console.log(chalk.red(`  - ${error}`)));
+          }
         }
-        
-        if (options.backup && !migrationOptions.dryRun) {
-          console.log(chalk.blue('📦 备份数据已保存'));
-        }
-      } else {
-        console.log(chalk.red.bold('\n❌ 迁移失败！'));
-        if (result.errors.length > 0) {
-          console.log(chalk.red('错误信息:'));
-          result.errors.forEach(error => console.log(chalk.red(`  - ${error}`)));
-        }
-      }
 
-      if (result.warnings.length > 0) {
-        console.log(chalk.yellow('\n⚠️  警告信息:'));
-        result.warnings.forEach(warning => console.log(chalk.yellow(`  - ${warning}`)));
+        const allWarnings = [...allResults.user.warnings, ...allResults.project.warnings];
+        if (allWarnings.length > 0) {
+          console.log(chalk.yellow('\n⚠️  警告信息:'));
+          allWarnings.forEach((warning: string) => console.log(chalk.yellow(`  - ${warning}`)));
+        }
       }
 
     } catch (error) {
@@ -102,7 +141,7 @@ program
   .command('check')
   .description('检查配置版本和迁移状态')
   .option('-v, --verbose', '显示详细信息')
-  .action(async (options) => {
+  .action(async (options: any) => {
     try {
       console.log(chalk.blue.bold('🔍 检查配置状态...\n'));
 
@@ -167,11 +206,9 @@ program
   .option('-u, --user', '备份用户配置')
   .option('-p, --project', '备份项目配置')
   .option('-a, --all', '备份所有配置（默认）')
-  .action(async (options) => {
+  .action(async (options: any) => {
     try {
       console.log(chalk.blue.bold('📦 创建配置备份...\n'));
-
-      const backupPromises = [];
 
       if (options.user || options.all || (!options.user && !options.project)) {
         const userConfigPath = CONFIG_PATHS.global.userConfig;
@@ -212,7 +249,7 @@ program
   .command('cleanup')
   .description('清理旧备份文件')
   .option('-k, --keep <number>', '保留的备份数量', '5')
-  .action(async (options) => {
+  .action(async (options: any) => {
     try {
       const keepCount = parseInt(options.keep, 10);
       
@@ -327,32 +364,51 @@ program
         targetVersion: '1.3.0',
       };
 
-      let result;
-      
       if (migrationTarget === 'user') {
-        result = await migrationTool.migrateUserConfig(migrationOptions);
+        const result = await migrationTool.migrateUserConfig(migrationOptions);
+        
+        if (result.success) {
+          console.log(chalk.green.bold('✅ 迁移完成！'));
+        } else {
+          console.log(chalk.red.bold('❌ 迁移失败！'));
+        }
+
+        if (result.errors && result.errors.length > 0) {
+          console.log(chalk.red('\n错误信息:'));
+          result.errors.forEach((error: any) => console.log(chalk.red(`  - ${error}`)));
+        }
+
+        if (result.warnings && result.warnings.length > 0) {
+          console.log(chalk.yellow('\n警告信息:'));
+          result.warnings.forEach((warning: any) => console.log(chalk.yellow(`  - ${warning}`)));
+        }
       } else if (migrationTarget === 'project') {
-        result = await migrationTool.migrateProjectConfig(migrationOptions);
+        const result = await migrationTool.migrateProjectConfig(migrationOptions);
+        
+        if (result.success) {
+          console.log(chalk.green.bold('✅ 迁移完成！'));
+        } else {
+          console.log(chalk.red.bold('❌ 迁移失败！'));
+        }
+
+        if (result.errors && result.errors.length > 0) {
+          console.log(chalk.red('\n错误信息:'));
+          result.errors.forEach((error: any) => console.log(chalk.red(`  - ${error}`)));
+        }
+
+        if (result.warnings && result.warnings.length > 0) {
+          console.log(chalk.yellow('\n警告信息:'));
+          result.warnings.forEach((warning: any) => console.log(chalk.yellow(`  - ${warning}`)));
+        }
       } else {
         const allResults = await migrationTool.migrateAll(migrationOptions);
-        result = allResults.summary;
-      }
-
-      // 显示结果
-      if (result.success) {
-        console.log(chalk.green.bold('✅ 迁移完成！'));
-      } else {
-        console.log(chalk.red.bold('❌ 迁移失败！'));
-      }
-
-      if (result.errors.length > 0) {
-        console.log(chalk.red('\n错误信息:'));
-        result.errors.forEach(error => console.log(chalk.red(`  - ${error}`)));
-      }
-
-      if (result.warnings.length > 0) {
-        console.log(chalk.yellow('\n警告信息:'));
-        result.warnings.forEach(warning => console.log(chalk.yellow(`  - ${warning}`)));
+        const result = allResults.summary;
+        
+        if (result.success) {
+          console.log(chalk.green.bold('✅ 迁移完成！'));
+        } else {
+          console.log(chalk.red.bold('❌ 迁移失败！'));
+        }
       }
 
       if (dryRun) {

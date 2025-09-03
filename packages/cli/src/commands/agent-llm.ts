@@ -7,7 +7,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { Agent } from '../agent/Agent.js';
+import { Agent } from '@blade-ai/core';
 
 /**
  * 注册Agent-LLM相关命令

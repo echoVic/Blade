@@ -6,8 +6,7 @@ import {
   ConfigLayer, 
   CONFIG_PRIORITY, 
   ConfigMergeResult, 
-  ConfigConflict,
-  BladeUnifiedConfig 
+  ConfigConflict
 } from '../types/index.js';
 
 /**

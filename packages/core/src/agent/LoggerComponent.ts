@@ -1,20 +1,33 @@
-import chalk from 'chalk';
+import { LogLevel, type LoggerConfig } from '../types/logger.js';
 import { BaseComponent } from './BaseComponent.js';
 
-// 导入新的日志系统
-try {
-  var {
-    Logger,
-    LoggerManager,
-    LogLevel,
-    LoggerConfig,
-  } = require('../../packages/core/src/logger/logger-exports.js');
-} catch (error) {
-  console.warn('Failed to import new logger system, falling back to basic logging');
-  var Logger = null;
-  var LoggerManager = null;
-  var LogLevel = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
-  var LoggerConfig = {};
+// 简单的颜色输出函数
+const colors = {
+  gray: (text: string) => `\x1b[90m${text}\x1b[0m`,
+  blue: (text: string) => `\x1b[34m${text}\x1b[0m`,
+  yellow: (text: string) => `\x1b[33m${text}\x1b[0m`,
+  red: (text: string) => `\x1b[31m${text}\x1b[0m`,
+  magenta: (text: string) => `\x1b[35m${text}\x1b[0m`,
+};
+
+// Logger和LoggerManager的接口定义
+interface Logger {
+  debug(message: string, metadata?: Record<string, any>): void;
+  info(message: string, metadata?: Record<string, any>): void;
+  warn(message: string, metadata?: Record<string, any>): void;
+  error(message: string, error?: Error, metadata?: Record<string, any>): void;
+  fatal(message: string, error?: Error, metadata?: Record<string, any>): void;
+  setContext(context: Record<string, any>): void;
+  clearContext(): void;
+  addTransport(transport: any): void;
+  addMiddleware(middleware: any): void;
+  updateConfig(config: Partial<LoggerConfig>): void;
+}
+
+interface LoggerManager {
+  getInstance(): LoggerManager;
+  getLogger(id: string, config?: LoggerConfig): Logger;
+  updateConfig(config: Partial<LoggerConfig>): void;
 }
 
 /**
@@ -66,35 +79,9 @@ export class LoggerComponent extends BaseComponent {
    * 初始化新的日志器
    */
   private initializeLogger(): void {
-    if (Logger && LoggerManager) {
-      try {
-        this.loggerManager = LoggerManager.getInstance();
-        const config: LoggerConfig = {
-          level: this.logLevel,
-          context: {
-            enableRequestTracking: true,
-            enableSessionTracking: true,
-            enableUserTracking: false,
-          },
-          performance: {
-            enabled: true,
-            sampleRate: 0.1,
-            thresholds: {
-              logTime: 5,
-              memory: 100,
-            },
-          },
-        };
-
-        this.logger = this.loggerManager.getLogger(this.id, config);
-        this.fallbackMode = false;
-      } catch (error) {
-        console.warn('Failed to initialize advanced logger, using fallback mode:', error);
-        this.fallbackMode = true;
-      }
-    } else {
-      this.fallbackMode = true;
-    }
+    // 由于Logger和LoggerManager只是接口定义，没有实际实现
+    // 直接使用fallback模式
+    this.fallbackMode = true;
   }
 
   /**
@@ -122,14 +109,7 @@ export class LoggerComponent extends BaseComponent {
       this.logLevel = level;
     }
 
-    if (this.logger && this.loggerManager) {
-      try {
-        this.loggerManager.updateConfig({ level: this.logLevel });
-        this.logger.updateConfig({ level: this.logLevel });
-      } catch (error) {
-        console.warn('Failed to update logger level:', error);
-      }
-    }
+    // 在fallback模式下，日志级别已经更新到this.logLevel
   }
 
   /**
@@ -146,22 +126,6 @@ export class LoggerComponent extends BaseComponent {
   public async destroy(): Promise<void> {
     this.info('日志系统正在关闭');
     this.enabled = false;
-
-    if (this.logger) {
-      try {
-        await this.logger.destroy();
-      } catch (error) {
-        console.warn('Error destroying logger:', error);
-      }
-    }
-
-    if (this.loggerManager) {
-      try {
-        await this.loggerManager.shutdown();
-      } catch (error) {
-        console.warn('Error shutting down logger manager:', error);
-      }
-    }
   }
 
   /**
@@ -169,12 +133,7 @@ export class LoggerComponent extends BaseComponent {
    */
   public debug(message: string, metadata?: Record<string, any>): void {
     if (!this.enabled || this.logLevel > LogLevel.DEBUG) return;
-
-    if (this.logger && !this.fallbackMode) {
-      this.logger.debug(message, metadata);
-    } else {
-      this.logFallback('debug', message);
-    }
+    this.logFallback('debug', message, metadata);
   }
 
   /**
@@ -182,12 +141,7 @@ export class LoggerComponent extends BaseComponent {
    */
   public info(message: string, metadata?: Record<string, any>): void {
     if (!this.enabled || this.logLevel > LogLevel.INFO) return;
-
-    if (this.logger && !this.fallbackMode) {
-      this.logger.info(message, metadata);
-    } else {
-      this.logFallback('info', message);
-    }
+    this.logFallback('info', message, metadata);
   }
 
   /**
@@ -195,12 +149,7 @@ export class LoggerComponent extends BaseComponent {
    */
   public warn(message: string, metadata?: Record<string, any>): void {
     if (!this.enabled || this.logLevel > LogLevel.WARN) return;
-
-    if (this.logger && !this.fallbackMode) {
-      this.logger.warn(message, metadata);
-    } else {
-      this.logFallback('warn', message);
-    }
+    this.logFallback('warn', message, metadata);
   }
 
   /**
@@ -208,14 +157,9 @@ export class LoggerComponent extends BaseComponent {
    */
   public error(message: string, error?: Error, metadata?: Record<string, any>): void {
     if (!this.enabled || this.logLevel > LogLevel.ERROR) return;
-
-    if (this.logger && !this.fallbackMode) {
-      this.logger.error(message, error, metadata);
-    } else {
-      this.logFallback('error', message);
-      if (error && this.logLevel === LogLevel.DEBUG) {
-        console.error(error.stack);
-      }
+    this.logFallback('error', message, metadata);
+    if (error && this.logLevel === LogLevel.DEBUG) {
+      console.error(error.stack);
     }
   }
 
@@ -224,14 +168,9 @@ export class LoggerComponent extends BaseComponent {
    */
   public fatal(message: string, error?: Error, metadata?: Record<string, any>): void {
     if (!this.enabled || this.logLevel > LogLevel.FATAL) return;
-
-    if (this.logger && !this.fallbackMode) {
-      this.logger.fatal(message, error, metadata);
-    } else {
-      this.logFallback('error', message); // 回退模式下使用error
-      if (error) {
-        console.error(error.stack);
-      }
+    this.logFallback('error', `FATAL: ${message}`, metadata);
+    if (error && this.logLevel <= LogLevel.ERROR) {
+      console.error(error.stack);
     }
   }
 
@@ -245,66 +184,43 @@ export class LoggerComponent extends BaseComponent {
       userId?: string;
     }>
   ): void {
-    if (this.logger && !this.fallbackMode) {
-      try {
-        this.logger.setContext(context);
-      } catch (error) {
-        console.warn('Failed to set logger context:', error);
-      }
-    }
+    void context; // 在fallback模式下，上下文信息会被忽略
+    // 可以在这里存储上下文信息，在日志输出时使用
   }
 
   /**
    * 清除上下文信息
    */
   public clearContext(): void {
-    if (this.logger && !this.fallbackMode) {
-      try {
-        this.logger.clearContext();
-      } catch (error) {
-        console.warn('Failed to clear logger context:', error);
-      }
-    }
+    // 在fallback模式下，没有上下文需要清除
   }
 
   /**
    * 添加传输器
    */
   public addTransport(transport: any): void {
-    if (this.logger && !this.fallbackMode) {
-      try {
-        this.logger.addTransport(transport);
-      } catch (error) {
-        console.warn('Failed to add transport:', error);
-      }
-    }
+    void transport; // 在fallback模式下，不支持添加传输器
   }
 
   /**
    * 添加中间件
    */
   public addMiddleware(middleware: any): void {
-    if (this.logger && !this.fallbackMode) {
-      try {
-        this.logger.addMiddleware(middleware);
-      } catch (error) {
-        console.warn('Failed to add middleware:', error);
-      }
-    }
+    void middleware; // 在fallback模式下，不支持添加中间件
   }
 
   /**
    * 获取日志器实例
    */
   public getLogger(): Logger | undefined {
-    return this.logger;
+    return undefined; // fallback模式下返回undefined
   }
 
   /**
    * 获取日志管理器实例
    */
   public getLoggerManager(): LoggerManager | undefined {
-    return this.loggerManager;
+    return undefined; // fallback模式下返回undefined
   }
 
   /**
@@ -317,7 +233,7 @@ export class LoggerComponent extends BaseComponent {
   /**
    * 回退日志记录方法
    */
-  private logFallback(level: string, message: string): void {
+  private logFallback(level: string, message: string, metadata?: Record<string, any>): void {
     if (!this.enabled) return;
 
     const timestamp = new Date().toISOString();
@@ -325,21 +241,26 @@ export class LoggerComponent extends BaseComponent {
 
     switch (level) {
       case 'debug':
-        coloredMessage = chalk.gray(`[DEBUG] ${message}`);
+        coloredMessage = colors.gray(`[DEBUG] ${message}`);
         break;
       case 'info':
-        coloredMessage = chalk.blue(`[INFO] ${message}`);
+        coloredMessage = colors.blue(`[INFO] ${message}`);
         break;
       case 'warn':
-        coloredMessage = chalk.yellow(`[WARN] ${message}`);
+        coloredMessage = colors.yellow(`[WARN] ${message}`);
         break;
       case 'error':
-        coloredMessage = chalk.red(`[ERROR] ${message}`);
+        coloredMessage = colors.red(`[ERROR] ${message}`);
         break;
       default:
         coloredMessage = message;
     }
 
-    console.log(`${chalk.gray(timestamp)} ${coloredMessage}`);
+    let logOutput = `${colors.gray(timestamp)} ${coloredMessage}`;
+    if (metadata && Object.keys(metadata).length > 0) {
+      logOutput += ` ${colors.gray(JSON.stringify(metadata))}`;
+    }
+
+    console.log(logOutput);
   }
 }

@@ -1,11 +1,11 @@
 import type { Agent } from '../agent/Agent.js';
-import type { Tool } from '../tools/types.js';
-import type { BladeConfig } from '../config/types.js';
+import type { ToolDefinition } from '../tools/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class CoreToolScheduler {
   private agent: Agent;
   private config: BladeConfig;
-  private toolRegistry: Map<string, Tool> = new Map();
+  private toolRegistry: Map<string, ToolDefinition> = new Map();
   private executionQueue: ToolExecution[] = [];
   private isProcessing = false;
   private maxConcurrentTools: number;
@@ -13,7 +13,7 @@ export class CoreToolScheduler {
   constructor(agent: Agent, config: BladeConfig) {
     this.agent = agent;
     this.config = config;
-    this.maxConcurrentTools = config.tools.shell.timeout || 5;
+    this.maxConcurrentTools = (config as any).tools?.shell?.timeout || 5;
   }
 
   public async initialize(): Promise<void> {
@@ -29,7 +29,7 @@ export class CoreToolScheduler {
     console.log('注册内置工具');
   }
 
-  public async registerTool(tool: Tool): Promise<void> {
+  public async registerTool(tool: ToolDefinition): Promise<void> {
     if (!tool.name || !tool.execute) {
       throw new Error('工具必须包含名称和执行函数');
     }
@@ -59,7 +59,7 @@ export class CoreToolScheduler {
     }
 
     // 检查权限
-    if (tool.permissions && !this.checkPermissions(tool.permissions)) {
+    if ((tool as any).permissions && !this.checkPermissions((tool as any).permissions)) {
       throw new Error(`权限不足，无法执行工具 "${toolName}"`);
     }
 
@@ -96,11 +96,11 @@ export class CoreToolScheduler {
       execution.startedAt = Date.now();
       
       // 设置超时
-      const timeout = options.timeout || tool.timeout || this.config.tools.shell.timeout || 30000;
+      const timeout = options.timeout || (tool as any).timeout || (this.config as any).tools?.shell?.timeout || 30000;
       
       // 执行工具
       const result = await Promise.race([
-        tool.execute(params, this.agent),
+        tool.execute(params),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error(`工具 "${toolName}" 执行超时`)), timeout)
         )
@@ -194,11 +194,11 @@ export class CoreToolScheduler {
     }
   }
 
-  public getTool(toolName: string): Tool | undefined {
+  public getTool(toolName: string): ToolDefinition | undefined {
     return this.toolRegistry.get(toolName);
   }
 
-  public getAllTools(): Tool[] {
+  public getAllTools(): ToolDefinition[] {
     return Array.from(this.toolRegistry.values());
   }
 
@@ -231,7 +231,7 @@ export class CoreToolScheduler {
     return total / executions.length;
   }
 
-  private checkPermissions(requiredPermissions: string[]): boolean {
+  private checkPermissions(_requiredPermissions: string[]): boolean {
     // 这里应该实现权限检查逻辑
     // 暂时返回true，后续实现
     return true;
@@ -301,7 +301,7 @@ interface ToolExecutionOptions {
 
 interface ToolStatus {
   registered: boolean;
-  tool?: Tool;
+  tool?: ToolDefinition;
   executionCount?: number;
   recentExecutions?: ToolExecution[];
   averageExecutionTime?: number;

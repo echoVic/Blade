@@ -1,6 +1,14 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { BladeConfig } from '../../config/types.js';
-import type { McpServer as McpServerConfig } from './types.js';
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema
+} from '@modelcontextprotocol/sdk/types.js';
+import type { BladeConfig } from '../../config/types/index.js';
+import type { McpServer as McpServerConfig } from '../types/mcp.js';
 
 export class McpServer {
   private server: Server | null = null;
@@ -18,7 +26,7 @@ export class McpServer {
     this.server = new Server(
       {
         name: this.serverConfig.name,
-        version: this.config.version,
+        version: this.config.version || '1.0.0',
       },
       {
         capabilities: {
@@ -39,87 +47,69 @@ export class McpServer {
     if (!this.server) return;
 
     // 注册工具调用处理程序
-    this.server.setRequestHandler(
-      { method: 'tools/call' },
-      async (request) => {
-        try {
-          const result = await this.handleToolCall(request.params);
-          return { result };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      try {
+        const result = await this.handleToolCall(request.params);
+        return { result };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
 
     // 注册资源列表处理程序
-    this.server.setRequestHandler(
-      { method: 'resources/list' },
-      async () => {
-        try {
-          const resources = await this.handleListResources();
-          return { resources };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      try {
+        const resources = await this.handleListResources();
+        return { resources };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
 
     // 注册资源读取处理程序
-    this.server.setRequestHandler(
-      { method: 'resources/read' },
-      async (request) => {
-        try {
-          const contents = await this.handleReadResource(request.params.uri);
-          return { contents };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      try {
+        const contents = await this.handleReadResource(request.params.uri);
+        return { contents };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
 
     // 注册工具列表处理程序
-    this.server.setRequestHandler(
-      { method: 'tools/list' },
-      async () => {
-        try {
-          const tools = await this.handleListTools();
-          return { tools };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      try {
+        const tools = await this.handleListTools();
+        return { tools };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
 
     // 注册提示列表处理程序
-    this.server.setRequestHandler(
-      { method: 'prompts/list' },
-      async () => {
-        try {
-          const prompts = await this.handleListPrompts();
-          return { prompts };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      try {
+        const prompts = await this.handleListPrompts();
+        return { prompts };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
 
     // 注册提示获取处理程序
-    this.server.setRequestHandler(
-      { method: 'prompts/get' },
-      async (request) => {
-        try {
-          const prompt = await this.handleGetPrompt(request.params.name);
-          return { prompt };
-        } catch (error) {
-          return { error: { code: -32000, message: (error as Error).message } };
-        }
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      try {
+        const prompt = await this.handleGetPrompt(request.params.name);
+        return { prompt };
+      } catch (error) {
+        return { error: { code: -32000, message: (error as Error).message } };
       }
-    );
+    });
   }
 
   private async handleToolCall(params: any): Promise<any> {
     console.log(`调用工具: ${params.name}`, params.arguments);
-    
+
     // 这里应该实现具体的工具调用逻辑
     // 暂时返回模拟结果
     return {
@@ -130,7 +120,7 @@ export class McpServer {
 
   private async handleListResources(): Promise<any[]> {
     console.log('列出资源');
-    
+
     // 这里应该实现资源列表逻辑
     // 暂时返回空数组
     return [];
@@ -138,7 +128,7 @@ export class McpServer {
 
   private async handleReadResource(uri: string): Promise<Array<{ text: string }>> {
     console.log(`读取资源: ${uri}`);
-    
+
     // 这里应该实现资源读取逻辑
     // 暂时返回模拟内容
     return [{ text: `资源内容: ${uri}` }];
@@ -146,7 +136,7 @@ export class McpServer {
 
   private async handleListTools(): Promise<any[]> {
     console.log('列出工具');
-    
+
     // 这里应该实现工具列表逻辑
     // 暂时返回模拟工具列表
     return [
@@ -166,7 +156,7 @@ export class McpServer {
 
   private async handleListPrompts(): Promise<any[]> {
     console.log('列出提示');
-    
+
     // 这里应该实现提示列表逻辑
     // 暂时返回空数组
     return [];
@@ -174,7 +164,7 @@ export class McpServer {
 
   private async handleGetPrompt(name: string): Promise<any> {
     console.log(`获取提示: ${name}`);
-    
+
     // 这里应该实现提示获取逻辑
     // 暂时抛出错误
     throw new Error(`提示未找到: ${name}`);
@@ -220,7 +210,7 @@ export class McpServer {
     }
 
     // 启动stdio服务器
-    this.server.listen();
+    // MCP Server通过stdio连接，不需要显式调用listen
     console.log('STDIO服务器已启动');
   }
 
@@ -367,9 +357,7 @@ export class McpServerGroup {
       })
     );
 
-    const unhealthyServers = serverHealths.filter(
-      ({ health }) => health.status === 'unhealthy'
-    );
+    const unhealthyServers = serverHealths.filter(({ health }) => health.status === 'unhealthy');
 
     return {
       status: unhealthyServers.length === 0 ? 'healthy' : 'degraded',
@@ -385,7 +373,7 @@ export class McpServerGroup {
 }
 
 // 类型定义
-interface ServerHealth {
+export interface ServerHealth {
   status: 'healthy' | 'unhealthy';
   timestamp: number;
   checks: Array<{
@@ -395,7 +383,7 @@ interface ServerHealth {
   }>;
 }
 
-interface ServerGroupHealth {
+export interface ServerGroupHealth {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: number;
   servers: Array<{ serverId: string; health: ServerHealth }>;

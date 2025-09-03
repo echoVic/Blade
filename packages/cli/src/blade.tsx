@@ -1,79 +1,62 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, useApp } from 'ink';
+import { render, Box, Text, useApp } from 'ink';
+import { Command } from 'commander';
+
+// --- UI Components & Contexts ---
 import { SessionProvider, useSession } from './contexts/SessionContext.js';
 import { EnhancedReplInterface } from './components/EnhancedReplInterface.js';
 import { CommandOrchestrator, CommandResult } from './services/CommandOrchestrator.js';
 import { ConfigService } from './config/ConfigService.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 
-interface ReplAppProps {
+// --- Command Definitions ---
+import { agentLlmCommand } from './commands/agent-llm.js';
+import { configCommand } from './commands/config.js';
+import { llmCommand } from './commands/llm.js';
+import { mcpCommand } from './commands/mcp.js';
+import { toolsCommand } from './commands/tools.js';
+
+interface BladeAppProps {
   config?: any;
   debug?: boolean;
 }
 
-const ReplAppInner: React.FC<ReplAppProps> = ({ config, debug = false }) => {
+const BladeAppInner: React.FC<BladeAppProps> = ({ config, debug = false }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [commandOrchestrator, setCommandOrchestrator] = useState<CommandOrchestrator | null>(null);
   const [configService] = useState(() => ConfigService.getInstance());
-  const { state: sessionState, addUserMessage, addAssistantMessage, clearMessages, resetSession } = useSession();
+  const { addAssistantMessage, addUserMessage, clearMessages, resetSession } = useSession();
   const { exit } = useApp();
 
-  // 初始化应用
   const initializeApp = useCallback(async () => {
     try {
-      console.log('正在初始化 Blade AI 助手...');
-      
-      // 初始化配置服务
       await configService.initialize();
-      
-      // 初始化命令编排器
       const orchestrator = CommandOrchestrator.getInstance();
       await orchestrator.initialize();
       setCommandOrchestrator(orchestrator);
-      
       setIsInitialized(true);
-      
-      // 显示欢迎消息
-      addAssistantMessage('🚀 Blade AI 助手已启动！');
-      addAssistantMessage('输入 /help 查看可用命令，或直接输入问题开始对话');
-      
+      addAssistantMessage('🚀 Blade AI 助手已启动！输入 /help 查看可用命令，或直接提问。');
     } catch (error) {
-      console.error('应用初始化失败:', error);
       addAssistantMessage(`❌ 初始化失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   }, [configService, addAssistantMessage]);
 
-  // 处理命令提交
   const handleCommandSubmit = useCallback(async (input: string): Promise<CommandResult> => {
     if (!commandOrchestrator) {
       return { success: false, error: '命令编排器未初始化' };
     }
-    
-    // 添加用户消息到会话
     addUserMessage(input);
-    
     try {
-      let result: CommandResult;
+      const result = input.startsWith('/')
+        ? await commandOrchestrator.executeSlashCommand(input.slice(1).split(' ')[0], input.slice(1).split(' ').slice(1))
+        : await commandOrchestrator.executeNaturalLanguage(input);
       
-      // 处理命令
-      if (input.startsWith('/')) {
-        // 处理斜杠命令
-        const commandParts = input.slice(1).split(' ');
-        const command = commandParts[0];
-        const args = commandParts.slice(1);
-        result = await commandOrchestrator.executeSlashCommand(command, args);
-      } else {
-        // 处理自然语言命令
-        result = await commandOrchestrator.executeNaturalLanguage(input);
-      }
-      
-      // 显示结果
       if (result.success && result.output) {
         addAssistantMessage(result.output);
       } else if (result.error) {
         addAssistantMessage(`❌ ${result.error}`);
       }
-      
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
@@ -83,15 +66,10 @@ const ReplAppInner: React.FC<ReplAppProps> = ({ config, debug = false }) => {
     }
   }, [commandOrchestrator, addUserMessage, addAssistantMessage]);
 
-  // 清除会话
   const handleClear = useCallback(() => {
     clearMessages();
-    if (commandOrchestrator) {
-      // 可以在这里添加额外的清除逻辑
-    }
-  }, [clearMessages, commandOrchestrator]);
+  }, [clearMessages]);
 
-  // 退出应用
   const handleExit = useCallback(async () => {
     try {
       if (commandOrchestrator) {
@@ -103,14 +81,11 @@ const ReplAppInner: React.FC<ReplAppProps> = ({ config, debug = false }) => {
     }
   }, [commandOrchestrator, resetSession]);
 
-  // 初始化应用
   useEffect(() => {
     if (!isInitialized) {
       initializeApp();
     }
-    
     return () => {
-      // 组件卸载时清理
       handleExit();
     };
   }, [isInitialized, initializeApp, handleExit]);
@@ -118,9 +93,7 @@ const ReplAppInner: React.FC<ReplAppProps> = ({ config, debug = false }) => {
   if (!isInitialized) {
     return (
       <Box padding={1}>
-        <Box marginRight={1}>
-          <Text>⚡</Text>
-        </Box>
+        <Box marginRight={1}><Text>⚡</Text></Box>
         <Text>正在启动 Blade AI 助手...</Text>
       </Box>
     );
@@ -130,17 +103,44 @@ const ReplAppInner: React.FC<ReplAppProps> = ({ config, debug = false }) => {
     <EnhancedReplInterface 
       onCommandSubmit={handleCommandSubmit}
       onClear={handleClear}
-      onExit={handleExit}
+      onExit={() => exit()}
     />
   );
 };
 
-export const ReplApp: React.FC<ReplAppProps> = (props) => {
-  return (
-    <ErrorBoundary>
-      <SessionProvider>
-        <ReplAppInner {...props} />
-      </SessionProvider>
-    </ErrorBoundary>
-  );
-};
+export const BladeApp: React.FC<BladeAppProps> = (props) => (
+  <ErrorBoundary>
+    <SessionProvider>
+      <BladeAppInner {...props} />
+    </SessionProvider>
+  </ErrorBoundary>
+);
+
+export async function main() {
+  const program = new Command();
+
+  program
+    .version('1.3.0', '-v, --version', '显示当前版本')
+    .description('Blade AI - 智能AI助手命令行界面')
+    .option('-d, --debug', '启用调试模式');
+
+  // 注册所有命令
+  agentLlmCommand(program);
+  configCommand(program);
+  llmCommand(program);
+  mcpCommand(program);
+  toolsCommand(program);
+
+  // 设置默认动作：如果没有提供子命令，则启动交互式UI
+  program.action((options) => {
+    render(React.createElement(BladeApp, { debug: options.debug }));
+  });
+
+  await program.parseAsync(process.argv);
+
+  // 如果解析后没有匹配到任何已知命令（除了默认的 help, version），则也启动交互式UI
+  // commander 在没有匹配到命令时，args 数组会是空的
+  if (program.args.length === 0 && !program.matchedCommand) {
+     render(React.createElement(BladeApp, { debug: program.opts().debug }));
+  }
+}

@@ -265,8 +265,8 @@ export function validateEnvironmentVariables(): {
     'BLADE_CONFIG_FILE'
   ];
   
-  const missingRequired = [];
-  const presentOptional = [];
+  const missingRequired: string[] = [];
+  const presentOptional: string[] = [];
   
   // 检查必需的环境变量
   if (!process.env.BLADE_API_KEY) {

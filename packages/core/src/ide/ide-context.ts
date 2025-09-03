@@ -1,5 +1,4 @@
-import type { BladeConfig } from '../config/types.js';
-import type { ContextData } from '../context/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class IdeContext {
   private config: BladeConfig;
@@ -91,20 +90,13 @@ export class IdeContext {
     return this.projectInfo;
   }
 
-  public getContextData(): ContextData {
-    const context: ContextData = {
+  public getContextData(): any {
+    return {
+      ideInfo: this.ideInfo,
+      projectInfo: this.projectInfo,
       timestamp: Date.now(),
-      ide: this.ideInfo,
-      project: this.projectInfo,
-      custom: {}
+      contextData: Object.fromEntries(this.contextData),
     };
-    
-    // 添加自定义上下文数据
-    for (const [key, value] of this.contextData.entries()) {
-      context.custom![key] = value;
-    }
-    
-    return context;
   }
 
   public setContextData(key: string, value: any): void {
@@ -438,7 +430,7 @@ class FileWatcher {
 }
 
 // 类型定义
-interface IdeInfo {
+export interface IdeInfo {
   name: string;
   version: string;
   platform: string;
@@ -449,7 +441,7 @@ interface IdeInfo {
   workspaceFolders: string[];
 }
 
-interface IdeExtension {
+export interface IdeExtension {
   id: string;
   name: string;
   version: string;
@@ -457,7 +449,7 @@ interface IdeExtension {
   enabled: boolean;
 }
 
-interface ProjectInfo {
+export interface ProjectInfo {
   rootPath: string;
   name: string;
   type: string;

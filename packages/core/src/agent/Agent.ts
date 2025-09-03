@@ -5,7 +5,7 @@
 
 import { ConfigManager } from '../config/ConfigManager.js';
 import { LLMManager, type LLMMessage } from '../llm/LLMManager.js';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 /**
  * Agent 主类 - 极简智能代理入口

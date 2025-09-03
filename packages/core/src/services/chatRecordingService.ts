@@ -1,8 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { createHash } from 'crypto';
-import type { BladeConfig } from '../config/types.js';
+
+import type { BladeConfig } from '../config/types/index.js';
 
 export class ChatRecordingService {
   private config: BladeConfig;
@@ -44,8 +44,8 @@ export class ChatRecordingService {
         title: options?.title || `聊天记录 ${new Date().toISOString()}`,
         description: options?.description || '',
         tags: options?.tags || [],
-        model: options?.model || this.config.llm.model,
-        provider: options?.provider || this.config.llm.provider,
+        model: options?.model || 'gpt-4',
+        provider: options?.provider || 'openai',
         createdAt: new Date().toISOString(),
       },
       options: options || {},
@@ -395,7 +395,7 @@ export class ChatRecordingService {
   }
 
   // 搜索录制内容
-  public async searchRecordings(query: string, options?: SearchOptions): Promise<ChatRecordingInfo[]> {
+  public async searchRecordings(query: string, _options?: SearchOptions): Promise<ChatRecordingInfo[]> {
     const allRecordings = await this.listRecordings();
     const matchingRecordings: ChatRecordingInfo[] = [];
     
@@ -539,7 +539,7 @@ interface RecordingOptions {
   autoSaveInterval?: number;
 }
 
-interface ChatRecording {
+export interface ChatRecording {
   id: string;
   startTime: number;
   endTime?: number;
@@ -557,14 +557,14 @@ interface ChatRecording {
   savedAt?: number;
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp?: number;
   metadata?: Record<string, any>;
 }
 
-interface ChatRecordingInfo {
+export interface ChatRecordingInfo {
   id: string;
   title: string;
   description: string;

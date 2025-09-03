@@ -1,8 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import type { BladeConfig } from '../../config/types.js';
-import type { McpServer, McpConfig } from './types.js';
+import type { BladeConfig } from '../../config/types/index.js';
+import type { McpServer, McpConfig } from '../types/mcp.js';
 
 export class McpConfigManager {
   private config: BladeConfig;
@@ -21,7 +21,11 @@ export class McpConfigManager {
   public async initialize(): Promise<void> {
     // 确保配置目录存在
     const configDir = path.dirname(this.configPath);
-    await fs.mkdir(configDir, { recursive: true });
+    try {
+      await fs.mkdir(configDir, { recursive: true });
+    } catch (error) {
+      // 忽略目录已存在的错误
+    }
 
     console.log('MCP配置管理器初始化完成');
   }
@@ -36,7 +40,7 @@ export class McpConfigManager {
       // 合并默认配置和文件配置
       return this.mergeConfig(this.getDefaultConfig(), fileConfig);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((error as any).code === 'ENOENT') {
         // 文件不存在，返回默认配置
         console.log('MCP配置文件不存在，使用默认配置');
         return this.getDefaultConfig();
@@ -60,20 +64,11 @@ export class McpConfigManager {
 
   private getDefaultConfig(): McpConfig {
     return {
-      enabled: this.config.mcp.enabled,
-      servers: this.config.mcp.servers.map(server => ({
-        id: server.id,
-        name: server.name,
-        endpoint: server.endpoint,
-        transport: server.transport,
-        enabled: server.enabled,
-        config: server.config,
-        capabilities: server.capabilities,
-        autoConnect: server.autoConnect,
-      })),
-      autoConnect: this.config.mcp.autoConnect,
-      timeout: this.config.mcp.timeout,
-      maxConnections: this.config.mcp.maxConnections,
+      enabled: true,
+      servers: [],
+      autoConnect: false,
+      timeout: 30000,
+      maxConnections: 10,
       defaultTransport: 'stdio',
       security: {
         validateCertificates: true,
@@ -256,7 +251,7 @@ export class McpConfigManager {
       await fs.copyFile(this.configPath, backupPath);
       console.log(`MCP配置备份已创建: ${backupPath}`);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((error as any).code === 'ENOENT') {
         console.log('没有MCP配置需要备份');
       } else {
         console.error('MCP配置备份失败:', error);

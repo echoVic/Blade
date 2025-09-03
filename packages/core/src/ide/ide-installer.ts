@@ -92,11 +92,12 @@ export class IdeInstaller {
       // 清理临时文件
       await fs.rm(tempDir, { recursive: true, force: true });
 
+      const executablePath = await this.findExecutable(ideInfo.executable);
       return {
         success: true,
         ide: ideInfo.name,
         message: `${ideInfo.name} 安装成功`,
-        executablePath: await this.findExecutable(ideInfo.executable)
+        executablePath: executablePath || undefined
       };
     } catch (error) {
       // 清理临时文件
@@ -429,7 +430,7 @@ export class IdeInstaller {
 }
 
 // 类型定义
-interface IdeInstallationInfo {
+export interface IdeInstallationInfo {
   name: string;
   downloadUrl: Record<string, string>;
   installerType: 'auto' | 'manual';
@@ -437,27 +438,27 @@ interface IdeInstallationInfo {
   postInstallCommands: string[];
 }
 
-interface InstallOptions {
+export interface InstallOptions {
   silent?: boolean;
   installPath?: string;
   force?: boolean;
 }
 
-interface InstallResult {
+export interface InstallResult {
   success: boolean;
   ide: string;
   message: string;
   executablePath?: string;
 }
 
-interface InstalledIde {
+export interface InstalledIde {
   name: string;
   key: string;
   executablePath: string;
   version: string;
 }
 
-interface UninstallResult {
+export interface UninstallResult {
   success: boolean;
   ide: string;
   message: string;

@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 import type { Agent } from '../agent/Agent.js';
 
 export class IdeClient {
@@ -20,7 +20,7 @@ export class IdeClient {
   public async initialize(agent: Agent): Promise<void> {
     this.agent = agent;
     
-    if (this.config.development.mode === 'development') {
+    if (this.config.debug === true) {
       await this.connectToIde();
     }
   }
@@ -113,7 +113,7 @@ export class IdeClient {
 
   private async handleRequest(message: IdeMessage): Promise<void> {
     if (!this.agent) {
-      this.sendErrorResponse(message.id, 'Agent未初始化');
+      this.sendErrorResponse(message.id!, 'Agent未初始化');
       return;
     }
     
@@ -126,29 +126,26 @@ export class IdeClient {
           break;
           
         case 'generateCode':
-          result = await this.agent.generateCode(message.params?.prompt || '');
+          result = await this.agent.chat(`Generate code: ${JSON.stringify(message.params)}`);
           break;
           
         case 'executeTool':
-          result = await this.agent.executeTool(
-            message.params?.toolName || '',
-            message.params?.params || {}
-          );
+          result = await this.agent.chat(`Execute tool: ${JSON.stringify(message.params)}`);
           break;
           
         case 'analyzeFiles':
-          result = await this.agent.analyzeFiles(message.params?.filePaths || []);
+          result = await this.agent.chat(`Analyze files: ${JSON.stringify(message.params)}`);
           break;
           
         default:
-          this.sendErrorResponse(message.id, `不支持的方法: ${message.method}`);
+          this.sendErrorResponse(message.id || 'unknown', `不支持的方法: ${message.method}`);
           return;
       }
       
-      this.sendSuccessResponse(message.id, result);
+      this.sendSuccessResponse(message.id!, result);
     } catch (error) {
       console.error('处理IDE请求失败:', error);
-      this.sendErrorResponse(message.id, error instanceof Error ? error.message : String(error));
+      this.sendErrorResponse(message.id!, error instanceof Error ? error.message : String(error));
     }
   }
 

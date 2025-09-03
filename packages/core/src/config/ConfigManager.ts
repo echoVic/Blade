@@ -1,251 +1,184 @@
 /**
- * Blade 配置管理器 (向后兼容封装)
- * 基于新的统一配置管理器，保持原有接口不变
+ * Blade 配置管理器 (简化版本)
+ * 提供基础的配置管理功能
  */
 
-// import { UnifiedConfigManager } from './UnifiedConfigManager.js';
-import type { BladeConfig } from '../types/shared.js';
-import {
-  ErrorFactory,
-  ConfigError,
-  globalErrorMonitor
-} from '../error/index.js';
+import { ConfigError, ErrorFactory, globalErrorMonitor } from '../error/index.js';
+import type { BladeConfig } from './types/index.js';
+import { DEFAULT_CONFIG, ENV_MAPPING } from './defaults.js';
 
 export class ConfigManager {
-  private unifiedManager: UnifiedConfigManager;
   private config: BladeConfig;
+  private subscribers: Array<(config: BladeConfig) => void> = [];
 
   constructor() {
-    this.unifiedManager = new UnifiedConfigManager();
-    this.config = {} as BladeConfig;
-    this.loadConfiguration();
-  }
-
-  private async loadConfiguration(): Promise<void> {
-    try {
-      await this.unifiedManager.initialize();
-      this.config = this.unifiedManager.getConfig();
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '配置加载失败')
-        : new ConfigError('CONFIG_LOAD_FAILED', '配置加载失败');
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.warn('配置加载失败，使用默认配置:', error);
-      
-      // 保持原有默认配置加载逻辑作为降级方案
-      this.loadDefaultConfiguration();
-    }
-  }
-
-  private loadDefaultConfiguration(): void {
-    // 原有的默认配置加载逻辑
-    const { DEFAULT_CONFIG, ENV_MAPPING } = require('./defaults.js');
-    this.config = { ...DEFAULT_CONFIG } as BladeConfig;
-    
-    // 加载环境变量
+    this.config = { ...DEFAULT_CONFIG };
     this.loadFromEnvironment();
   }
 
   private loadFromEnvironment(): void {
-    const { ENV_MAPPING } = require('./defaults.js');
-    for (const [envKey, configKey] of Object.entries(ENV_MAPPING)) {
-      const value = process.env[envKey];
-      if (value !== undefined) {
-        (this.config as any)[configKey] = value;
+    try {
+      for (const [envKey, configKey] of Object.entries(ENV_MAPPING)) {
+        const envValue = process.env[envKey];
+        if (envValue) {
+          (this.config as any)[configKey] = this.parseEnvValue(envValue);
+        }
       }
-    }
-  }
-
-  async getConfig(): Promise<BladeConfig> {
-    try {
-      this.config = this.unifiedManager.getConfig();
-      return { ...this.config };
     } catch (error) {
-      console.warn('获取最新配置失败，返回缓存配置:', error);
-      return { ...this.config };
-    }
-  }
+      const bladeError =
+        error instanceof Error
+          ? ErrorFactory.fromNativeError(error, '环境变量加载失败')
+          : new ConfigError('CONFIG_LOAD_FAILED', '环境变量加载失败');
 
-  async updateConfig(updates: Partial<BladeConfig>): Promise<void> {
-    // 验证更新配置
-    const validation = this.validateConfig(updates);
-    if (validation.length > 0) {
-      console.warn('配置更新验证警告:', validation.map(e => e.message).join(', '));
-    }
-    
-    try {
-      await this.unifiedManager.updateConfig(updates);
-      this.config = this.unifiedManager.getConfig();
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '配置更新失败')
-        : new ConfigError('CONFIG_UPDATE_FAILED', '配置更新失败');
-      
       globalErrorMonitor.monitor(bladeError);
-      console.error('配置更新失败:', error);
-      throw error;
+      console.warn('环境变量加载失败，使用默认配置:', error);
     }
   }
 
-  async get(key: keyof BladeConfig): Promise<any> {
+  private parseEnvValue(value: string): any {
+    // 尝试解析布尔值
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+
+    // 尝试解析数字
+    const numValue = Number(value);
+    if (!isNaN(numValue)) return numValue;
+
+    // 返回字符串
+    return value;
+  }
+
+  public getConfig(): BladeConfig {
+    return { ...this.config };
+  }
+
+  public updateConfig(updates: Partial<BladeConfig>): void {
     try {
-      return this.unifiedManager.get(key as string);
+      this.config = { ...this.config, ...updates };
+      this.notifySubscribers();
     } catch (error) {
-      console.warn(`获取配置项 ${String(key)} 失败，返回缓存值:`, error);
-      return this.config[key];
+      const bladeError =
+        error instanceof Error
+          ? ErrorFactory.fromNativeError(error, '配置更新失败')
+          : new ConfigError('CONFIG_LOAD_FAILED', '配置更新失败');
+
+      globalErrorMonitor.monitor(bladeError);
+      throw bladeError;
     }
   }
 
-  async set(key: keyof BladeConfig, value: any): Promise<void> {
-    // 验证单个配置值
-    if (value !== undefined && value !== null) {
-      const validationErrors = this.validateConfigValue(key, value);
-      if (validationErrors.length > 0) {
-        console.warn(`配置项 ${String(key)} 验证警告:`, validationErrors.map(e => e.message).join(', '));
+  public async get(key: keyof BladeConfig): Promise<any> {
+    return this.config[key];
+  }
+
+  public async set(key: keyof BladeConfig, value: any): Promise<void> {
+    try {
+      (this.config as any)[key] = value;
+      this.notifySubscribers();
+    } catch (error) {
+      const bladeError =
+        error instanceof Error
+          ? ErrorFactory.fromNativeError(error, '配置设置失败')
+          : new ConfigError('CONFIG_LOAD_FAILED', '配置设置失败');
+
+      globalErrorMonitor.monitor(bladeError);
+      throw bladeError;
+    }
+  }
+
+  public async reload(): Promise<BladeConfig> {
+    try {
+      this.config = { ...DEFAULT_CONFIG };
+      this.loadFromEnvironment();
+      this.notifySubscribers();
+      return this.getConfig();
+    } catch (error) {
+      const bladeError =
+        error instanceof Error
+          ? ErrorFactory.fromNativeError(error, '配置重载失败')
+          : new ConfigError('CONFIG_LOAD_FAILED', '配置重载失败');
+
+      globalErrorMonitor.monitor(bladeError);
+      throw bladeError;
+    }
+  }
+
+  public enableHotReload(): void {
+    // 简化版本暂不支持热重载
+    console.warn('热重载功能在简化版本中不可用');
+  }
+
+  public disableHotReload(): void {
+    // 简化版本暂不支持热重载
+  }
+
+  public subscribe(callback: (config: BladeConfig) => void): () => void {
+    this.subscribers.push(callback);
+    return () => {
+      const index = this.subscribers.indexOf(callback);
+      if (index > -1) {
+        this.subscribers.splice(index, 1);
       }
-    }
-    
-    try {
-      await this.unifiedManager.set(key as string, value);
-      this.config = this.unifiedManager.getConfig();
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, `设置配置项 ${String(key)} 失败`)
-        : new ConfigError('CONFIG_SET_FAILED', `设置配置项 ${String(key)} 失败`, { context: { key } });
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.error(`设置配置项 ${String(key)} 失败:`, error);
-      throw error;
-    }
+    };
   }
 
-  async reload(): Promise<BladeConfig> {
-    try {
-      const reloadedConfig = await this.unifiedManager.reload();
-      this.config = reloadedConfig;
-      return { ...this.config };
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '重新加载配置失败')
-        : new ConfigError('CONFIG_RELOAD_FAILED', '重新加载配置失败');
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.error('重新加载配置失败:', error);
-      throw error;
-    }
+  private notifySubscribers(): void {
+    const config = this.getConfig();
+    this.subscribers.forEach(callback => {
+      try {
+        callback(config);
+      } catch (error) {
+        console.error('配置订阅回调执行失败:', error);
+      }
+    });
   }
 
-  enableHotReload(): void {
-    try {
-      this.unifiedManager.enableHotReload();
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '启用热重载失败')
-        : new ConfigError('CONFIG_HOT_RELOAD_ENABLE_FAILED', '启用热重载失败');
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.warn('启用热重载失败:', error);
-    }
-  }
-
-  disableHotReload(): void {
-    try {
-      this.unifiedManager.disableHotReload();
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '禁用热重载失败')
-        : new ConfigError('CONFIG_HOT_RELOAD_DISABLE_FAILED', '禁用热重载失败');
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.warn('禁用热重载失败:', error);
-    }
-  }
-
-  subscribe(callback: (config: BladeConfig) => void): () => void {
-    try {
-      return this.unifiedManager.subscribe(callback);
-    } catch (error) {
-      const bladeError = error instanceof Error 
-        ? ErrorFactory.fromNativeError(error, '订阅配置变更失败')
-        : new ConfigError('CONFIG_SUBSCRIBE_FAILED', '订阅配置变更失败');
-      
-      globalErrorMonitor.monitor(bladeError);
-      console.warn('订阅配置变更失败:', error);
-      return () => {};
-    }
-  }
-
-  /**
-   * 验证配置对象
-   */
   private validateConfig(config: Partial<BladeConfig>): any[] {
     const errors: any[] = [];
-    
-    // 验证各个配置项
-    for (const [key, value] of Object.entries(config)) {
-      const fieldErrors = this.validateConfigValue(key as keyof BladeConfig, value);
-      errors.push(...fieldErrors);
+
+    // 基础验证
+    if (config.apiKey !== undefined && typeof config.apiKey !== 'string') {
+      errors.push({ path: 'apiKey', message: 'API Key 必须是字符串' });
     }
-    
+
+    if (config.baseUrl !== undefined && typeof config.baseUrl !== 'string') {
+      errors.push({ path: 'baseUrl', message: 'Base URL 必须是字符串' });
+    }
+
+    if (config.modelName !== undefined && typeof config.modelName !== 'string') {
+      errors.push({ path: 'modelName', message: 'Model Name 必须是字符串' });
+    }
+
     return errors;
   }
 
-  /**
-   * 验证单个配置项
-   */
   private validateConfigValue(key: keyof BladeConfig, value: any): any[] {
     const errors: any[] = [];
-    
-    // 特定字段验证
+
     switch (key) {
-      case 'timeout':
-        if (typeof value !== 'number' || value <= 0) {
-          errors.push(ErrorFactory.createValidationError(
-            'timeout',
-            value,
-            'positive number'
-          ));
+      case 'apiKey':
+      case 'baseUrl':
+      case 'modelName':
+      case 'searchApiKey':
+        if (value !== undefined && typeof value !== 'string') {
+          errors.push({ path: key, message: `${key} 必须是字符串` });
         }
         break;
-      case 'maxTokens':
-        if (typeof value !== 'number' || value <= 0) {
-          errors.push(ErrorFactory.createValidationError(
-            'maxTokens',
-            value,
-            'positive number'
-          ));
-        }
-        break;
-      case 'temperature':
-        if (typeof value !== 'number' || value < 0 || value > 1) {
-          errors.push(ErrorFactory.createValidationError(
-            'temperature',
-            value,
-            'number between 0 and 1'
-          ));
-        }
-        break;
-      case 'stream':
-        if (typeof value !== 'boolean') {
-          errors.push(ErrorFactory.createValidationError(
-            'stream',
-            value,
-            'boolean'
-          ));
+      case 'maxSessionTurns':
+        if (value !== undefined && (typeof value !== 'number' || value < 1)) {
+          errors.push({ path: key, message: `${key} 必须是大于0的数字` });
         }
         break;
       case 'debug':
-        if (typeof value !== 'boolean') {
-          errors.push(ErrorFactory.createValidationError(
-            'debug',
-            value,
-            'boolean'
-          ));
+      case 'hideTips':
+      case 'hideBanner':
+      case 'usageStatisticsEnabled':
+        if (value !== undefined && typeof value !== 'boolean') {
+          errors.push({ path: key, message: `${key} 必须是布尔值` });
         }
         break;
     }
-    
+
     return errors;
   }
 }

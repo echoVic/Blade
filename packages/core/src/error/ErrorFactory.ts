@@ -3,8 +3,18 @@
  * 提供标准化的错误创建和包装功能
  */
 
-import { BladeError, ConfigError, LLMError, NetworkError, FileSystemError, SecurityError } from './BladeError.js';
-import { ErrorCodeModule, ErrorCodes, ErrorSeverity, ErrorCategory } from './types.js';
+import {
+  AgentError,
+  BladeError,
+  ConfigError,
+  FileSystemError,
+  LLMError,
+  MCPError,
+  NetworkError,
+  SecurityError,
+  ToolsError,
+} from './BladeError.js';
+import { ErrorCategory, ErrorCodeModule, ErrorSeverity } from './types.js';
 
 /**
  * 错误创建配置
@@ -12,11 +22,12 @@ import { ErrorCodeModule, ErrorCodes, ErrorSeverity, ErrorCategory } from './typ
 export interface ErrorCreationConfig {
   module?: ErrorCodeModule;
   severity?: ErrorSeverity;
+  category?: ErrorCategory;
   retryable?: boolean;
   recoverable?: boolean;
   context?: Record<string, any>;
   suggestions?: string[];
-  cause?: Error | BladeError;
+  cause?: any;
 }
 
 /**
@@ -26,20 +37,15 @@ export class ErrorFactory {
   /**
    * 创建通用错误
    */
-  static createError(
-    message: string,
-    config: ErrorCreationConfig = {}
-  ): BladeError {
+  static createError(message: string, config: ErrorCreationConfig = {}): BladeError {
     const module = config.module || ErrorCodeModule.CORE;
-    const errorCode = ErrorCodes.CORE.INTERNAL_ERROR;
-    
-    return new BladeError(module, errorCode, message, {
+    return new BladeError(module, 'INTERNAL_ERROR', message, {
       severity: config.severity || ErrorSeverity.ERROR,
       retryable: config.retryable ?? false,
       recoverable: config.recoverable ?? false,
       context: config.context || {},
       suggestions: config.suggestions || [],
-      cause: config.cause
+      cause: config.cause,
     });
   }
 
@@ -47,13 +53,13 @@ export class ErrorFactory {
    * 创建配置错误
    */
   static createConfigError(
-    errorCode: keyof typeof ErrorCodes.CONFIG,
+    errorCode: string,
     message: string,
     config: Omit<ErrorCreationConfig, 'module'> = {}
   ): ConfigError {
     return new ConfigError(errorCode, message, {
       ...config,
-      severity: config.severity || ErrorSeverity.WARNING
+      severity: config.severity || ErrorSeverity.WARNING,
     });
   }
 
@@ -61,59 +67,59 @@ export class ErrorFactory {
    * 创建LLM错误
    */
   static createLLMError(
-    errorCode: keyof typeof ErrorCodes.LLM,
+    errorCode: string,
     message: string,
     config: Omit<ErrorCreationConfig, 'module'> = {}
   ): LLMError {
     return new LLMError(errorCode, message, {
       ...config,
       severity: config.severity || ErrorSeverity.ERROR,
-      retryable: config.retryable ?? true
+      retryable: config.retryable ?? true,
     });
   }
 
   /**
-   * 创建网络错误
+   * 创建MCP错误
    */
-  static createNetworkError(
-    errorCode: keyof typeof ErrorCodes.NETWORK,
+  static createMCPError(
+    errorCode: string,
     message: string,
     config: Omit<ErrorCreationConfig, 'module'> = {}
-  ): NetworkError {
-    return new NetworkError(errorCode, message, {
+  ): MCPError {
+    return new MCPError(errorCode, message, {
       ...config,
       severity: config.severity || ErrorSeverity.WARNING,
-      retryable: config.retryable ?? true
+      retryable: config.retryable ?? true,
     });
   }
 
   /**
-   * 创建文件系统错误
+   * 创建代理错误
    */
-  static createFileSystemError(
-    errorCode: keyof typeof ErrorCodes.FILE_SYSTEM,
+  static createAgentError(
+    errorCode: string,
     message: string,
     config: Omit<ErrorCreationConfig, 'module'> = {}
-  ): FileSystemError {
-    return new FileSystemError(errorCode, message, {
+  ): AgentError {
+    return new AgentError(errorCode, message, {
       ...config,
       severity: config.severity || ErrorSeverity.ERROR,
-      retryable: config.retryable ?? false
+      retryable: config.retryable ?? false,
     });
   }
 
   /**
-   * 创建安全错误
+   * 创建工具错误
    */
-  static createSecurityError(
-    errorCode: keyof typeof ErrorCodes.SECURITY,
+  static createToolsError(
+    errorCode: string,
     message: string,
     config: Omit<ErrorCreationConfig, 'module'> = {}
-  ): SecurityError {
-    return new SecurityError(errorCode, message, {
+  ): ToolsError {
+    return new ToolsError(errorCode, message, {
       ...config,
       severity: config.severity || ErrorSeverity.CRITICAL,
-      retryable: false
+      retryable: false,
     });
   }
 
@@ -137,7 +143,7 @@ export class ErrorFactory {
     responseText?: string,
     config: ErrorCreationConfig = {}
   ): BladeError {
-    let errorCode: keyof typeof ErrorCodes.NETWORK = 'REQUEST_FAILED';
+    let errorCode: string = 'REQUEST_FAILED';
     let message: string;
     let suggestions: string[] = [];
 
@@ -173,12 +179,12 @@ export class ErrorFactory {
         suggestions = ['稍后重试', '联系服务提供商'];
         break;
       case 502:
-        errorCode = 'NETWORK_UNAVAILABLE';
+        errorCode = 'MCP_UNAVAILABLE';
         message = `HTTP 502 网关错误: ${url}`;
         suggestions = ['检查网络连接', '稍后重试'];
         break;
       case 503:
-        errorCode = 'NETWORK_UNAVAILABLE';
+        errorCode = 'MCP_UNAVAILABLE';
         message = `HTTP 503 服务不可用: ${url}`;
         suggestions = ['稍后重试', '检查服务状态'];
         break;
@@ -192,15 +198,15 @@ export class ErrorFactory {
         suggestions = ['检查网络连接', '稍后重试'];
     }
 
-    return this.createNetworkError(errorCode, message, {
+    return this.createMCPError(errorCode, message, {
       ...config,
       context: {
         ...config.context,
         status,
         url,
-        responseText
+        responseText,
       },
-      suggestions: [...(config.suggestions || []), ...suggestions]
+      suggestions: [...(config.suggestions || []), ...suggestions],
     });
   }
 
@@ -212,18 +218,14 @@ export class ErrorFactory {
     timeoutMs: number,
     config: ErrorCreationConfig = {}
   ): BladeError {
-    return this.createNetworkError('TIMEOUT_EXCEEDED', `操作 "${operation}" 超时`, {
+    return this.createMCPError('TIMEOUT_EXCEEDED', `操作 "${operation}" 超时`, {
       ...config,
       context: {
         ...config.context,
         operation,
-        timeout: timeoutMs
+        timeout: timeoutMs,
       },
-      suggestions: [
-        '增加超时时间配置',
-        '检查网络性能',
-        '优化操作逻辑'
-      ]
+      suggestions: ['增加超时时间配置', '检查网络性能', '优化操作逻辑'],
     });
   }
 
@@ -243,13 +245,13 @@ export class ErrorFactory {
         ...config.context,
         fieldName,
         fieldValue,
-        expectedType
+        expectedType,
       },
       suggestions: [
         `检查字段 "${fieldName}" 的类型`,
         `提供符合 ${expectedType} 类型的值`,
-        '查看配置文档'
-      ]
+        '查看配置文档',
+      ],
     });
   }
 
@@ -261,18 +263,18 @@ export class ErrorFactory {
     identifier: string,
     config: ErrorCreationConfig = {}
   ): BladeError {
-    let errorCode: keyof typeof ErrorCodes = 'INTERNAL_ERROR';
+    let errorCode: string = 'INTERNAL_ERROR';
     let module = ErrorCodeModule.CORE;
 
     // 根据资源类型选择适当的错误类型
     if (resource.toLowerCase().includes('file')) {
-      errorCode = 'FILE_NOT_FOUND' as any;
-      module = ErrorCodeModule.FILE_SYSTEM;
+      errorCode = 'FILE_NOT_FOUND';
+      module = ErrorCodeModule.TOOLS;
     } else if (resource.toLowerCase().includes('config')) {
-      errorCode = 'CONFIG_NOT_FOUND' as any;
+      errorCode = 'CONFIG_NOT_FOUND';
       module = ErrorCodeModule.CONFIG;
     } else if (resource.toLowerCase().includes('tool')) {
-      errorCode = 'TOOL_NOT_FOUND' as any;
+      errorCode = 'TOOL_NOT_FOUND';
       module = ErrorCodeModule.TOOLS;
     }
 
@@ -281,13 +283,9 @@ export class ErrorFactory {
       context: {
         ...config.context,
         resource,
-        identifier
+        identifier,
       },
-      suggestions: [
-        `检查 ${resource} 路径是否正确`,
-        `确认 ${resource} 是否存在`,
-        '检查权限设置'
-      ]
+      suggestions: [`检查 ${resource} 路径是否正确`, `确认 ${resource} 是否存在`, '检查权限设置'],
     });
   }
 
@@ -299,15 +297,15 @@ export class ErrorFactory {
     resource: string,
     config: ErrorCreationConfig = {}
   ): BladeError {
-    let errorCode: keyof typeof ErrorCodes = 'PERMISSION_DENIED';
-    let module = ErrorCodeModule.FILE_SYSTEM;
+    let errorCode: string = 'PERMISSION_DENIED';
+    let module = ErrorCodeModule.TOOLS;
 
     // 根据资源类型选择适当的错误类型
     if (resource.toLowerCase().includes('security')) {
-      errorCode = 'AUTHORIZATION_FAILED' as any;
-      module = ErrorCodeModule.SECURITY;
+      errorCode = 'AUTHORIZATION_FAILED';
+      module = ErrorCodeModule.TOOLS;
     } else if (resource.toLowerCase().includes('tool')) {
-      errorCode = 'TOOL_PERMISSION_DENIED' as any;
+      errorCode = 'TOOL_PERMISSION_DENIED';
       module = ErrorCodeModule.TOOLS;
     }
 
@@ -317,13 +315,9 @@ export class ErrorFactory {
       context: {
         ...config.context,
         operation,
-        resource
+        resource,
       },
-      suggestions: [
-        `检查对 ${resource} 的访问权限`,
-        '联系管理员获取权限',
-        '使用适当的身份验证'
-      ]
+      suggestions: [`检查对 ${resource} 的访问权限`, '联系管理员获取权限', '使用适当的身份验证'],
     });
   }
 
@@ -343,14 +337,9 @@ export class ErrorFactory {
       context: {
         ...config.context,
         operation,
-        memoryInfo
+        memoryInfo,
       },
-      suggestions: [
-        '释放不必要的内存',
-        '增加系统内存',
-        '优化内存使用',
-        '检查内存泄漏'
-      ]
+      suggestions: ['释放不必要的内存', '增加系统内存', '优化内存使用', '检查内存泄漏'],
     });
   }
 
@@ -362,21 +351,94 @@ export class ErrorFactory {
     cause?: Error,
     config: ErrorCreationConfig = {}
   ): BladeError {
-    return new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INITIALIZATION_FAILED, 
-      `组件 "${component}" 初始化失败`, {
+    return new BladeError(
+      ErrorCodeModule.CORE,
+      'INITIALIZATION_FAILED',
+      `组件 "${component}" 初始化失败`,
+      {
         ...config,
         severity: ErrorSeverity.CRITICAL,
         context: {
           ...config.context,
-          component
+          component,
         },
-        cause,
-        suggestions: [
-          '检查组件配置',
-          '验证依赖关系',
-          '查看日志获取详细信息'
-        ]
-      });
+        cause: cause instanceof BladeError ? cause : cause ? BladeError.from(cause) : undefined,
+        suggestions: ['检查组件配置', '验证依赖关系', '查看日志获取详细信息'],
+      }
+    );
+  }
+
+  /**
+   * 创建文件系统错误
+   */
+  static createFileSystemError(
+    errorCode: string,
+    message: string,
+    config: ErrorCreationConfig = {}
+  ): FileSystemError {
+    return new FileSystemError(errorCode, message, {
+      severity: config.severity || ErrorSeverity.ERROR,
+      retryable: config.retryable ?? true,
+      recoverable: config.recoverable ?? true,
+      context: config.context || {},
+      suggestions: config.suggestions || [
+        '检查文件路径是否正确',
+        '验证文件权限',
+        '确认磁盘空间充足',
+      ],
+      cause: config.cause
+        ? config.cause instanceof BladeError
+          ? config.cause
+          : BladeError.from(config.cause)
+        : undefined,
+      ...config,
+    });
+  }
+
+  /**
+   * 创建网络错误
+   */
+  static createNetworkError(
+    errorCode: string,
+    message: string,
+    config: ErrorCreationConfig = {}
+  ): NetworkError {
+    return new NetworkError(errorCode, message, {
+      severity: config.severity || ErrorSeverity.ERROR,
+      retryable: config.retryable ?? true,
+      recoverable: config.recoverable ?? true,
+      context: config.context || {},
+      suggestions: config.suggestions || ['检查网络连接', '验证URL是否正确', '稍后重试'],
+      cause: config.cause
+        ? config.cause instanceof BladeError
+          ? config.cause
+          : BladeError.from(config.cause)
+        : undefined,
+      ...config,
+    });
+  }
+
+  /**
+   * 创建安全错误
+   */
+  static createSecurityError(
+    errorCode: string,
+    message: string,
+    config: ErrorCreationConfig = {}
+  ): SecurityError {
+    return new SecurityError(errorCode, message, {
+      severity: config.severity || ErrorSeverity.CRITICAL,
+      retryable: config.retryable ?? false,
+      recoverable: config.recoverable ?? false,
+      context: config.context || {},
+      suggestions: config.suggestions || ['检查认证信息', '验证权限设置', '联系管理员'],
+      cause: config.cause
+        ? config.cause instanceof BladeError
+          ? config.cause
+          : BladeError.from(config.cause)
+        : undefined,
+      ...config,
+    });
   }
 }
 
@@ -398,15 +460,12 @@ export class BatchErrorFactory {
 
       // 检查必需字段
       if (fieldSchema.required && (value === undefined || value === null)) {
-        errors.push(ErrorFactory.createValidationError(
-          field,
-          value,
-          fieldSchema.type,
-          {
+        errors.push(
+          ErrorFactory.createValidationError(field, value, fieldSchema.type, {
             severity: ErrorSeverity.ERROR,
-            suggestions: [`提供必需的字段 "${field}"`]
-          }
-        ));
+            suggestions: [`提供必需的字段 "${field}"`],
+          })
+        );
         continue;
       }
 
@@ -414,15 +473,12 @@ export class BatchErrorFactory {
       if (value !== undefined && value !== null) {
         const actualType = Array.isArray(value) ? 'array' : typeof value;
         if (actualType !== fieldSchema.type) {
-          errors.push(ErrorFactory.createValidationError(
-            field,
-            value,
-            fieldSchema.type,
-            {
+          errors.push(
+            ErrorFactory.createValidationError(field, value, fieldSchema.type, {
               severity: ErrorSeverity.WARNING,
-              suggestions: [`字段 "${field}" 应该是 ${fieldSchema.type} 类型`]
-            }
-          ));
+              suggestions: [`字段 "${field}" 应该是 ${fieldSchema.type} 类型`],
+            })
+          );
         }
       }
     }
@@ -440,10 +496,7 @@ export class BatchErrorFactory {
 
     for (const permission of permissions) {
       if (!permission.granted) {
-        errors.push(ErrorFactory.createPermissionError(
-          permission.operation,
-          permission.resource
-        ));
+        errors.push(ErrorFactory.createPermissionError(permission.operation, permission.resource));
       }
     }
 

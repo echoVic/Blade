@@ -1,13 +1,15 @@
 import axios from 'axios';
-import { performance } from 'perf_hooks';
 import { createHash } from 'crypto';
-import type { BladeConfig } from '../config/types.js';
+import { performance } from 'perf_hooks';
+import type { BladeConfig } from '../config/types/index.js';
+
+/// <reference types="node" />
 
 export class TelemetrySDK {
   private config: BladeConfig;
   private events: TelemetryEvent[] = [];
   private isInitialized = false;
-  private flushInterval: NodeJS.Timeout | null = null;
+  private flushInterval: any = null;
   private sessionId: string;
   private userId: string | null = null;
   private deviceId: string;
@@ -24,13 +26,13 @@ export class TelemetrySDK {
     }
 
     // 检查是否启用遥测
-    if (!this.config.telemetry.enabled) {
+    if (!this.config.telemetryEnabled) {
       console.log('遥测已禁用');
       return;
     }
 
     // 设置自动刷新
-    const interval = this.config.telemetry.interval || 300000; // 5分钟
+    const interval = 300000; // 5分钟
     this.flushInterval = setInterval(() => {
       this.flushEvents();
     }, interval);
@@ -46,7 +48,7 @@ export class TelemetrySDK {
 
   // 记录事件
   public trackEvent(eventName: string, properties: Record<string, any> = {}): void {
-    if (!this.isInitialized || !this.config.telemetry.enabled) {
+    if (!this.isInitialized || !this.config.telemetryEnabled) {
       return;
     }
 
@@ -71,7 +73,7 @@ export class TelemetrySDK {
     this.events.push(event);
 
     // 检查是否需要立即刷新
-    if (this.events.length >= (this.config.telemetry.batchSize || 100)) {
+    if (this.events.length >= 100) {
       this.flushEvents();
     }
   }
@@ -95,8 +97,8 @@ export class TelemetrySDK {
 
   // 记录性能指标
   public trackPerformance(
-    metricName: string, 
-    value: number, 
+    metricName: string,
+    value: number,
     properties: Record<string, any> = {}
   ): void {
     this.trackEvent('performance', {
@@ -108,8 +110,8 @@ export class TelemetrySDK {
 
   // 记录用户行为
   public trackUserAction(
-    action: string, 
-    target: string, 
+    action: string,
+    target: string,
     properties: Record<string, any> = {}
   ): void {
     this.trackEvent('user_action', {
@@ -120,10 +122,7 @@ export class TelemetrySDK {
   }
 
   // 记录功能使用
-  public trackFeatureUsage(
-    feature: string, 
-    properties: Record<string, any> = {}
-  ): void {
+  public trackFeatureUsage(feature: string, properties: Record<string, any> = {}): void {
     this.trackEvent('feature_usage', {
       feature,
       ...properties,
@@ -132,8 +131,8 @@ export class TelemetrySDK {
 
   // 记录自定义指标
   public trackMetric(
-    metricName: string, 
-    value: number, 
+    metricName: string,
+    value: number,
     properties: Record<string, any> = {}
   ): void {
     this.trackEvent('custom_metric', {
@@ -170,8 +169,8 @@ export class TelemetrySDK {
 
   // 发送事件到服务器
   private async sendEvents(payload: TelemetryPayload): Promise<void> {
-    const endpoint = this.config.telemetry.endpoint || 'https://telemetry.blade-ai.com/api/v1/events';
-    
+    const endpoint = this.config.otlpEndpoint || 'https://telemetry.blade-ai.com/api/v1/events';
+
     await axios.post(endpoint, payload, {
       headers: {
         'Content-Type': 'application/json',
@@ -189,7 +188,7 @@ export class TelemetrySDK {
       process.arch,
       process.env.USER || process.env.USERNAME || 'unknown',
     ].join('-');
-    
+
     return createHash('sha256').update(machineInfo).digest('hex');
   }
 
@@ -212,35 +211,30 @@ export class TelemetrySDK {
   public performanceMonitor(metricName: string) {
     return (target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
       const originalMethod = descriptor.value;
-      
+
       descriptor.value = async function (...args: any[]) {
         const startTime = performance.now();
-        
+
         try {
           const result = await originalMethod.apply(this, args);
           const duration = performance.now() - startTime;
-          
-          // 记录性能指标
-          this.trackPerformance(metricName, duration, {
-            methodName: propertyKey,
-            success: true,
-          });
-          
+
+          // 记录性能指标到性能监控器
+          const monitor = PerformanceMonitor.getInstance();
+          monitor.recordMetric(metricName, duration);
+
           return result;
         } catch (error) {
           const duration = performance.now() - startTime;
-          
+
           // 记录性能指标和错误
-          this.trackPerformance(metricName, duration, {
-            methodName: propertyKey,
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          
+          const monitor = PerformanceMonitor.getInstance();
+          monitor.recordMetric(metricName, duration);
+
           throw error;
         }
       };
-      
+
       return descriptor;
     };
   }
@@ -248,7 +242,7 @@ export class TelemetrySDK {
   // 获取遥测状态
   public getTelemetryStatus(): TelemetryStatus {
     return {
-      enabled: this.config.telemetry.enabled,
+      enabled: this.config.telemetryEnabled || false,
       initialized: this.isInitialized,
       queuedEvents: this.events.length,
       sessionId: this.sessionId,
@@ -260,11 +254,11 @@ export class TelemetrySDK {
   // 获取事件统计
   public getEventStats(): EventStats {
     const eventTypes: Record<string, number> = {};
-    
+
     for (const event of this.events) {
       eventTypes[event.eventName] = (eventTypes[event.eventName] || 0) + 1;
     }
-    
+
     return {
       totalEvents: this.events.length,
       eventTypes,
@@ -282,16 +276,16 @@ export class TelemetrySDK {
   public async destroy(): Promise<void> {
     // 刷新所有待处理事件
     await this.flushEvents();
-    
+
     // 清理定时器
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
-    
+
     this.isInitialized = false;
     this.events = [];
-    
+
     console.log('遥测SDK已销毁');
   }
 
@@ -323,11 +317,11 @@ export class PerformanceMonitor {
   // 开始测量
   public startMeasurement(name: string): string {
     const measurementId = `meas_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     if (!this.metrics.has(name)) {
       this.metrics.set(name, []);
     }
-    
+
     const metric: PerformanceMetric = {
       id: measurementId,
       name,
@@ -335,15 +329,15 @@ export class PerformanceMonitor {
       endTime: 0,
       duration: 0,
     };
-    
+
     this.metrics.get(name)!.push(metric);
-    
+
     return measurementId;
   }
 
   // 结束测量
   public endMeasurement(measurementId: string): number {
-    for (const [name, metrics] of this.metrics.entries()) {
+    for (const [, metrics] of this.metrics.entries()) {
       const metric = metrics.find(m => m.id === measurementId);
       if (metric) {
         metric.endTime = performance.now();
@@ -351,44 +345,41 @@ export class PerformanceMonitor {
         return metric.duration;
       }
     }
-    
+
     throw new Error(`测量未找到: ${measurementId}`);
   }
 
   // 直接测量函数执行时间
   public async measureAsync<T>(
-    name: string, 
+    name: string,
     fn: () => Promise<T>
   ): Promise<{ result: T; duration: number }> {
     const start = performance.now();
     const result = await fn();
     const duration = performance.now() - start;
-    
+
     this.recordMetric(name, duration);
-    
+
     return { result, duration };
   }
 
   // 直接测量函数执行时间（同步）
-  public measureSync<T>(
-    name: string, 
-    fn: () => T
-  ): { result: T; duration: number } {
+  public measureSync<T>(name: string, fn: () => T): { result: T; duration: number } {
     const start = performance.now();
     const result = fn();
     const duration = performance.now() - start;
-    
+
     this.recordMetric(name, duration);
-    
+
     return { result, duration };
   }
 
   // 记录指标
-  private recordMetric(name: string, duration: number): void {
+  public recordMetric(name: string, duration: number): void {
     if (!this.metrics.has(name)) {
       this.metrics.set(name, []);
     }
-    
+
     const metric: PerformanceMetric = {
       id: `meas_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name,
@@ -396,16 +387,14 @@ export class PerformanceMonitor {
       endTime: 0,
       duration,
     };
-    
+
     this.metrics.get(name)!.push(metric);
   }
 
   // 获取指标统计
   public getMetricsStats(name?: string): MetricStats {
-    const metrics = name 
-      ? this.metrics.get(name) || [] 
-      : Array.from(this.metrics.values()).flat();
-    
+    const metrics = name ? this.metrics.get(name) || [] : Array.from(this.metrics.values()).flat();
+
     if (metrics.length === 0) {
       return {
         count: 0,
@@ -415,10 +404,10 @@ export class PerformanceMonitor {
         total: 0,
       };
     }
-    
+
     const durations = metrics.map(m => m.duration);
     const total = durations.reduce((sum, d) => sum + d, 0);
-    
+
     return {
       count: metrics.length,
       min: Math.min(...durations),
@@ -431,11 +420,11 @@ export class PerformanceMonitor {
   // 获取所有指标
   public getAllMetrics(): Record<string, MetricStats> {
     const stats: Record<string, MetricStats> = {};
-    
-    for (const [name, metrics] of this.metrics.entries()) {
+
+    for (const [name] of this.metrics.entries()) {
       stats[name] = this.getMetricsStats(name);
     }
-    
+
     return stats;
   }
 
@@ -507,11 +496,11 @@ export class ErrorTracker {
 
   public getErrorStats(): ErrorStats {
     const severityCounts: Record<string, number> = {};
-    
+
     for (const error of this.errors) {
       severityCounts[error.severity] = (severityCounts[error.severity] || 0) + 1;
     }
-    
+
     return {
       totalErrors: this.errors.length,
       severityCounts,
@@ -525,7 +514,7 @@ export class ErrorTracker {
 }
 
 // 类型定义
-interface TelemetryEvent {
+export interface TelemetryEvent {
   eventId: string;
   eventName: string;
   properties: Record<string, any>;
@@ -533,13 +522,13 @@ interface TelemetryEvent {
   metadata: Record<string, any>;
 }
 
-interface TelemetryPayload {
+export interface TelemetryPayload {
   events: TelemetryEvent[];
   batchId: string;
   timestamp: number;
 }
 
-interface TelemetryStatus {
+export interface TelemetryStatus {
   enabled: boolean;
   initialized: boolean;
   queuedEvents: number;

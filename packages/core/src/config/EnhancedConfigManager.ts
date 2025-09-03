@@ -1,168 +1,151 @@
 /**
- * 错误处理系统与配置系统集成示例
+ * 增强版配置管理器，集成错误处理
  */
 
 import { ConfigManager } from '../config/ConfigManager.js';
 import { 
   ErrorFactory, 
   globalErrorMonitor,
-  type ErrorMonitoringConfig
+  ConfigError
 } from '../error/index.js';
+import type { BladeConfig } from './types/index.js';
+
+/**
+ * 错误监控配置接口
+ */
+export interface ErrorMonitoringConfig {
+  enabled: boolean;
+  sampleRate: number;
+  maxErrorsPerMinute: number;
+  excludePatterns: string[];
+  includePatterns: string[];
+  autoReport: boolean;
+  storeReports: boolean;
+  maxStoredReports: number;
+  enableConsole: boolean;
+  enableFile: boolean;
+  logFilePath?: string;
+}
 
 /**
  * 增强版配置管理器，集成错误处理
  */
 export class EnhancedConfigManager extends ConfigManager {
   private errorMonitoringConfig: ErrorMonitoringConfig;
+  private configLoadStats = {
+    totalLoads: 0,
+    successfulLoads: 0,
+    failedLoads: 0,
+    lastError: undefined as string | undefined
+  };
 
   constructor() {
     super();
     
     // 从配置中获取错误监控设置
-    this.errorMonitoringConfig = this.getErrorMonitoringConfig();
+    this.errorMonitoringConfig = this.initializeErrorMonitoringConfig();
     
     // 配置全局错误监控器
     if (this.errorMonitoringConfig.enabled) {
-      globalErrorMonitor['config'] = {
-        ...globalErrorMonitor['config'],
-        ...this.errorMonitoringConfig
-      };
+      this.configureGlobalErrorMonitor();
     }
   }
 
-  private getErrorMonitoringConfig(): ErrorMonitoringConfig {
+  private initializeErrorMonitoringConfig(): ErrorMonitoringConfig {
+    const config = this.getConfig();
     return {
-      enabled: this.get('errorMonitoringEnabled') ?? true,
-      sampleRate: this.get('errorSampleRate') ?? 1.0,
-      maxErrorsPerMinute: this.get('maxErrorsPerMinute') ?? 100,
-      excludePatterns: this.get('errorExcludePatterns') ?? [],
-      includePatterns: this.get('errorIncludePatterns') ?? [],
-      autoReport: this.get('autoErrorReport') ?? false,
-      storeReports: this.get('storeErrorReports') ?? true,
-      maxStoredReports: this.get('maxStoredErrorReports') ?? 1000,
-      enableConsole: this.get('enableErrorConsole') ?? true,
-      enableFile: this.get('enableErrorFile') ?? false,
-      logFilePath: this.get('errorLogPath') ?? undefined
+      enabled: true,
+      sampleRate: 1.0,
+      maxErrorsPerMinute: 100,
+      excludePatterns: [],
+      includePatterns: [],
+      autoReport: false,
+      storeReports: true,
+      maxStoredReports: 1000,
+      enableConsole: config.debug ?? true,
+      enableFile: false,
+      logFilePath: undefined
     };
   }
 
+  private configureGlobalErrorMonitor(): void {
+    // 配置全局错误监控器（如果有相关API）
+    try {
+      // 这里可以添加全局错误监控器的配置逻辑
+      if (this.errorMonitoringConfig.enableConsole) {
+        console.info('[配置] 错误监控已启用');
+      }
+    } catch (error) {
+      console.warn('配置错误监控器失败:', error);
+    }
+  }
+
   /**
-   * 重写加载用户配置方法，添加错误处理
+   * 重写更新配置方法，添加错误处理
    */
-  protected loadUserConfig(): void {
-    const configPath = this.get('userConfigPath') || '.blade/config.json';
+  public updateConfig(updates: Partial<BladeConfig>): void {
+    this.configLoadStats.totalLoads++;
     
     try {
-      super.loadUserConfig();
+      // 验证配置更新
+      this.validateConfigUpdates(updates);
       
-      // 记录配置加载成功
-      if (this.errorMonitoringConfig.enabled && this.errorMonitoringConfig.enableConsole) {
-        console.info(`[配置] 成功加载用户配置: ${configPath}`);
-      }
-    } catch (error) {
-      const configError = ErrorFactory.createConfigError(
-        'CONFIG_LOAD_FAILED',
-        `用户配置加载失败: ${configPath}`,
-        {
-          context: { configPath, error: error instanceof Error ? error.message : String(error) },
-          retryable: false,
-          recoverable: true,
-          suggestions: [
-            '检查配置文件路径是否正确',
-            '确认配置文件格式是否有效',
-            '检查文件读取权限'
-          ]
-        }
-      );
-      
-      globalErrorMonitor.monitor(configError);
-      
-      // 如果是关键配置加载失败，抛出错误
-      if (this.isCriticalConfigPath(configPath)) {
-        throw configError;
-      }
-      
-      console.warn(`[警告] 用户配置加载失败，使用默认配置: ${configError.message}`);
-    }
-  }
-
-  /**
-   * 重写加载项目配置方法，添加错误处理
-   */
-  protected loadProjectConfig(): void {
-    try {
-      super.loadProjectConfig();
-      
-      if (this.errorMonitoringConfig.enabled && this.errorMonitoringConfig.enableConsole) {
-        console.info('[配置] 成功加载项目配置');
-      }
-    } catch (error) {
-      const configError = ErrorFactory.createConfigError(
-        'CONFIG_LOAD_FAILED',
-        '项目配置加载失败',
-        {
-          context: { error: error instanceof Error ? error.message : String(error) },
-          retryable: false,
-          recoverable: true,
-          suggestions: [
-            '检查项目配置文件格式',
-            '确认项目配置文件权限',
-            '验证配置文件内容'
-          ]
-        }
-      );
-      
-      globalErrorMonitor.monitor(configError);
-      console.warn(`[警告] 项目配置加载失败: ${configError.message}`);
-    }
-  }
-
-  /**
-   * 重写配置更新方法，添加验证和错误处理
-   */
-  updateConfig(updates: Partial<any>): void {
-    try {
-      // 验证更新配置
-      const validationErrors = this.validateConfig(updates);
-      if (validationErrors.length > 0) {
-        const validationError = ErrorFactory.createConfigError(
-          'CONFIG_VALIDATION_FAILED',
-          '配置更新验证失败',
-          {
-            context: { updates, validationErrors: validationErrors.map(e => e.message) },
-            severity: 'WARNING' as any,
-            retryable: false,
-            suggestions: [
-              '检查配置项类型是否正确',
-              '确认必需配置项是否提供',
-              '查看配置文档了解正确格式'
-            ]
-          }
-        );
-        
-        globalErrorMonitor.monitor(validationError);
-        console.warn(`[配置验证警告] ${validationError.message}`);
-      }
-      
+      // 调用父类方法
       super.updateConfig(updates);
       
-      if (this.errorMonitoringConfig.enabled && this.errorMonitoringConfig.enableConsole) {
+      // 更新错误监控配置
+       this.errorMonitoringConfig = this.initializeErrorMonitoringConfig();
+      
+      this.configLoadStats.successfulLoads++;
+      
+      if (this.errorMonitoringConfig.enableConsole) {
         console.info('[配置] 配置更新成功');
       }
     } catch (error) {
-      const configError = ErrorFactory.createConfigError(
-        'CONFIG_SAVE_FAILED',
-        '配置更新失败',
-        {
-          context: { updates, error: error instanceof Error ? error.message : String(error) },
-          retryable: true,
-          suggestions: [
-            '重试配置更新操作',
-            '检查配置存储权限',
-            '确认配置格式正确'
-          ]
-        }
-      );
+      this.configLoadStats.failedLoads++;
+      this.configLoadStats.lastError = error instanceof Error ? error.message : String(error);
+      
+      const configError = error instanceof Error 
+        ? ErrorFactory.fromNativeError(error, '配置更新失败')
+        : new ConfigError('CONFIG_SAVE_FAILED', '配置更新失败');
+      
+      globalErrorMonitor.monitor(configError);
+      
+      // 如果是关键配置更新失败，抛出错误
+      if (this.isCriticalConfigUpdate(updates)) {
+        throw configError;
+      }
+      
+      console.warn(`[警告] 配置更新失败: ${configError.message}`);
+    }
+  }
+
+  /**
+   * 重写重载配置方法，添加错误处理
+   */
+  public async reload(): Promise<BladeConfig> {
+    this.configLoadStats.totalLoads++;
+    
+    try {
+      const config = await super.reload();
+      
+      // 更新错误监控配置
+       this.errorMonitoringConfig = this.initializeErrorMonitoringConfig();
+      
+      this.configLoadStats.successfulLoads++;
+      
+      if (this.errorMonitoringConfig.enableConsole) {
+        console.info('[配置] 配置重载成功');
+      }
+      
+      return config;
+    } catch (error) {
+      this.configLoadStats.failedLoads++;
+      this.configLoadStats.lastError = error instanceof Error ? error.message : String(error);
+      
+      const configError = error instanceof Error 
+        ? ErrorFactory.fromNativeError(error, '配置重载失败')
+        : new ConfigError('CONFIG_LOAD_FAILED', '配置重载失败');
       
       globalErrorMonitor.monitor(configError);
       throw configError;
@@ -170,34 +153,93 @@ export class EnhancedConfigManager extends ConfigManager {
   }
 
   /**
-   * 判断是否为关键配置路径
+   * 验证配置更新
    */
-  private isCriticalConfigPath(configPath: string): boolean {
-    // 可以根据业务需求定义关键配置路径
-    const criticalPaths = [
-      'system-config.json',
-      'security-config.json',
-      'database-config.json'
-    ];
+  private validateConfigUpdates(updates: Partial<BladeConfig>): void {
+    const errors: string[] = [];
     
-    return criticalPaths.some(criticalPath => configPath.includes(criticalPath));
+    // 验证 API Key
+    if (updates.apiKey !== undefined) {
+      if (typeof updates.apiKey !== 'string' || updates.apiKey.trim() === '') {
+        errors.push('API Key 必须是非空字符串');
+      }
+    }
+    
+    // 验证 Base URL
+    if (updates.baseUrl !== undefined) {
+      if (typeof updates.baseUrl !== 'string' || updates.baseUrl.trim() === '') {
+        errors.push('Base URL 必须是非空字符串');
+      } else {
+        try {
+          new URL(updates.baseUrl);
+        } catch {
+          errors.push('Base URL 格式无效');
+        }
+      }
+    }
+    
+    // 验证模型名称
+    if (updates.modelName !== undefined) {
+      if (typeof updates.modelName !== 'string' || updates.modelName.trim() === '') {
+        errors.push('模型名称必须是非空字符串');
+      }
+    }
+    
+    if (errors.length > 0) {
+      throw new ConfigError('CONFIG_VALIDATION_FAILED', `配置验证失败: ${errors.join(', ')}`);
+    }
   }
 
   /**
-   * 获取配置加载统计
+   * 判断是否为关键配置更新
    */
-  getConfigLoadStats(): {
+  private isCriticalConfigUpdate(updates: Partial<BladeConfig>): boolean {
+    const criticalKeys = ['apiKey', 'baseUrl', 'modelName'];
+    return Object.keys(updates).some(key => criticalKeys.includes(key));
+  }
+
+  /**
+   * 获取配置加载统计信息
+   */
+  public getConfigLoadStats(): {
     totalLoads: number;
     successfulLoads: number;
     failedLoads: number;
     lastError?: string;
   } {
-    // 这里应该实现实际的统计逻辑
-    // 暂时返回示例数据
-    return {
-      totalLoads: 1,
-      successfulLoads: 1,
-      failedLoads: 0
+    return { ...this.configLoadStats };
+  }
+
+  /**
+   * 获取错误监控配置
+   */
+  public getErrorMonitoringConfig(): ErrorMonitoringConfig {
+    return { ...this.errorMonitoringConfig };
+  }
+
+  /**
+   * 更新错误监控配置
+   */
+  public updateErrorMonitoringConfig(config: Partial<ErrorMonitoringConfig>): void {
+    this.errorMonitoringConfig = {
+      ...this.errorMonitoringConfig,
+      ...config
+    };
+    
+    if (this.errorMonitoringConfig.enabled) {
+      this.configureGlobalErrorMonitor();
+    }
+  }
+
+  /**
+   * 重置配置加载统计
+   */
+  public resetConfigLoadStats(): void {
+    this.configLoadStats = {
+      totalLoads: 0,
+      successfulLoads: 0,
+      failedLoads: 0,
+      lastError: undefined
     };
   }
 }

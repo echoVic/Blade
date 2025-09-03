@@ -1,23 +1,22 @@
 /**
- * Blade 核心错误类
- * 提供统一错误处理基类和具体错误实现
+ * Blade 错误处理核心类
+ * 提供统一的错误处理机制
  */
 
 import {
-  BladeError as IBladeError,
   ErrorDetails,
   ErrorCodeModule,
-  ErrorCodes,
   ErrorSeverity,
   ErrorCategory
 } from './types.js';
 
 /**
- * Blade 统一错误类
+ * Blade 核心错误类
+ * 继承自 Error，提供更丰富的错误信息和处理能力
  */
-export class BladeError extends Error implements IBladeError {
-  public readonly code: string;
+export class BladeError extends Error {
   public readonly module: ErrorCodeModule;
+  public readonly code: string;
   public readonly severity: ErrorSeverity;
   public readonly category: ErrorCategory;
   public readonly context: Record<string, any>;
@@ -26,227 +25,37 @@ export class BladeError extends Error implements IBladeError {
   public readonly recoverable: boolean;
   public readonly suggestions: string[];
   public readonly relatedErrors: BladeError[];
-  public readonly cause?: BladeError;
+  public readonly cause?: any;
 
   constructor(
     module: ErrorCodeModule,
-    errorCode: string,
+    code: string,
     message: string,
     details: Partial<ErrorDetails> = {}
   ) {
     super(message);
     
-    this.name = this.constructor.name;
+    this.name = 'BladeError';
     this.module = module;
-    this.code = `${module}_${errorCode}`;
+    this.code = code;
     this.severity = details.severity || ErrorSeverity.ERROR;
     this.category = details.category || ErrorCategory.SYSTEM;
     this.context = details.context || {};
     this.timestamp = details.timestamp || Date.now();
-    this.retryable = details.retryable ?? false;
-    this.recoverable = details.recoverable ?? false;
+    this.retryable = details.retryable || false;
+    this.recoverable = details.recoverable || false;
     this.suggestions = details.suggestions || [];
-    this.relatedErrors = details.relatedErrors || [];
-    
-    // 保留原始堆栈
-    if (details.stack) {
-      this.stack = details.stack;
-    }
+    this.relatedErrors = [];
     
     // 处理错误链
     if (details.cause) {
-      this.cause = details.cause instanceof BladeError ? details.cause : new BladeError(
-        ErrorCodeModule.CORE,
-        ErrorCodes.CORE.INTERNAL_ERROR,
-        '原始错误包装',
-        { severity: ErrorSeverity.WARNING }
-      );
+      this.cause = details.cause;
     }
     
-    // 确保 Error 原型链正确
-    Object.setPrototypeOf(this, BladeError.prototype);
-  }
-
-  /**
-   * 创建配置相关错误
-   */
-  static config(
-    errorCode: keyof typeof ErrorCodes.CONFIG,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.CONFIG,
-      ErrorCodes.CONFIG[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.CONFIGURATION,
-        retryable: details.retryable ?? false
-      }
-    );
-  }
-
-  /**
-   * 创建 LLM 相关错误
-   */
-  static llm(
-    errorCode: keyof typeof ErrorCodes.LLM,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.LLM,
-      ErrorCodes.LLM[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.LLM,
-        retryable: details.retryable ?? true
-      }
-    );
-  }
-
-  /**
-   * 创建网络相关错误
-   */
-  static network(
-    errorCode: keyof typeof ErrorCodes.NETWORK,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.NETWORK,
-      ErrorCodes.NETWORK[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.NETWORK,
-        retryable: details.retryable ?? true
-      }
-    );
-  }
-
-  /**
-   * 创建文件系统相关错误
-   */
-  static fileSystem(
-    errorCode: keyof typeof ErrorCodes.FILE_SYSTEM,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.FILE_SYSTEM,
-      ErrorCodes.FILE_SYSTEM[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.FILE_SYSTEM,
-        retryable: details.retryable ?? false
-      }
-    );
-  }
-
-  /**
-   * 创建 Git 相关错误
-   */
-  static git(
-    errorCode: keyof typeof ErrorCodes.GIT,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.GIT,
-      ErrorCodes.GIT[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.SYSTEM,
-        retryable: details.retryable ?? true
-      }
-    );
-  }
-
-  /**
-   * 创建安全相关错误
-   */
-  static security(
-    errorCode: keyof typeof ErrorCodes.SECURITY,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.SECURITY,
-      ErrorCodes.SECURITY[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.SECURITY,
-        severity: ErrorSeverity.WARNING,
-        retryable: false
-      }
-    );
-  }
-
-  /**
-   * 创建工具相关错误
-   */
-  static tool(
-    errorCode: keyof typeof ErrorCodes.TOOLS,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.TOOLS,
-      ErrorCodes.TOOLS[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.SYSTEM,
-        retryable: details.retryable ?? true
-      }
-    );
-  }
-
-  /**
-   * 创建上下文相关错误
-   */
-  static context(
-    errorCode: keyof typeof ErrorCodes.CONTEXT,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ): BladeError {
-    return new BladeError(
-      ErrorCodeModule.CONTEXT,
-      ErrorCodes.CONTEXT[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.SYSTEM,
-        retryable: details.retryable ?? true
-      }
-    );
-  }
-
-  /**
-   * 从原生 Error 创建 BladeError
-   */
-  static from(
-    error: Error,
-    module: ErrorCodeModule = ErrorCodeModule.CORE,
-    defaultMessage: string = '未知错误'
-  ): BladeError {
-    return new BladeError(
-      module,
-      ErrorCodes.CORE.INTERNAL_ERROR,
-      defaultMessage,
-      {
-        category: ErrorCategory.RUNTIME,
-        context: { originalMessage: error.message, originalName: error.name },
-        stack: error.stack,
-        cause: error
-      }
-    );
+    // 保留原始堆栈
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, BladeError);
+    }
   }
 
   /**
@@ -264,9 +73,114 @@ export class BladeError extends Error implements IBladeError {
   }
 
   /**
-   * 获取错误完整信息
+   * 获取人类可读的错误消息
    */
-  toJSON(): Partial<ErrorDetails> {
+  getHumanReadableMessage(): string {
+    const baseMessage = this.message;
+    if (this.suggestions.length > 0) {
+      return `${baseMessage}\n建议: ${this.suggestions.join(', ')}`;
+    }
+    return baseMessage;
+  }
+
+  /**
+   * 从普通 Error 创建 BladeError
+   */
+  static from(
+    error: Error,
+    module: ErrorCodeModule = ErrorCodeModule.CORE,
+    defaultMessage: string = '未知错误'
+  ): BladeError {
+    if (error instanceof BladeError) {
+      return error;
+    }
+    
+    return new BladeError(module, 'UNKNOWN_ERROR', error.message || defaultMessage, {
+       severity: ErrorSeverity.ERROR,
+       category: ErrorCategory.SYSTEM,
+       context: { originalError: error.name, originalStack: error.stack }
+     });
+  }
+
+  /**
+   * 配置相关错误工厂方法
+   */
+  static config(code: string, message: string, details?: Partial<ErrorDetails>): BladeError {
+    return new BladeError(
+      ErrorCodeModule.CONFIG,
+      code,
+      message,
+      {
+        ...details,
+        category: ErrorCategory.CONFIGURATION
+      }
+    );
+  }
+
+  /**
+   * LLM 相关错误工厂方法
+   */
+  static llm(code: string, message: string, details?: Partial<ErrorDetails>): BladeError {
+    return new BladeError(
+      ErrorCodeModule.LLM,
+      code,
+      message,
+      {
+        ...details,
+        category: ErrorCategory.LLM
+      }
+    );
+  }
+
+  /**
+   * MCP 相关错误工厂方法
+   */
+  static mcp(code: string, message: string, details?: Partial<ErrorDetails>): BladeError {
+    return new BladeError(
+      ErrorCodeModule.MCP,
+      code,
+      message,
+      {
+        ...details,
+        category: ErrorCategory.API
+      }
+    );
+  }
+
+  /**
+   * Agent 相关错误工厂方法
+   */
+  static agent(code: string, message: string, details?: Partial<ErrorDetails>): BladeError {
+    return new BladeError(
+      ErrorCodeModule.TOOLS,
+      code,
+      message,
+      {
+        ...details,
+        category: ErrorCategory.BUSINESS
+      }
+    );
+  }
+
+  /**
+   * 工具相关错误工厂方法
+   */
+  static tools(code: string, message: string, details?: Partial<ErrorDetails>): BladeError {
+    return new BladeError(
+      ErrorCodeModule.TOOLS,
+      code,
+      message,
+      {
+        ...details,
+        category: ErrorCategory.API
+      }
+    );
+  }
+
+  /**
+   * 序列化为 JSON
+   */
+  toJSON(): Record<string, any> {
     return {
       name: this.name,
       message: this.message,
@@ -275,38 +189,19 @@ export class BladeError extends Error implements IBladeError {
       severity: this.severity,
       category: this.category,
       context: this.context,
+      stack: this.stack,
       timestamp: this.timestamp,
       retryable: this.retryable,
       recoverable: this.recoverable,
-      suggestions: this.suggestions,
-      stack: this.stack
+      suggestions: this.suggestions
     };
   }
 
   /**
-   * 格式化为字符串
+   * 转换为字符串
    */
   toString(): string {
-    return `[${this.code}] ${this.message} (${this.category})`;
-  }
-
-  /**
-   * 获取人类可读的错误描述
-   */
-  getHumanReadableMessage(): string {
-    let message = `错误代码: ${this.code}\n`;
-    message += `错误信息: ${this.message}\n`;
-    message += `错误类别: ${this.category}\n`;
-    message += `严重程度: ${this.severity}\n`;
-    
-    if (this.suggestions.length > 0) {
-      message += `建议解决方案:\n`;
-      this.suggestions.forEach((suggestion, index) => {
-        message += `  ${index + 1}. ${suggestion}\n`;
-      });
-    }
-    
-    return message;
+    return `${this.name} [${this.module}:${this.code}]: ${this.message}`;
   }
 }
 
@@ -314,20 +209,12 @@ export class BladeError extends Error implements IBladeError {
  * 配置错误类
  */
 export class ConfigError extends BladeError {
-  constructor(
-    errorCode: keyof typeof ErrorCodes.CONFIG,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ) {
-    super(
-      ErrorCodeModule.CONFIG,
-      ErrorCodes.CONFIG[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.CONFIGURATION
-      }
-    );
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.CONFIG, code, message, {
+      ...details,
+      category: ErrorCategory.CONFIGURATION
+    });
+    this.name = 'ConfigError';
   }
 }
 
@@ -335,43 +222,51 @@ export class ConfigError extends BladeError {
  * LLM 错误类
  */
 export class LLMError extends BladeError {
-  constructor(
-    errorCode: keyof typeof ErrorCodes.LLM,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ) {
-    super(
-      ErrorCodeModule.LLM,
-      ErrorCodes.LLM[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.LLM,
-        retryable: true
-      }
-    );
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.LLM, code, message, {
+      ...details,
+      category: ErrorCategory.LLM
+    });
+    this.name = 'LLMError';
   }
 }
 
 /**
- * 网络错误类
+ * MCP 错误类
  */
-export class NetworkError extends BladeError {
-  constructor(
-    errorCode: keyof typeof ErrorCodes.NETWORK,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ) {
-    super(
-      ErrorCodeModule.NETWORK,
-      ErrorCodes.NETWORK[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.NETWORK,
-        retryable: true
-      }
-    );
+export class MCPError extends BladeError {
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.MCP, code, message, {
+      ...details,
+      category: ErrorCategory.API
+    });
+    this.name = 'MCPError';
+  }
+}
+
+/**
+ * Agent 错误类
+ */
+export class AgentError extends BladeError {
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.TOOLS, code, message, {
+      ...details,
+      category: ErrorCategory.BUSINESS
+    });
+    this.name = 'AgentError';
+  }
+}
+
+/**
+ * 工具错误类
+ */
+export class ToolsError extends BladeError {
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.TOOLS, code, message, {
+      ...details,
+      category: ErrorCategory.API
+    });
+    this.name = 'ToolsError';
   }
 }
 
@@ -379,21 +274,25 @@ export class NetworkError extends BladeError {
  * 文件系统错误类
  */
 export class FileSystemError extends BladeError {
-  constructor(
-    errorCode: keyof typeof ErrorCodes.FILE_SYSTEM,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ) {
-    super(
-      ErrorCodeModule.FILE_SYSTEM,
-      ErrorCodes.FILE_SYSTEM[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.FILE_SYSTEM,
-        retryable: false
-      }
-    );
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.FILE_SYSTEM, code, message, {
+      ...details,
+      category: ErrorCategory.FILE_SYSTEM
+    });
+    this.name = 'FileSystemError';
+  }
+}
+
+/**
+ * 网络错误类
+ */
+export class NetworkError extends BladeError {
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.NETWORK, code, message, {
+      ...details,
+      category: ErrorCategory.NETWORK
+    });
+    this.name = 'NetworkError';
   }
 }
 
@@ -401,21 +300,14 @@ export class FileSystemError extends BladeError {
  * 安全错误类
  */
 export class SecurityError extends BladeError {
-  constructor(
-    errorCode: keyof typeof ErrorCodes.SECURITY,
-    message: string,
-    details: Omit<Partial<ErrorDetails>, 'module' | 'code' | 'category'> = {}
-  ) {
-    super(
-      ErrorCodeModule.SECURITY,
-      ErrorCodes.SECURITY[errorCode],
-      message,
-      {
-        ...details,
-        category: ErrorCategory.SECURITY,
-        severity: ErrorSeverity.WARNING,
-        retryable: false
-      }
-    );
+  constructor(code: string, message: string, details?: Partial<ErrorDetails>) {
+    super(ErrorCodeModule.SECURITY, code, message, {
+      ...details,
+      category: ErrorCategory.SECURITY
+    });
+    this.name = 'SecurityError';
   }
 }
+
+// 默认导出
+export default BladeError;

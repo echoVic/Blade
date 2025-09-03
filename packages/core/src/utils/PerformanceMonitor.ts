@@ -5,12 +5,16 @@
 
 import EventEmitter from 'events';
 import { performance } from 'perf_hooks';
+import { cpuUsage, memoryUsage } from 'node:process';
+
+type CpuUsage = ReturnType<typeof cpuUsage>;
+type MemoryUsage = ReturnType<typeof memoryUsage>;
 
 // 性能指标数据结构
 interface PerformanceMetrics {
   timestamp: number;
-  cpuUsage: NodeJS.CpuUsage;
-  memoryUsage: NodeJS.MemoryUsage;
+  cpuUsage: CpuUsage;
+  memoryUsage: MemoryUsage;
   eventLoopDelay: number;
   activeHandles: number;
   activeRequests: number;
@@ -104,10 +108,10 @@ export class PerformanceMonitor extends EventEmitter {
   private traces: Map<string, PerformanceTrace> = new Map();
   private warnings: Set<PerformanceWarning> = new Set();
   private config: ProfilerConfig;
-  private intervalId?: NodeJS.Timeout;
+  private intervalId?: ReturnType<typeof setInterval>;
   private startTime: number;
   private gcStartTime: { major: number; minor: number } = { major: 0, minor: 0 };
-  private lastCpuUsage: NodeJS.CpuUsage = { user: 0, system: 0 };
+  private lastCpuUsage: CpuUsage = { user: 0, system: 0 };
 
   constructor(config: Partial<ProfilerConfig> = {}) {
     super();
@@ -191,17 +195,16 @@ export class PerformanceMonitor extends EventEmitter {
   private collectMetrics(): void {
     const timestamp = Date.now();
     const memUsage = process.memoryUsage();
-    const cpuUsage = process.cpuUsage();
+    const currentCpuUsage = process.cpuUsage(this.lastCpuUsage);
     const eventLoopDelay = this.measureEventLoopDelay();
     
     // 计算CPU使用率
-    const totalCpuDelta = (cpuUsage.user - this.lastCpuUsage.user) + 
-                         (cpuUsage.system - this.lastCpuUsage.system);
+    const totalCpuDelta = currentCpuUsage.user + currentCpuUsage.system;
     const cpuUsagePercent = (totalCpuDelta / (1000 * this.config.interval)) * 100;
     
     const metrics: PerformanceMetrics = {
       timestamp,
-      cpuUsage,
+      cpuUsage: currentCpuUsage,
       memoryUsage: memUsage,
       eventLoopDelay,
       activeHandles: (process as any)._getActiveHandles().length,
@@ -216,7 +219,20 @@ export class PerformanceMonitor extends EventEmitter {
     };
 
     this.metrics.push(metrics);
-    this.lastCpuUsage = cpuUsage;
+    this.lastCpuUsage = process.cpuUsage();
+    
+    // 检查CPU使用率阈值
+    if (cpuUsagePercent > this.config.thresholds.cpu) {
+      this.addWarning({
+        id: `cpu-${timestamp}`,
+        type: 'cpu',
+        severity: 'warning',
+        message: `High CPU usage detected: ${cpuUsagePercent.toFixed(2)}%`,
+        value: cpuUsagePercent,
+        threshold: this.config.thresholds.cpu,
+        timestamp
+      });
+    }
 
     // 限制历史数据大小
     if (this.metrics.length > 3600) { // 保留1小时的数据
@@ -252,7 +268,7 @@ export class PerformanceMonitor extends EventEmitter {
       
       global.gc = () => {
         const startTime = performance.now();
-        originalGC.call(global);
+        originalGC();
         const duration = performance.now() - startTime;
         
         // 更新GC统计
@@ -267,6 +283,8 @@ export class PerformanceMonitor extends EventEmitter {
           type: duration > 100 ? 'major' : 'minor',
           timestamp: Date.now(),
         });
+        
+        return Promise.resolve();
       };
     }
     
@@ -350,8 +368,10 @@ export class PerformanceMonitor extends EventEmitter {
 
     // 限制警告数量
     if (this.warnings.size > this.config.maxWarnings) {
-      const oldest = this.warnings.values().next().value;
-      this.warnings.delete(oldest);
+      const oldestEntry = this.warnings.values().next();
+      if (!oldestEntry.done && oldestEntry.value) {
+        this.warnings.delete(oldestEntry.value);
+      }
     }
   }
 
@@ -658,7 +678,7 @@ export function tracePerformance(category: PerformanceTrace['category'] = 'custo
           return result;
         }
       } catch (error) {
-        monitor.endTrace(traceId, { error: error.message });
+        monitor.endTrace(traceId, { error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     };
@@ -686,7 +706,7 @@ export const performanceUtils = {
       const duration = monitor.endTrace(traceId);
       return { result, duration };
     } catch (error) {
-      monitor.endTrace(traceId, { error: error.message });
+      monitor.endTrace(traceId, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   },

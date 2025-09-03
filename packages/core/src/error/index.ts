@@ -5,7 +5,6 @@
 
 // 核心错误类
 export { BladeError, ConfigError, LLMError, NetworkError, FileSystemError, SecurityError } from './BladeError.js';
-export type { IBladeError } from './BladeError.js';
 
 // 类型定义
 export {

@@ -123,13 +123,14 @@ export class ErrorMonitor {
     const errors: BladeError[] = [];
     
     return {
-      [Symbol.asyncIterator]() {
+      [Symbol.asyncIterator](): AsyncIterator<BladeError> {
         return {
-          next: async () => {
+          next: async (): Promise<IteratorResult<BladeError>> => {
             if (errors.length === 0) {
               return { value: undefined, done: true };
             }
-            return { value: errors.shift(), done: false };
+            const error = errors.shift();
+            return { value: error!, done: false };
           }
         };
       }
@@ -163,7 +164,7 @@ export class ErrorMonitor {
   /**
    * 设置报警规则
    */
-  setAlertRule(config: {
+  setAlertRule(_config: {
     condition: (stats: ErrorStatistics) => boolean;
     action: (stats: ErrorStatistics) => void;
     cooldown: number; // 冷却时间（毫秒）
@@ -359,7 +360,7 @@ export class ErrorMonitor {
   /**
    * 输出到文件
    */
-  private async logToFile(error: BladeError, report: ErrorReport): Promise<void> {
+  private async logToFile(error: BladeError, _report: ErrorReport): Promise<void> {
     // 这里应该实现文件日志记录
     // 暂时用 console.log 模拟
     console.log(`[文件日志] ${error.toString()}`);
@@ -432,7 +433,7 @@ export function monitor(config: Partial<ErrorMonitoringConfig> = {}) {
       } catch (error) {
         const bladeError = error instanceof BladeError 
           ? error 
-          : BladeError.from(error);
+          : BladeError.from(error as Error);
         
         await monitorInstance.monitor(bladeError);
         throw bladeError;

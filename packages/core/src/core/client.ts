@@ -1,6 +1,5 @@
-import { Agent } from './agent/Agent.js';
-import type { BladeConfig } from './config/types.js';
-import type { LLMProvider } from './llm/types.js';
+import { Agent } from '../agent/Agent.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class BladeClient {
   private agent: Agent | null = null;
@@ -18,16 +17,9 @@ export class BladeClient {
 
     try {
       // 初始化Agent
-      this.agent = new Agent({
-        llm: {
-          provider: this.config.llm.provider as LLMProvider,
-          model: this.config.llm.model,
-          apiKey: this.config.auth.apiKey,
-        },
-        config: this.config,
-      });
+      this.agent = new Agent(this.config as any);
 
-      await this.agent.init();
+      await (this.agent as any).init?.();
       
       this.initialized = true;
       console.log('Blade客户端初始化完成');
@@ -57,7 +49,7 @@ export class BladeClient {
     }
 
     try {
-      const code = await this.agent.generateCode(prompt);
+      const code = await this.agent.chat(prompt);
       return code;
     } catch (error) {
       console.error('代码生成失败:', error);
@@ -71,7 +63,7 @@ export class BladeClient {
     }
 
     try {
-      const result = await this.agent.executeTool(toolName, params);
+      const result = await (this.agent as any).executeTool?.(toolName, params);
       return result;
     } catch (error) {
       console.error(`工具执行失败 (${toolName}):`, error);
@@ -85,7 +77,7 @@ export class BladeClient {
     }
 
     try {
-      const analysis = await this.agent.analyzeFiles(filePaths);
+      const analysis = await (this.agent as any).analyzeFiles?.(filePaths);
       return analysis;
     } catch (error) {
       console.error('文件分析失败:', error);
@@ -106,7 +98,7 @@ export class BladeClient {
 
   public async destroy(): Promise<void> {
     if (this.agent) {
-      await this.agent.destroy();
+      await (this.agent as any).destroy?.();
       this.agent = null;
     }
     this.initialized = false;

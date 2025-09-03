@@ -494,9 +494,9 @@ const directoryListTool: ToolDefinition = {
         } catch (error: any) {
           const listError = ErrorFactory.createFileSystemError(
             'PERMISSION_DENIED',
-            `读取目录失败: ${error.message}`,
+            `读取目录失败: ${dirPath}`,
             {
-              context: { directory: dirPath },
+              cause: error,
               retryable: false,
               suggestions: ['检查目录权限', '确认目录是否存在'],
             }
@@ -537,9 +537,9 @@ const directoryListTool: ToolDefinition = {
 
       const directoryError = ErrorFactory.createFileSystemError(
         'DIRECTORY_LIST_FAILED',
-        `目录列表失败: ${error.message}`,
+        `目录列表失败: ${path}`,
         {
-          context: { path },
+          cause: error,
           retryable: true,
           suggestions: ['检查路径是否正确', '确认目录权限设置', '确认目录未被其他程序占用'],
         }
@@ -613,9 +613,9 @@ const fileInfoTool: ToolDefinition = {
     } catch (error: any) {
       const fileInfoError = ErrorFactory.createFileSystemError(
         'FILE_NOT_FOUND',
-        `获取文件信息失败: ${error.message}`,
+        `获取文件信息失败: ${path}`,
         {
-          context: { path },
+          cause: error,
           retryable: false,
           suggestions: [
             '检查文件路径是否正确',

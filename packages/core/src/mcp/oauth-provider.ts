@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from 'crypto';
 import { URLSearchParams } from 'url';
 import axios from 'axios';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class OAuthProvider {
   protected config: BladeConfig;

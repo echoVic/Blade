@@ -3,7 +3,7 @@
  * 直接映射到极简三要素配置
  */
 
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 import {
   ErrorFactory,
   LLMError,

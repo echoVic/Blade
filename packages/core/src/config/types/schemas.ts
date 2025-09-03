@@ -257,7 +257,14 @@ export const BladeUnifiedConfigSchema = z.object({
       sources: z.array(z.string()),
       resolution: z.string(),
     })).default([]),
-  }).default({}),
+  }).default({
+    sources: ['global'],
+    loadedAt: new Date().toISOString(),
+    configVersion: '1.0.0',
+    validationErrors: [],
+    validationWarnings: [],
+    mergeConflicts: [],
+  }),
 });
 
 // 配置状态 Schema
@@ -292,6 +299,68 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 export type BladeUnifiedConfig = z.infer<typeof BladeUnifiedConfigSchema>;
 export type ConfigState = z.infer<typeof ConfigStateSchema>;
 export type EnvMapping = z.infer<typeof EnvMappingSchema>;
+
+// 向后兼容的类型别名 - 旧版本扁平配置结构
+export interface BladeConfig {
+  // 认证配置 (扁平结构)
+  apiKey?: string;
+  baseUrl?: string;
+  modelName?: string;
+  searchApiKey?: string;
+  timeout?: number;
+  maxTokens?: number;
+  temperature?: number;
+  stream?: boolean;
+  
+  // UI配置 (扁平结构)
+  theme?: 'GitHub' | 'dark' | 'light' | 'auto';
+  hideTips?: boolean;
+  hideBanner?: boolean;
+  outputFormat?: 'text' | 'json' | 'markdown';
+  colorScheme?: 'default' | 'monokai' | 'solarized';
+  fontSize?: number;
+  lineHeight?: number;
+  
+  // 安全配置 (扁平结构)
+  sandbox?: 'docker' | 'none';
+  trustedFolders?: string[];
+  allowedOperations?: ('read' | 'write' | 'execute' | 'network')[];
+  requireConfirmation?: boolean;
+  disableSafetyChecks?: boolean;
+  maxFileSize?: number;
+  
+  // 工具配置 (扁平结构)
+  toolDiscoveryCommand?: string;
+  toolCallCommand?: string;
+  autoUpdate?: boolean;
+  toolTimeout?: number;
+  
+  // 遥测配置 (扁平结构)
+  telemetryEnabled?: boolean;
+  telemetryTarget?: 'local' | 'remote';
+  otlpEndpoint?: string;
+  logPrompts?: boolean;
+  logResponses?: boolean;
+  
+  // 使用配置 (扁平结构)
+  usageStatisticsEnabled?: boolean;
+  maxSessionTurns?: number;
+  
+  // 调试配置 (扁平结构)
+  debug?: boolean;
+  logLevel?: 'error' | 'warn' | 'info' | 'debug' | 'trace';
+  logToFile?: boolean;
+  logFilePath?: string;
+  
+  // 扩展配置 (扁平结构)
+  extensionsEnabled?: boolean;
+  extensionsDirectory?: string;
+  
+  // 版本信息
+  version?: string;
+  createdAt?: string;
+  isValid?: boolean;
+}
 
 // 预定义的环境变量映射
 export const ENV_MAPPING: EnvMapping = {

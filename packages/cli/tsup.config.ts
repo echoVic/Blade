@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/cli.tsx'],
+    entry: ['index.ts'],
   format: ['esm'],
   dts: true,
   clean: true,
@@ -17,6 +17,7 @@ export default defineConfig({
     'react',
     'react-dom',
     'ink',
-    '@blade-ai/core'
+    '@blade-ai/core',
+    '@modelcontextprotocol/sdk'
   ]
 });

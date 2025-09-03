@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { ConfigEncryptor } from './config-encryptor';
+import { ConfigEncryptor } from './config-encryptor.js';
 
 export interface SecurityPolicy {
   // 身份认证策略
@@ -549,7 +549,7 @@ export function RequirePermission(resource: string, action: string) {
 
     descriptor.value = function(...args: any[]) {
       // 获取用户上下文（假设从第一个参数或this获取）
-      const userContext = args[0]?.userContext || this?.userContext;
+      const userContext = args[0]?.userContext || (this as any)?.userContext;
       
       const access = securityPolicyManager.validateAccess(resource, action, userContext);
       if (!access.allowed) {

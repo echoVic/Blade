@@ -1,6 +1,6 @@
 import type { Agent } from '../agent/Agent.js';
-import type { BladeConfig } from '../config/types.js';
-import type { Tool } from '../tools/types.js';
+import type { BladeConfig } from '../config/types/index.js';
+import type { ToolDefinition } from '../tools/types.js';
 
 export class SubAgent {
   private parentAgent: Agent;
@@ -8,7 +8,7 @@ export class SubAgent {
   private name: string;
   private description: string;
   private capabilities: string[];
-  private tools: Map<string, Tool> = new Map();
+  private tools: Map<string, ToolDefinition> = new Map();
   private isActive = false;
   private taskHistory: SubAgentTask[] = [];
   private maxHistorySize: number;
@@ -47,7 +47,11 @@ export class SubAgent {
       // 创建任务记录
       const taskRecord: SubAgentTask = {
         id: this.generateTaskId(),
-        ...task,
+        type: task.type,
+        prompt: task.prompt,
+        toolName: task.toolName,
+        toolParams: task.toolParams,
+        options: task.options,
         status: 'pending',
         createdAt: Date.now()
       };
@@ -111,11 +115,7 @@ export class SubAgent {
   private async processChatTask(task: SubAgentTaskRequest): Promise<SubAgentTaskResult> {
     const prompt = `作为${this.description}专家，${task.prompt}`;
     
-    const response = await this.parentAgent.chat(prompt, {
-      temperature: task.options?.temperature,
-      maxTokens: task.options?.maxTokens,
-      topP: task.options?.topP
-    });
+    const response = await this.parentAgent.chat(prompt);
     
     return {
       taskId: task.id,
@@ -138,7 +138,7 @@ export class SubAgent {
       throw new Error(`工具 "${task.toolName}" 未找到`);
     }
     
-    const result = await tool.execute(task.toolParams || {}, this.parentAgent);
+    const result = await tool.execute(task.toolParams || {});
     
     return {
       taskId: task.id,
@@ -155,11 +155,7 @@ export class SubAgent {
   private async processCodeTask(task: SubAgentTaskRequest): Promise<SubAgentTaskResult> {
     const prompt = `作为${this.description}专家，请${task.prompt}`;
     
-    const code = await this.parentAgent.generateCode(prompt, {
-      temperature: task.options?.temperature,
-      maxTokens: task.options?.maxTokens,
-      topP: task.options?.topP
-    });
+    const code = await this.parentAgent.chat(prompt);
     
     return {
       taskId: task.id,
@@ -175,11 +171,7 @@ export class SubAgent {
   private async processAnalysisTask(task: SubAgentTaskRequest): Promise<SubAgentTaskResult> {
     const prompt = `作为${this.description}专家，请分析以下内容:\n\n${task.prompt}`;
     
-    const analysis = await this.parentAgent.chat(prompt, {
-      temperature: task.options?.temperature,
-      maxTokens: task.options?.maxTokens,
-      topP: task.options?.topP
-    });
+    const analysis = await this.parentAgent.chat(prompt);
     
     return {
       taskId: task.id,
@@ -192,7 +184,7 @@ export class SubAgent {
     };
   }
 
-  public async registerTool(tool: Tool): Promise<void> {
+  public async registerTool(tool: ToolDefinition): Promise<void> {
     if (!tool.name || !tool.execute) {
       throw new Error('工具必须包含名称和执行函数');
     }
@@ -214,11 +206,11 @@ export class SubAgent {
     console.log(`子代理 "${this.name}" 注销工具: ${name}`);
   }
 
-  public getTool(name: string): Tool | undefined {
+  public getTool(name: string): ToolDefinition | undefined {
     return this.tools.get(name);
   }
 
-  public getAllTools(): Tool[] {
+  public getAllTools(): ToolDefinition[] {
     return Array.from(this.tools.values());
   }
 

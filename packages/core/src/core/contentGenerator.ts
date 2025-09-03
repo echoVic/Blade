@@ -1,5 +1,5 @@
 import type { Agent } from '../agent/Agent.js';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class ContentGenerator {
   private agent: Agent;
@@ -24,7 +24,7 @@ export class ContentGenerator {
   public async generateCode(task: string, language: string = 'javascript', options: GenerateCodeOptions = {}): Promise<string> {
     try {
       const fullPrompt = this.buildCodePrompt(task, language, options);
-      const response = await this.agent.generateCode(fullPrompt);
+      const response = await this.agent.chat(fullPrompt);
       return this.postProcessCode(response, language, options);
     } catch (error) {
       console.error('代码生成失败:', error);
@@ -46,7 +46,7 @@ export class ContentGenerator {
   public async generateTest_cases(implementation: string, framework: string = 'jest', options: GenerateTestOptions = {}): Promise<string> {
     try {
       const fullPrompt = this.buildTestPrompt(implementation, framework, options);
-      const response = await this.agent.generateCode(fullPrompt);
+      const response = await this.agent.chat(fullPrompt);
       return this.postProcessTests(response, framework, options);
     } catch (error) {
       console.error('测试用例生成失败:', error);

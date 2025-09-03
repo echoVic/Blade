@@ -5,8 +5,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { dirname } from 'path';
 
 export class ConfigEncryptor {
   private static readonly ALGORITHM = 'aes-256-gcm';
@@ -44,7 +43,7 @@ export class ConfigEncryptor {
       encryptionPassword,
       salt,
       this.KEY_LENGTH,
-      { N: this.SCRIPT_ITERATIONS }
+      { N: this.SCRYPT_ITERATIONS }
     );
     
     // 生成随机 IV
@@ -98,7 +97,7 @@ export class ConfigEncryptor {
         encryptionPassword,
         salt,
         this.KEY_LENGTH,
-        { N: this.SCRIPT_ITERATIONS }
+        { N: this.SCRYPT_ITERATIONS }
       );
       
       // 创建解密器
@@ -127,7 +126,7 @@ export class ConfigEncryptor {
       if (this.SENSITIVE_FIELDS.some(field => 
         key.toLowerCase().includes(field.toLowerCase())
       ) && typeof encryptedConfig[key] === 'string') {
-        encryptedConfig[key] = `enc:${this.encrypt(encryptedConfig[key])}`;
+(encryptedConfig as any)[key] = `enc:${this.encrypt(encryptedConfig[key])}`;
       }
     }
     
@@ -147,7 +146,7 @@ export class ConfigEncryptor {
       if (typeof value === 'string' && value.startsWith('enc:')) {
         try {
           const encrypted = value.substring(4);
-          decryptedConfig[key] = this.decrypt(encrypted);
+          (decryptedConfig as any)[key] = this.decrypt(encrypted);
         } catch {
           // 解密失败，保持原值
           console.warn(`解密字段 ${key} 失败，可能密码已更改`);
@@ -240,7 +239,7 @@ export class ConfigEncryptor {
       // 解密敏感字段
       return this.decryptConfig(config);
     } catch (error) {
-      throw new Error(`加载配置失败: ${error.message}`);
+      throw new Error(`加载配置失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

@@ -5,6 +5,7 @@
 
 import { BladeError } from './BladeError.js';
 import type { RecoveryStrategy } from './types.js';
+import { ErrorCodeModule } from './types.js';
 
 /**
  * 恢复上下文
@@ -38,15 +39,12 @@ export class RecoveryManager {
   private defaultMaxAttempts: number = 3;
   private recoveryTimeout: number = 10000; // 10秒恢复超时
 
-  constructor(options?: {
-    maxAttempts?: number;
-    recoveryTimeout?: number;
-  }) {
+  constructor(options?: { maxAttempts?: number; recoveryTimeout?: number }) {
     if (options) {
       this.defaultMaxAttempts = options.maxAttempts || this.defaultMaxAttempts;
       this.recoveryTimeout = options.recoveryTimeout || this.recoveryTimeout;
     }
-    
+
     this.initializeDefaultStrategies();
   }
 
@@ -74,11 +72,12 @@ export class RecoveryManager {
   ): Promise<RecoveryResult> {
     const startTime = Date.now();
     let attempts = 0;
-    
+
     // 查找适用的恢复策略
-    const applicableStrategies = Array.from(this.strategies.values())
-      .filter(strategy => strategy.condition(error));
-    
+    const applicableStrategies = Array.from(this.strategies.values()).filter(strategy =>
+      strategy.condition(error)
+    );
+
     if (applicableStrategies.length === 0) {
       return {
         success: false,
@@ -90,15 +89,15 @@ export class RecoveryManager {
           maxAttempts: 0,
           operationId: operationId || 'unknown',
           startTime,
-          additionalContext: context
-        }
+          additionalContext: context,
+        },
       };
     }
 
     // 按顺序尝试恢复策略
     for (const strategy of applicableStrategies) {
       attempts++;
-      
+
       try {
         const timeoutPromise = new Promise<boolean>((_, reject) => {
           setTimeout(() => {
@@ -107,12 +106,9 @@ export class RecoveryManager {
         });
 
         const recoveryPromise = strategy.action(error);
-        
-        const success = await Promise.race([
-          recoveryPromise,
-          timeoutPromise
-        ]);
-        
+
+        const success = await Promise.race([recoveryPromise, timeoutPromise]);
+
         if (success) {
           return {
             success: true,
@@ -124,21 +120,20 @@ export class RecoveryManager {
               error,
               attempts,
               maxAttempts: strategy.maxAttempts,
-              operationId: operationId || this.recovered,
+              operationId: operationId || 'unknown',
               startTime,
-              additionalContext: context
-            }
+              additionalContext: context,
+            },
           };
         }
-        
       } catch (recoveryError) {
         console.warn(`恢复策略 "${strategy.name}" 执行失败:`, recoveryError);
-        
+
         // 当前策略失败，继续尝试下一个策略
         if (attempts >= applicableStrategies.length) {
           break;
         }
-        
+
         // 短暂延迟后继续
         await new Promise(resolve => setTimeout(resolve, 100));
       }
@@ -155,8 +150,8 @@ export class RecoveryManager {
         maxAttempts: applicableStrategies.reduce((sum, s) => sum + s.maxAttempts, 0),
         operationId: operationId || 'unknown',
         startTime,
-        additionalContext: context
-      }
+        additionalContext: context,
+      },
     };
   }
 
@@ -170,27 +165,24 @@ export class RecoveryManager {
   ): Promise<T> {
     try {
       return await operation();
-      
     } catch (error) {
-      const bladeError = error instanceof BladeError 
-        ? error 
-        : BladeError.from(error);
-      
+      const bladeError = error instanceof BladeError ? error : BladeError.from(error as Error);
+
       // 尝试恢复
       const recoveryResult = await this.recover(bladeError, operationId, context);
-      
+
       if (recoveryResult.success && recoveryResult.recovered) {
         console.info(`错误恢复成功: ${recoveryResult.message}`);
-        
+
         // 如果可以重新尝试操作，则重试
         if (recoveryResult.nextStep === '继续执行') {
           return await operation();
         }
       }
-      
+
       // 恢复失败，抛出以下错误
       throw new BladeError(
-        'CORE',
+        ErrorCodeModule.CORE,
         '0004',
         `错误无法恢复: ${recoveryResult.message}`,
         {
@@ -198,8 +190,8 @@ export class RecoveryManager {
           retryable: false,
           context: {
             originalError: bladeError,
-            recoveryResult
-          }
+            recoveryResult,
+          },
         }
       );
     }
@@ -208,12 +200,15 @@ export class RecoveryManager {
   /**
    * 获取恢复策略统计
    */
-  getStatistics(): Record<string, {
-    used: number;
-    success: number;
-    failure: number;
-    averageDuration: number;
-  }> {
+  getStatistics(): Record<
+    string,
+    {
+      used: number;
+      success: number;
+      failure: number;
+      averageDuration: number;
+    }
+  > {
     // 这里应该是实际的统计数据，现阶段返回空对象
     return {};
   }
@@ -225,62 +220,62 @@ export class RecoveryManager {
     // 网络重连策略
     this.registerStrategy({
       name: 'network-reconnect',
-      condition: (error) => error.category === 'NETWORK',
-      action: async (error) => {
+      condition: error => error.category === 'NETWORK',
+      action: async error => {
         // 模拟网络重连
         await new Promise(resolve => setTimeout(resolve, 1000));
         return true;
       },
-      maxAttempts: 3
+      maxAttempts: 3,
     });
 
     // 配置重新加载策略
     this.registerStrategy({
       name: 'config-reload',
-      condition: (error) => error.category === 'CONFIGURATION',
-      action: async (error) => {
+      condition: error => error.category === 'CONFIGURATION',
+      action: async error => {
         // 模拟配置重新加载
         await new Promise(resolve => setTimeout(resolve, 500));
         return true;
       },
-      maxAttempts: 2
+      maxAttempts: 2,
     });
 
     // 缓存清理策略
     this.registerStrategy({
       name: 'cache-clear',
-      condition: (error) => error.code.includes('CONTEXT'),
-      action: async (error) => {
+      condition: error => error.code.includes('CONTEXT'),
+      action: async error => {
         // 模拟缓存清理
         await new Promise(resolve => setTimeout(resolve, 300));
         return true;
       },
-      maxAttempts: 1
+      maxAttempts: 1,
     });
 
     // 内存优化策略
     this.registerStrategy({
       name: 'memory-optimize',
-      condition: (error) => error.category === 'MEMORY',
-      action: async (error) => {
+      condition: error => error.category === 'MEMORY',
+      action: async error => {
         // 模拟内存优化
         global.gc && global.gc();
         await new Promise(resolve => setTimeout(resolve, 1000));
         return true;
       },
-      maxAttempts: 2
+      maxAttempts: 2,
     });
 
     // 权限重试策略
     this.registerStrategy({
       name: 'permission-retry',
-      condition: (error) => error.code.includes('PERMISSION'),
-      action: async (error) => {
+      condition: error => error.code.includes('PERMISSION'),
+      action: async error => {
         // 模拟权限重试
         await new Promise(resolve => setTimeout(resolve, 2000));
         return false; // 权限问题通常需要用户干预
       },
-      maxAttempts: 1
+      maxAttempts: 1,
     });
   }
 }
@@ -296,36 +291,34 @@ export const globalRecoveryManager = new RecoveryManager();
 export function recoverable(strategyNames: string[] = []) {
   return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value;
-    
+
     descriptor.value = async function (...args: any[]) {
       const operationId = `${target.constructor.name}.${propertyKey}`;
-      
+
       try {
         return await originalMethod.apply(this, args);
       } catch (error) {
-        const bladeError = error instanceof BladeError 
-          ? error 
-          : BladeError.from(error);
-        
+        const bladeError = error instanceof BladeError ? error : BladeError.from(error as Error);
+
         // 使用指定的策略进行恢复
         const applicableStrategies = Array.from(globalRecoveryManager['strategies'].values())
           .filter(strategy => strategyNames.length === 0 || strategyNames.includes(strategy.name))
           .filter(strategy => strategy.condition(bladeError));
-        
+
         if (applicableStrategies.length > 0) {
           const recoveryResult = await globalRecoveryManager.recover(bladeError, operationId);
-          
+
           if (recoveryResult.success && recoveryResult.recovered) {
             // 恢复成功，重试操作
             return await originalMethod.apply(this, args);
           }
         }
-        
+
         // 恢复失败，重新抛出错误
         throw bladeError;
       }
     };
-    
+
     return descriptor;
   };
 }

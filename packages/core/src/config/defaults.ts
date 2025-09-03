@@ -3,52 +3,38 @@
  * 平铺式一体化默认配置
  */
 
-import type { BladeConfig } from '../types/shared.js';
+import type { BladeConfig } from './types/index.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
-  // 核心配置 (必须)
+  // 认证配置
   apiKey: '',
   baseUrl: 'https://apis.iflow.cn/v1',
   modelName: 'Qwen3-Coder',
-
-  // 推荐配置
+  
+  // 搜索配置
   searchApiKey: '',
   theme: 'GitHub',
   sandbox: 'docker',
-
-  // UI控制
+  
+  // UI 配置
   hideTips: false,
   hideBanner: false,
   
-  // 会话控制
+  // 使用配置
   maxSessionTurns: 10,
   
   // 工具配置
   toolDiscoveryCommand: 'bin/get_tools',
   toolCallCommand: 'bin/call_tool',
   
-  // MCP服务器
-  mcpServers: {
-    main: {
-      command: 'bin/mcp_server.py',
-    }
-  },
-  
-  // 输出控制
-  summarizeToolOutput: {
-    run_shell_command: { tokenBudget: 100 }
-  },
-  
-  // 遥测和统计
-  telemetry: {
-    enabled: true,
-    target: 'local',
-    otlpEndpoint: 'http://localhost:4317',
-    logPrompts: false
-  },
+  // 遥测配置
+  telemetryEnabled: true,
+  telemetryTarget: 'local',
+  otlpEndpoint: 'http://localhost:4317',
+  logPrompts: false,
   usageStatisticsEnabled: true,
-
-  // 调试开关
+  
+  // 调试配置
   debug: false,
 };
 

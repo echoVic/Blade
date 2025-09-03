@@ -187,6 +187,26 @@ export const ErrorCodes = {
 /**
  * 错误详情接口
  */
+/**
+ * Blade 错误接口
+ */
+export interface BladeError {
+  readonly code: string;
+  readonly module: ErrorCodeModule;
+  readonly severity: ErrorSeverity;
+  readonly category: ErrorCategory;
+  readonly context: Record<string, any>;
+  readonly timestamp: number;
+  readonly retryable: boolean;
+  readonly recoverable: boolean;
+  readonly suggestions: string[];
+  readonly relatedErrors: BladeError[];
+  readonly cause?: BladeError;
+  readonly name: string;
+  readonly message: string;
+  readonly stack?: string;
+}
+
 export interface ErrorDetails {
   code?: string;
   module?: ErrorCodeModule;
@@ -199,6 +219,7 @@ export interface ErrorDetails {
   recoverable?: boolean;
   suggestions?: string[];
   relatedErrors?: BladeError[];
+  cause?: BladeError;
 }
 
 /**

@@ -4,6 +4,9 @@
  */
 
 import { EventEmitter } from 'events';
+import { memoryUsage } from 'node:process';
+
+type MemoryUsage = ReturnType<typeof memoryUsage>;
 
 // 内存池配置
 interface MemoryPoolConfig {
@@ -60,7 +63,7 @@ export class MemoryPool<T> {
   private factory: ObjectFactory<T>;
   private config: MemoryPoolConfig;
   private stats: MemoryStats;
-  private shrinkTimer?: NodeJS.Timeout;
+  private shrinkTimer?: ReturnType<typeof setTimeout>;
 
   constructor(factory: ObjectFactory<T>, config: MemoryPoolConfig) {
     this.factory = factory;
@@ -207,7 +210,7 @@ export class MemoryPool<T> {
 export class MemoryLeakDetector extends EventEmitter {
   private trackedObjects: Map<string, TrackedObject> = new Map();
   private config: LeakDetectionConfig;
-  private intervalId?: NodeJS.Timeout;
+  private intervalId?: ReturnType<typeof setInterval>;
   private lastGCTime = 0;
 
   constructor(config: Partial<LeakDetectionConfig> = {}) {
@@ -254,8 +257,10 @@ export class MemoryLeakDetector extends EventEmitter {
 
     // 限制最大跟踪数量
     if (this.trackedObjects.size > this.config.maxTrackedObjects) {
-      const oldestId = this.trackedObjects.keys().next().value;
-      this.trackedObjects.delete(oldestId);
+      const oldestEntry = this.trackedObjects.keys().next();
+      if (!oldestEntry.done && oldestEntry.value) {
+        this.trackedObjects.delete(oldestEntry.value);
+      }
     }
 
     return id;
@@ -273,11 +278,11 @@ export class MemoryLeakDetector extends EventEmitter {
 
   private detectLeaks(): void {
     const now = Date.now();
-    const gcEnabled = global.gc;
+    const gcEnabled = (global as any).gc;
     
     // 如果可以，先触发GC
-    if (gcEnabled && now - this.lastGCTime > 60000) {
-      global.gc();
+    if (typeof gcEnabled === 'function' && now - this.lastGCTime > 60000) {
+      gcEnabled();
       this.lastGCTime = now;
     }
 
@@ -420,7 +425,7 @@ export class SmartMemoryManager {
    * 检查内存使用情况
    */
   checkMemoryUsage(): {
-    usage: NodeJS.MemoryUsage;
+    usage: MemoryUsage;
     isOverThreshold: boolean;
     recommendation: string;
   } {
@@ -470,7 +475,7 @@ export class SmartMemoryManager {
    * 获取内存报告
    */
   getMemoryReport(): {
-    usage: NodeJS.MemoryUsage;
+    usage: MemoryUsage;
     pools: Record<string, any>;
     leakDetection: any;
   } {

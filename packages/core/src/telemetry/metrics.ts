@@ -1,12 +1,12 @@
 import { performance } from 'perf_hooks';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 import { TelemetrySDK } from './sdk.js';
 
 export class MetricsCollector {
   private config: BladeConfig;
   private telemetrySDK: TelemetrySDK;
   private metrics: Map<string, Metric[]> = new Map();
-  private collectionInterval: NodeJS.Timeout | null = null;
+  private collectionInterval: any = null;
   private isCollecting = false;
 
   constructor(config: BladeConfig, telemetrySDK: TelemetrySDK) {
@@ -20,7 +20,7 @@ export class MetricsCollector {
     }
 
     // 设置定期收集
-    const interval = this.config.telemetry.interval || 300000; // 5分钟
+    const interval = 300000; // 5分钟
     this.collectionInterval = setInterval(() => {
       this.collectAndSendMetrics();
     }, interval);
@@ -64,11 +64,17 @@ export class MetricsCollector {
   private async collectApplicationMetrics(): Promise<ApplicationMetrics> {
     // 这里应该收集应用特定的指标
     // 暂时返回基础指标
+    let appInfo: any = {};
+    try {
+      appInfo = require(process.cwd() + '/package.json') || {};
+    } catch (error) {
+      // 忽略错误，使用默认值
+    }
     
     return {
-      version: this.config.version,
-      name: this.config.name,
-      description: this.config.description,
+      version: this.config.version || '1.0.0',
+      name: appInfo.name || 'unknown',
+      description: appInfo.description || '',
       startTime: Date.now() - (process.uptime() * 1000),
       uptime: process.uptime(),
       timestamp: Date.now(),
@@ -342,7 +348,7 @@ export class LogCollector {
   }
 
   private shouldSendLog(level: LogLevel): boolean {
-    const logLevel = this.config.services.logging.level || 'info';
+    const logLevel = this.config.logLevel || 'info';
     
     const levelPriority: Record<LogLevel, number> = {
       debug: 0,
@@ -429,14 +435,14 @@ export class LogCollector {
 }
 
 // 类型定义
-interface Metric {
+export interface Metric {
   name: string;
   value: number;
   tags: Record<string, string>;
   timestamp: number;
 }
 
-interface MetricStats {
+export interface MetricStats {
   count: number;
   sum: number;
   avg: number;
@@ -445,21 +451,21 @@ interface MetricStats {
   latest: number;
 }
 
-interface SystemMetrics {
+export interface SystemMetrics {
   process: {
     uptime: number;
     pid: number;
     platform: string;
     arch: string;
     nodeVersion: string;
-    memoryUsage: NodeJS.MemoryUsage;
-    cpuUsage: NodeJS.CpuUsage;
+    memoryUsage: any;
+    cpuUsage: any;
   };
   collectionTime: number;
   timestamp: number;
 }
 
-interface ApplicationMetrics {
+export interface ApplicationMetrics {
   version: string;
   name: string;
   description: string;

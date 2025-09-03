@@ -1,5 +1,5 @@
 import type { Agent } from '../agent/Agent.js';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 export class PromptManager {
   private agent: Agent;
@@ -177,7 +177,7 @@ export class PromptManager {
     // 替换变量
     for (const [key, value] of Object.entries(variables)) {
       const placeholder = `{{${key}}}`;
-      rendered = rendered.replace(new RegExp(placeholder, 'g'), String(value));
+      rendered = rendered.split(placeholder).join(String(value));
     }
     
     // 处理循环（简单的实现）
@@ -206,7 +206,7 @@ export class PromptManager {
           if (typeof value === 'object') {
             for (const [key, val] of Object.entries(value)) {
               const placeholder = `{{${key}}}`;
-              itemTemplate = itemTemplate.replace(new RegExp(placeholder, 'g'), String(val));
+              itemTemplate = itemTemplate.split(placeholder).join(String(val));
             }
           } else {
             itemTemplate = itemTemplate.replace(/{{\.}}/g, String(value));
@@ -220,7 +220,7 @@ export class PromptManager {
     return result;
   }
 
-  public async executePrompt(templateId: string, variables: Record<string, any> = {}, options: PromptExecutionOptions = {}): Promise<string> {
+  public async executePrompt(templateId: string, variables: Record<string, any> = {}): Promise<string> {
     try {
       // 渲染提示词
       const prompt = this.renderTemplate(templateId, variables);
@@ -246,12 +246,7 @@ export class PromptManager {
       execution.status = 'running';
       execution.startedAt = Date.now();
       
-      const response = await this.agent.chat(prompt, {
-        temperature: options.temperature || this.config.llm.temperature,
-        maxTokens: options.maxTokens || this.config.llm.maxTokens,
-        topP: options.topP || this.config.llm.topP,
-        stream: options.stream !== false
-      });
+      const response = await this.agent.chat(prompt);
       
       execution.status = 'completed';
       execution.completedAt = Date.now();
@@ -267,7 +262,7 @@ export class PromptManager {
     }
   }
 
-  public async executeCustomPrompt(prompt: string, options: PromptExecutionOptions = {}): Promise<string> {
+  public async executeCustomPrompt(prompt: string): Promise<string> {
     try {
       const execution: PromptExecution = {
         id: this.generateExecutionId(),
@@ -287,12 +282,7 @@ export class PromptManager {
       execution.status = 'running';
       execution.startedAt = Date.now();
       
-      const response = await this.agent.chat(prompt, {
-        temperature: options.temperature || this.config.llm.temperature,
-        maxTokens: options.maxTokens || this.config.llm.maxTokens,
-        topP: options.topP || this.config.llm.topP,
-        stream: options.stream !== false
-      });
+      const response = await this.agent.chat(prompt);
       
       execution.status = 'completed';
       execution.completedAt = Date.now();

@@ -1,15 +1,14 @@
-import { promises as fs } from 'fs';
+import { promises as fs, createWriteStream } from 'fs';
 import path from 'path';
 import os from 'os';
-import { createWriteStream } from 'fs';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 import { TelemetrySDK } from './sdk.js';
 
 export class TelemetryLogger {
   private config: BladeConfig;
   private telemetrySDK: TelemetrySDK;
   private logFile: string;
-  private logStream: NodeJS.WriteStream | null = null;
+  private logStream: any = null;
   private isInitialized = false;
 
   constructor(config: BladeConfig, telemetrySDK: TelemetrySDK) {
@@ -172,7 +171,7 @@ export class TelemetryLogger {
       
       return logs;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((error as any).code === 'ENOENT') {
         return [];
       }
       
@@ -399,9 +398,9 @@ export class TelemetryEventHandler {
 }
 
 // 类型定义
-type TelemetryLogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type TelemetryLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-interface TelemetryLogEntry {
+export interface TelemetryLogEntry {
   timestamp: string;
   level: TelemetryLogLevel;
   message: string;

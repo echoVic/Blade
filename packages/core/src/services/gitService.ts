@@ -1,7 +1,6 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import path from 'path';
-import type { BladeConfig } from '../config/types.js';
+import type { BladeConfig } from '../config/types/index.js';
 
 const execAsync = promisify(exec);
 
@@ -11,7 +10,7 @@ export class GitService {
 
   constructor(config: BladeConfig) {
     this.config = config;
-    this.gitPath = this.config.tools.git.autoDetect ? this.detectGitPath() : 'git';
+    this.gitPath = this.detectGitPath();
   }
 
   private detectGitPath(): string {
@@ -858,7 +857,7 @@ export class GitService {
     options?: GitCommandOptions
   ): Promise<GitResult> {
     const cwd = options?.cwd || process.cwd();
-    const timeout = options?.timeout || this.config.tools.shell.timeout || 30000;
+    const timeout = options?.timeout || 30000;
     
     return new Promise((resolve, reject) => {
       const command = `${this.gitPath} ${args.join(' ')}`;
@@ -920,7 +919,7 @@ interface GitCommandOptions {
   timeout?: number;
 }
 
-interface GitResult {
+export interface GitResult {
   command: string;
   args: string[];
   stdout: string;
@@ -950,7 +949,7 @@ interface GitStatusOptions {
   includeUntracked?: boolean;
 }
 
-interface GitStatus {
+export interface GitStatus {
   changedFiles: GitChangedFile[];
   untrackedFiles: string[];
   rawOutput: string;
@@ -1010,7 +1009,7 @@ interface GitBranchListOptions {
   remote?: boolean;
 }
 
-interface GitBranchInfo {
+export interface GitBranchInfo {
   name: string;
   isCurrent: boolean;
   isRemote: boolean;
@@ -1024,7 +1023,7 @@ interface GitLogOptions {
   path?: string;
 }
 
-interface GitCommit {
+export interface GitCommit {
   hash: string;
   author: {
     name: string;
