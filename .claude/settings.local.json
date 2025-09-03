@@ -27,7 +27,12 @@
       "Bash(ls:*)",
       "Bash(pnpm install)",
       "Bash(pnpm test)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "mcp__github__get_file_contents",
+      "Bash(./bin/blade.js:*)",
+      "Bash(npm run start:*)",
+      "Bash(pnpm install:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": [],
