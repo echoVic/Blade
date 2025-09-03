@@ -39,7 +39,8 @@
       "Bash(sed:*)",
       "Bash(BLADE_API_KEY=\"sk-test-key\" ./bin/blade.js chat \"你好\")",
       "Bash(BLADE_API_KEY=\"sk-test-key\" ./bin/blade.js config show)",
-      "Bash(pnpm add:*)"
+      "Bash(pnpm add:*)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": [],
