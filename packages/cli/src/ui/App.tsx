@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useApp } from 'ink';
-import { SessionProvider, useSession } from './contexts/SessionContext.js';
-import { ConfigService } from './config/ConfigService.js';
 import { useMemoizedFn } from 'ahooks';
+import { Box, Text, useApp } from 'ink';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ConfigService } from '../config/ConfigService.js';
+import { SessionProvider, useSession } from '../contexts/SessionContext.js';
 
 interface AppProps {
   debug?: boolean;
@@ -42,45 +42,50 @@ const ClaudeCodeInterface: React.FC<{
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      {/* Header */}
-      <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={1} borderStyle="round">
-        <Text color="cyan" bold>⚡ Blade AI</Text>
-        <Box flexDirection="row" gap={2}>
-          {testMode && <Text backgroundColor="red" color="white"> TEST </Text>}
-          <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
-        </Box>
-      </Box>
-      
-      {/* Message Area */}
-      <Box flexDirection="column" flexGrow={1} padding={1}>
-        {sessionState.messages.length === 0 && !sessionState.error ? (
-          <Box flexDirection="column" gap={1}>
-            <Text color="green">Welcome to Blade AI Assistant!</Text>
-            <Text color="gray">• Type your question to start chatting</Text>
-            <Text color="gray">• Press Ctrl+C to exit</Text>
-            {!isInitialized && (
-              <Text color="yellow">⚠️  检测到尚未配置 API 密钥，请先配置后使用</Text>
-            )}
+      {/* Main Content Area with Header and Messages */}
+      <Box flexDirection="column" flexGrow={1} borderStyle="round" paddingX={2} paddingY={1}>
+        {/* Header */}
+        <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
+          <Text color="cyan" bold>⚡ Blade AI</Text>
+          <Box flexDirection="row" gap={2}>
+            {testMode && <Text backgroundColor="red" color="white"> TEST </Text>}
+            <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
           </Box>
-        ) : (
-          <Box flexDirection="column">
-            {sessionState.messages.map((msg: any, index: number) => (
-              <Box key={index} marginBottom={1}>
-                <Box marginBottom={0}>
-                  <Text color={msg.role === 'user' ? 'cyan' : 'green'} bold>
-                    {msg.role === 'user' ? '❯ User' : '🤖 Assistant'}:
+        </Box>
+        
+        {/* Message Area */}
+        <Box flexDirection="column" flexGrow={1}>
+          {sessionState.messages.length === 0 && !sessionState.error ? (
+            <Box flexDirection="column" gap={1}>
+              <Text color="green">Welcome to Blade AI Assistant!</Text>
+              <Text color="gray">• Type your question to start chatting</Text>
+              <Text color="gray">• Press Ctrl+C to exit</Text>
+              {!isInitialized && (
+                <Text color="yellow">⚠️  检测到尚未配置 API 密钥，请先配置后使用</Text>
+              )}
+            </Box>
+          ) : (
+            <Box flexDirection="column">
+              {sessionState.messages.map((msg: any, index: number) => (
+                <Box key={index} marginBottom={1}>
+                  {msg.role === 'user' && (
+                    <Box marginBottom={0}>
+                      <Text color="cyan" bold>❯ User:</Text>
+                    </Box>
+                  )}
+                  <Text color={msg.role === 'user' ? 'white' : 'green'}>
+                    {msg.content}
                   </Text>
                 </Box>
-                <Text>{msg.content}</Text>
-              </Box>
-            ))}
-            {isProcessing && (
-              <Box>
-                <Text color="yellow" dimColor>🤖 Assistant is typing...</Text>
-              </Box>
-            )}
-          </Box>
-        )}
+              ))}
+              {isProcessing && (
+                <Box>
+                  <Text color="yellow" dimColor>正在思考中...</Text>
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
       </Box>
       
       {/* Input Hint Area */}
