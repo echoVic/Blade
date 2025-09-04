@@ -1,8 +1,9 @@
 /**
  * 核心主题管理器
  */
-import { BaseColors, Theme, validateTheme } from './theme.js';
-import { themes } from './themes-presets.js';
+import type { BaseColors, Theme } from './types.js';
+import { validateTheme } from './utils.js';
+import { themes } from './presets.js';
 
 // 默认主题配置
 export const defaultColors: BaseColors = {

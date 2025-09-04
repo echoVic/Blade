@@ -1,7 +1,7 @@
 /**
  * 语义化颜色管理系统
  */
-import { Theme } from './theme.js';
+import type { Theme } from './types.js';
 
 // 语义化颜色映射
 export interface SemanticColorMapping {

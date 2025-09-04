@@ -143,41 +143,65 @@ const BladeInterface: React.FC<{
     }
   });
 
+  // 判断是否显示欢迎界面（只有assistant消息，没有用户消息）
+  const hasUserMessages = sessionState.messages.some((msg: any) => msg.role === 'user');
+  const showWelcome = !hasUserMessages;
+
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      {/* Main Content Area with Header and Messages */}
-      <Box flexDirection="column" flexGrow={1} borderStyle="round" paddingX={2} paddingY={1}>
-        {/* Header */}
-        <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
-          <Text color="cyan" bold>⚡ Blade AI</Text>
-          <Box flexDirection="row" gap={2}>
-            {testMode && <Text backgroundColor="red" color="white"> TEST </Text>}
-            <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
-          </Box>
+      {/* Header */}
+      <Box flexDirection="row" justifyContent="space-between" marginBottom={1} paddingX={2}>
+        <Text color="cyan" bold>⚡ Blade AI</Text>
+        <Box flexDirection="row" gap={2}>
+          {testMode && <Text backgroundColor="red" color="white"> TEST </Text>}
+          <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
         </Box>
-        
+      </Box>
+
+      {/* Main Content Area */}
+      <Box 
+        flexDirection="column" 
+        flexGrow={1} 
+        borderStyle={showWelcome ? "round" : undefined}
+        paddingX={2} 
+        paddingY={showWelcome ? 1 : 0}
+      >
         {/* Message Area */}
         <Box flexDirection="column" flexGrow={1}>
-          {sessionState.messages.length === 0 && !sessionState.error ? (
+          {showWelcome ? (
             <Box flexDirection="column" gap={1}>
-              <Text color="green">Welcome to Blade AI Assistant!</Text>
-              <Text color="gray">• Type your question to start chatting</Text>
-              <Text color="gray">• Press Ctrl+C to exit</Text>
-              {!isInitialized && (
-                <Text color="yellow">⚠️  检测到尚未配置 API 密钥，请先配置后使用</Text>
+              {sessionState.messages.length === 0 ? (
+                <>
+                  <Text color="green">Welcome to Blade AI Assistant!</Text>
+                  <Text color="gray">• Type your question to start chatting</Text>
+                  <Text color="gray">• Press Ctrl+C to exit</Text>
+                  {!isInitialized && (
+                    <Text color="yellow">⚠️  检测到尚未配置 API 密钥，请先配置后使用</Text>
+                  )}
+                </>
+              ) : (
+                <>
+                  {sessionState.messages.map((msg: any, index: number) => (
+                    <Box key={index} marginBottom={1}>
+                      <Text color="green">
+                        🤖 {msg.content}
+                      </Text>
+                    </Box>
+                  ))}
+                </>
               )}
             </Box>
           ) : (
             <Box flexDirection="column">
               {sessionState.messages.map((msg: any, index: number) => (
-                <Box key={index} marginBottom={1}>
+                <Box key={index} marginBottom={1} paddingX={2}>
                   <Text color={msg.role === 'user' ? 'cyan' : 'green'}>
                     {msg.role === 'user' ? '❯ ' : '🤖 '}{msg.content}
                   </Text>
                 </Box>
               ))}
               {isProcessing && (
-                <Box>
+                <Box paddingX={2}>
                   <Text color="yellow" dimColor>正在思考中...</Text>
                 </Box>
               )}

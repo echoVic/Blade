@@ -1,7 +1,7 @@
 /**
- * 内置主题预设
+ * 主题预设集合
  */
-import { Theme } from './theme.js';
+import type { Theme } from './types.js';
 
 // Ayu Dark 主题
 export const ayuDark: Theme = {
@@ -899,6 +899,23 @@ export const kanagawa: Theme = {
     lg: '0 10px 15px -3px rgba(31, 31, 40, 0.3), 0 4px 6px -2px rgba(31, 31, 40, 0.2)',
   },
 };
+
+// 主题名称常量
+export const THEME_NAMES = {
+  AYU_DARK: 'ayu-dark',
+  DRACULA: 'dracula',
+  MONOKAI: 'monokai',
+  NORD: 'nord',
+  SOLARIZED_LIGHT: 'solarized-light',
+  SOLARIZED_DARK: 'solarized-dark',
+  TOKYO_NIGHT: 'tokyo-night',
+  GITHUB: 'github',
+  GRUVBOX: 'gruvbox',
+  ONE_DARK: 'one-dark',
+  CATPPUCCIN: 'catppuccin',
+  ROSE_PINE: 'rose-pine',
+  KANAGAWA: 'kanagawa',
+} as const;
 
 // 导出所有主题
 export const themes = {

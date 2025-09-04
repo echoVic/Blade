@@ -19,7 +19,7 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error(reason);
 });
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', error => {
   console.error('❌ 发生了未捕获的异常:');
   console.error(error);
   process.exit(1);
