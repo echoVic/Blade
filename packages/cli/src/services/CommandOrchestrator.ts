@@ -3,7 +3,7 @@
  * 作为纯粹的流程编排器，调用 core 包的服务来完成业务逻辑
  */
 
-import { Agent, LLMManager, ContextComponent, ToolComponent } from '@blade-ai/core';
+import { Agent, ContextComponent, LLMManager, ToolComponent } from '@blade-ai/core';
 import { ConfigService } from '../config/ConfigService.js';
 
 export interface CommandResult {
@@ -38,7 +38,7 @@ export class CommandOrchestrator {
   async initialize(): Promise<void> {
     try {
       const config = this.configService.getConfig();
-      
+
       // 初始化 core 服务
       this.agent = new Agent({
         apiKey: config.auth.apiKey,
@@ -47,12 +47,11 @@ export class CommandOrchestrator {
       });
 
       await this.agent.init();
-      
+
       // 获取核心组件
       this.llmManager = this.agent.getLLMManager();
       this.contextComponent = this.agent.getContextComponent();
       this.toolComponent = this.agent.getToolComponent();
-
     } catch (error) {
       console.error('命令编排器初始化失败:', error);
       throw error;
@@ -64,7 +63,7 @@ export class CommandOrchestrator {
    */
   async executeCommand(input: string): Promise<CommandResult> {
     const trimmedInput = input.trim();
-    
+
     if (trimmedInput.startsWith('/')) {
       // 斜杠命令
       const parts = trimmedInput.slice(1).split(' ');
@@ -116,13 +115,34 @@ export class CommandOrchestrator {
    */
   async executeNaturalLanguage(input: string): Promise<CommandResult> {
     try {
+      console.log('[DEBUG] 开始处理自然语言输入:', input);
+
       if (!this.agent) {
+        console.log('[DEBUG] Agent 未初始化，正在初始化...');
         await this.initialize();
       }
 
-      // 使用 core 的 Agent 处理自然语言输入
-      const response = await this.agent!.chat(input);
-      
+      if (!this.agent) {
+        console.log('[ERROR] Agent 初始化失败');
+        return {
+          success: false,
+          error: 'Agent 初始化失败，请检查配置',
+        };
+      }
+
+      console.log('[DEBUG] 开始调用 agent.chat...');
+
+      // 添加超时处理
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('请求超时 (30秒)')), 30000);
+      });
+
+      const chatPromise = this.agent.chat(input);
+
+      const response = await Promise.race([chatPromise, timeout]);
+
+      console.log('[DEBUG] agent.chat 响应成功');
+
       return {
         success: true,
         output: response,
@@ -132,6 +152,7 @@ export class CommandOrchestrator {
         },
       };
     } catch (error) {
+      console.log('[ERROR] executeNaturalLanguage 出错:', error);
       return {
         success: false,
         error: `处理自然语言失败: ${error instanceof Error ? error.message : '未知错误'}`,
@@ -178,7 +199,7 @@ export class CommandOrchestrator {
     if (this.contextComponent && typeof this.contextComponent.clear === 'function') {
       this.contextComponent.clear();
     }
-    
+
     return {
       success: true,
       output: '✅ 会话历史已清除',
@@ -193,8 +214,14 @@ export class CommandOrchestrator {
     const status = {
       agent: this.agent ? '已初始化' : '未初始化',
       model: config.auth.modelName || '未设置',
-      tools: (this.toolComponent && typeof this.toolComponent.getToolCount === 'function') ? this.toolComponent.getToolCount() : 0,
-      context: (this.contextComponent && typeof this.contextComponent.getMessageCount === 'function') ? this.contextComponent.getMessageCount() : 0,
+      tools:
+        this.toolComponent && typeof this.toolComponent.getToolCount === 'function'
+          ? this.toolComponent.getToolCount()
+          : 0,
+      context:
+        this.contextComponent && typeof this.contextComponent.getMessageCount === 'function'
+          ? this.contextComponent.getMessageCount()
+          : 0,
     };
 
     const statusText = `
@@ -223,7 +250,7 @@ export class CommandOrchestrator {
     }
 
     const [action, key, value] = args;
-    
+
     switch (action.toLowerCase()) {
       case 'get':
         return await this.handleConfigGet(key);
@@ -243,7 +270,7 @@ export class CommandOrchestrator {
   private async handleConfigGet(key: string): Promise<CommandResult> {
     const config = this.configService.getConfig();
     const value = this.getNestedConfigValue(config, key);
-    
+
     if (value === undefined) {
       return {
         success: false,
@@ -263,6 +290,7 @@ export class CommandOrchestrator {
   private async handleConfigSet(key: string, value: string): Promise<CommandResult> {
     try {
       // 这里可以实现配置设置逻辑
+      
       return {
         success: false,
         error: '配置设置功能尚未实现',
@@ -294,9 +322,7 @@ export class CommandOrchestrator {
     }
 
     const tools = this.toolComponent.listTools();
-    const toolList = tools.map(tool => 
-      `  • ${tool.name} - ${tool.description}`
-    ).join('\n');
+    const toolList = tools.map(tool => `  • ${tool.name} - ${tool.description}`).join('\n');
 
     return {
       success: true,

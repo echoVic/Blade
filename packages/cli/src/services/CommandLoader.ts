@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { Command, CommandService } from './CommandService.js';
 import type { BladeConfig } from '../config/types.js';
+import { Command, CommandService } from './CommandService.js';
 
 export class BuiltinCommandLoader {
   private commandService: CommandService;
@@ -15,13 +15,13 @@ export class BuiltinCommandLoader {
   public async loadBuiltinCommands(): Promise<void> {
     // 注册核心命令
     await this.registerCoreCommands();
-    
+
     // 注册工具命令
     await this.registerToolCommands();
-    
+
     // 注册配置命令
     await this.registerConfigCommands();
-    
+
     // 注册调试命令（仅在调试模式下）
     if (this.config.core.debug) {
       await this.registerDebugCommands();
@@ -37,7 +37,7 @@ export class BuiltinCommandLoader {
       usage: 'help [command]',
       aliases: ['h'],
       hidden: false,
-      handler: async (args) => {
+      handler: async args => {
         if (args.length > 0) {
           const helpText = this.commandService.getCommandHelp(args[0]);
           console.log(helpText);
@@ -52,13 +52,10 @@ export class BuiltinCommandLoader {
           alias: 'a',
           description: '显示所有命令（包括隐藏命令）',
           type: 'boolean',
-          default: false
-        }
+          default: false,
+        },
       ],
-      examples: [
-        'help',
-        'help config'
-      ]
+      examples: ['help', 'help config'],
     });
 
     // 版本命令
@@ -72,9 +69,7 @@ export class BuiltinCommandLoader {
       handler: async () => {
         console.log(`Blade AI v${this.config.version}`);
       },
-      examples: [
-        'version'
-      ]
+      examples: ['version'],
     });
 
     // 退出命令
@@ -89,9 +84,7 @@ export class BuiltinCommandLoader {
         console.log('再见！');
         process.exit(0);
       },
-      examples: [
-        'exit'
-      ]
+      examples: ['exit'],
     });
   }
 
@@ -104,15 +97,15 @@ export class BuiltinCommandLoader {
       usage: 'git <subcommand> [options]',
       aliases: ['g'],
       hidden: false,
-      handler: async (args) => {
+      handler: async args => {
         if (args.length === 0) {
           console.log(this.commandService.getCommandHelp('git'));
           return;
         }
-        
+
         const subcommand = args[0];
         const subArgs = args.slice(1);
-        
+
         switch (subcommand) {
           case 'status':
             console.log('Git 状态...');
@@ -131,13 +124,10 @@ export class BuiltinCommandLoader {
           name: 'message',
           alias: 'm',
           description: '提交信息',
-          type: 'string'
-        }
+          type: 'string',
+        },
       ],
-      examples: [
-        'git status',
-        'git commit -m "Initial commit"'
-      ]
+      examples: ['git status', 'git commit -m "Initial commit"'],
     });
 
     // 文件系统工具命令
@@ -148,15 +138,15 @@ export class BuiltinCommandLoader {
       usage: 'fs <subcommand> [options]',
       aliases: ['file'],
       hidden: false,
-      handler: async (args) => {
+      handler: async args => {
         if (args.length === 0) {
           console.log(this.commandService.getCommandHelp('fs'));
           return;
         }
-        
+
         const subcommand = args[0];
         const subArgs = args.slice(1);
-        
+
         switch (subcommand) {
           case 'list':
             console.log('文件列表...');
@@ -170,10 +160,7 @@ export class BuiltinCommandLoader {
             console.log(`未知的文件系统子命令: ${subcommand}`);
         }
       },
-      examples: [
-        'fs list',
-        'fs read package.json'
-      ]
+      examples: ['fs list', 'fs read package.json'],
     });
   }
 
@@ -191,10 +178,10 @@ export class BuiltinCommandLoader {
           console.log(this.commandService.getCommandHelp('config'));
           return;
         }
-        
+
         const subcommand = args[0];
         const subArgs = args.slice(1);
-        
+
         switch (subcommand) {
           case 'list':
             console.log('配置列表...');
@@ -218,14 +205,10 @@ export class BuiltinCommandLoader {
           alias: 'g',
           description: '全局配置',
           type: 'boolean',
-          default: false
-        }
+          default: false,
+        },
       ],
-      examples: [
-        'config list',
-        'config get core.debug',
-        'config set core.debug true'
-      ]
+      examples: ['config list', 'config get core.debug', 'config set core.debug true'],
     });
   }
 
@@ -238,15 +221,15 @@ export class BuiltinCommandLoader {
       usage: 'debug <subcommand> [options]',
       aliases: ['dbg'],
       hidden: true,
-      handler: async (args) => {
+      handler: async args => {
         if (args.length === 0) {
           console.log(this.commandService.getCommandHelp('debug'));
           return;
         }
-        
+
         const subcommand = args[0];
         const subArgs = args.slice(1);
-        
+
         switch (subcommand) {
           case 'info':
             console.log('调试信息...');
@@ -260,10 +243,7 @@ export class BuiltinCommandLoader {
             console.log(`未知的调试子命令: ${subcommand}`);
         }
       },
-      examples: [
-        'debug info',
-        'debug log'
-      ]
+      examples: ['debug info', 'debug log'],
     });
   }
 }
@@ -280,7 +260,7 @@ export class FileCommandLoader {
   public async loadCommandsFromDirectory(directory: string): Promise<void> {
     try {
       const files = await fs.readdir(directory);
-      
+
       for (const file of files) {
         if (file.endsWith('.js') || file.endsWith('.ts')) {
           const filePath = path.join(directory, file);
@@ -296,13 +276,13 @@ export class FileCommandLoader {
     try {
       // 检查文件是否存在
       await fs.access(filePath);
-      
+
       // 加载命令模块
       const module = await import(filePath);
-      
+
       // 获取默认导出或命名导出的命令
       const command: Command = module.default || module.command;
-      
+
       if (command && command.name && typeof command.handler === 'function') {
         await this.commandService.registerCommand(command);
         console.log(`加载命令: ${command.name} (${filePath})`);

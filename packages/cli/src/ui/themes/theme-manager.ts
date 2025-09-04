@@ -33,6 +33,19 @@ export const defaultColors: BaseColors = {
     light: '#dee2e6',
     dark: '#495057',
   },
+  syntax: {
+    comment: '#6c757d',
+    string: '#28a745',
+    number: '#e83e8c',
+    keyword: '#007bff',
+    function: '#17a2b8',
+    variable: '#495057',
+    operator: '#ffc107',
+    type: '#007bff',
+    tag: '#dc3545',
+    attr: '#ffc107',
+    default: '#212529',
+  },
 };
 
 export const defaultTheme: Theme = {
@@ -96,6 +109,19 @@ export const darkTheme: Theme = {
     border: {
       light: '#475569',
       dark: '#64748b',
+    },
+    syntax: {
+      comment: '#94a3b8',
+      string: '#34d399',
+      number: '#f472b6',
+      keyword: '#60a5fa',
+      function: '#06b6d4',
+      variable: '#e2e8f0',
+      operator: '#fbbf24',
+      type: '#60a5fa',
+      tag: '#fb7185',
+      attr: '#fbbf24',
+      default: '#ffffff',
     },
   },
 };

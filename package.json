@@ -120,6 +120,7 @@
     "commander": "^14.0.0",
     "ink": "^6.2.3",
     "inquirer": "^12.6.3",
+    "lowlight": "^3.3.0",
     "openai": "^4.103.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

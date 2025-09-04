@@ -1,6 +1,6 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { BladeConfig } from '../config/types.js';
 
 export interface McpPrompt {
@@ -31,10 +31,10 @@ export class McpPromptLoader {
   public async initialize(): Promise<void> {
     // 初始化MCP客户端
     await this.initializeMcpClient();
-    
+
     // 加载本地提示
     await this.loadLocalPrompts();
-    
+
     // 加载远程提示
     await this.loadRemotePrompts();
   }
@@ -56,7 +56,7 @@ export class McpPromptLoader {
 
   private async loadLocalPrompts(): Promise<void> {
     const promptsDir = path.join(process.cwd(), 'prompts');
-    
+
     try {
       // 检查目录是否存在
       await fs.access(promptsDir);
@@ -69,14 +69,14 @@ export class McpPromptLoader {
 
     try {
       const files = await fs.readdir(promptsDir);
-      
+
       for (const file of files) {
         if (file.endsWith('.json') || file.endsWith('.prompt')) {
           const filePath = path.join(promptsDir, file);
           await this.loadPromptFromFile(filePath);
         }
       }
-      
+
       console.log(`加载了 ${this.localPrompts.size} 个本地提示`);
     } catch (error) {
       console.error('加载本地提示失败:', error);
@@ -87,7 +87,7 @@ export class McpPromptLoader {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       const promptData = JSON.parse(content);
-      
+
       const prompt: McpPrompt = {
         id: promptData.id || path.basename(filePath, path.extname(filePath)),
         name: promptData.name || path.basename(filePath, path.extname(filePath)),
@@ -100,9 +100,9 @@ export class McpPromptLoader {
         version: promptData.version || '1.0.0',
         tags: promptData.tags || [],
         author: promptData.author,
-        template: promptData.template || false
+        template: promptData.template || false,
       };
-      
+
       this.localPrompts.set(prompt.id, prompt);
       console.log(`加载提示: ${prompt.name} (${filePath})`);
     } catch (error) {
@@ -129,21 +129,21 @@ export class McpPromptLoader {
     const promptsDir = path.join(process.cwd(), 'prompts');
     const fileName = `${prompt.id}.json`;
     const filePath = path.join(promptsDir, fileName);
-    
+
     try {
       // 确保目录存在
       await fs.mkdir(promptsDir, { recursive: true });
-      
+
       // 更新时间戳
       prompt.updatedAt = new Date();
-      
+
       // 保存到文件
       const content = JSON.stringify(prompt, null, 2);
       await fs.writeFile(filePath, content, 'utf-8');
-      
+
       // 更新内存中的提示
       this.localPrompts.set(prompt.id, prompt);
-      
+
       console.log(`保存提示: ${prompt.name} (${filePath})`);
     } catch (error) {
       console.error(`保存提示失败: ${filePath}`, error);
@@ -154,23 +154,23 @@ export class McpPromptLoader {
   public getPrompt(id: string): McpPrompt | undefined {
     // 首先查找本地提示
     let prompt = this.localPrompts.get(id);
-    
+
     // 如果没找到，查找远程提示
     if (!prompt) {
       prompt = this.remotePrompts.get(id);
     }
-    
+
     return prompt;
   }
 
   public getAllPrompts(): McpPrompt[] {
     const allPrompts: McpPrompt[] = [];
-    
+
     // 添加本地提示
     for (const prompt of this.localPrompts.values()) {
       allPrompts.push(prompt);
     }
-    
+
     // 添加远程提示
     for (const prompt of this.remotePrompts.values()) {
       // 避免重复
@@ -178,78 +178,74 @@ export class McpPromptLoader {
         allPrompts.push(prompt);
       }
     }
-    
+
     return allPrompts;
   }
 
   public getPromptsByCategory(category: string): McpPrompt[] {
-    return this.getAllPrompts().filter(
-      prompt => prompt.category === category
-    );
+    return this.getAllPrompts().filter(prompt => prompt.category === category);
   }
 
   public getPromptsByTag(tag: string): McpPrompt[] {
-    return this.getAllPrompts().filter(
-      prompt => prompt.tags.includes(tag)
-    );
+    return this.getAllPrompts().filter(prompt => prompt.tags.includes(tag));
   }
 
   public searchPrompts(query: string): McpPrompt[] {
     const lowerQuery = query.toLowerCase();
-    
+
     return this.getAllPrompts().filter(prompt => {
       // 匹配ID
       if (prompt.id.toLowerCase().includes(lowerQuery)) {
         return true;
       }
-      
+
       // 匹配名称
       if (prompt.name.toLowerCase().includes(lowerQuery)) {
         return true;
       }
-      
+
       // 匹配描述
       if (prompt.description.toLowerCase().includes(lowerQuery)) {
         return true;
       }
-      
+
       // 匹配内容
       if (prompt.content.toLowerCase().includes(lowerQuery)) {
         return true;
       }
-      
+
       // 匹配标签
       if (prompt.tags.some(tag => tag.toLowerCase().includes(lowerQuery))) {
         return true;
       }
-      
+
       // 匹配分类
       if (prompt.category.toLowerCase().includes(lowerQuery)) {
         return true;
       }
-      
+
       return false;
     });
   }
 
   public async deletePrompt(id: string): Promise<void> {
     const prompt = this.localPrompts.get(id);
-    
+
     if (!prompt) {
       throw new Error(`提示 "${id}" 未找到`);
     }
-    
+
     const promptsDir = path.join(process.cwd(), 'prompts');
     const fileName = `${prompt.id}.json`;
     const filePath = path.join(promptsDir, fileName);
-    
+
     try {
       // 从文件系统删除
       await fs.unlink(filePath);
-      
+
       // 从内存中删除
       this.localPrompts.delete(id);
-      
+
       console.log(`删除提示: ${prompt.name} (${filePath})`);
     } catch (error) {
       console.error(`删除提示失败: ${filePath}`, error);
@@ -273,11 +269,11 @@ export class McpPromptLoader {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       const prompts: McpPrompt[] = JSON.parse(content);
-      
+
       for (const prompt of prompts) {
         await this.savePrompt(prompt);
       }
-      
+
       console.log(`导入 ${prompts.length} 个提示从: ${filePath}`);
     } catch (error) {
       console.error(`导入提示失败: ${filePath}`, error);
@@ -310,23 +306,23 @@ export class McpPromptLoader {
     const allPrompts = this.getAllPrompts();
     const categories: Record<string, number> = {};
     const tags: Record<string, number> = {};
-    
+
     // 统计分类
     for (const prompt of allPrompts) {
       categories[prompt.category] = (categories[prompt.category] || 0) + 1;
-      
+
       // 统计标签
       for (const tag of prompt.tags) {
         tags[tag] = (tags[tag] || 0) + 1;
       }
     }
-    
+
     return {
       total: allPrompts.length,
       local: this.localPrompts.size,
       remote: this.remotePrompts.size,
       categories,
-      tags
+      tags,
     };
   }
 }

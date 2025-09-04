@@ -2,6 +2,21 @@
  * 主题类型定义
  */
 
+// 语法高亮颜色配置
+export interface SyntaxColors {
+  comment: string;
+  string: string;
+  number: string;
+  keyword: string;
+  function: string;
+  variable: string;
+  operator: string;
+  type: string;
+  tag: string;
+  attr: string;
+  default: string;
+}
+
 // 基础颜色配置
 export interface BaseColors {
   // 主要颜色
@@ -43,6 +58,9 @@ export interface BaseColors {
   
   // 特殊用途颜色
   highlight: string;
+  
+  // 语法高亮颜色
+  syntax: SyntaxColors;
 }
 
 // 主题完整配置
