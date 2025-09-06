@@ -1,6 +1,6 @@
+import { createMainAgent } from '@blade-ai/core';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { Agent } from '@blade-ai/core';
 
 /**
  * 注册 LLM 相关命令
@@ -23,8 +23,8 @@ export function llmCommand(program: Command) {
         if (options.baseUrl) config.baseUrl = options.baseUrl;
         if (options.model) config.modelName = options.model;
 
-        // 创建 Agent 实例
-        const agent = new Agent(config);
+        // 创建 MainAgent 实例
+        const agent = await createMainAgent(config);
 
         const message = messageArgs.join(' ');
 

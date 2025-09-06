@@ -3,7 +3,7 @@
  * 作为纯粹的流程编排器，调用 core 包的服务来完成业务逻辑
  */
 
-import { Agent, ContextComponent, LLMManager, ToolComponent } from '@blade-ai/core';
+import { createMainAgent, MainAgent } from '@blade-ai/core';
 import { ConfigService } from '../config/ConfigService.js';
 
 export interface CommandResult {
@@ -15,10 +15,7 @@ export interface CommandResult {
 
 export class CommandOrchestrator {
   private static instance: CommandOrchestrator;
-  private agent: Agent | null = null;
-  private llmManager: LLMManager | null = null;
-  private contextComponent: ContextComponent | null = null;
-  private toolComponent: ToolComponent | null = null;
+  private agent: MainAgent | null = null;
   private configService: ConfigService;
 
   private constructor() {
@@ -39,19 +36,12 @@ export class CommandOrchestrator {
     try {
       const config = this.configService.getConfig();
 
-      // 初始化 core 服务
-      this.agent = new Agent({
+      // 初始化 core 服务 - 使用全新的 MainAgent 架构
+      this.agent = await createMainAgent({
         apiKey: config.auth.apiKey,
         baseUrl: config.auth.baseUrl,
         modelName: config.auth.modelName,
       });
-
-      await this.agent.init();
-
-      // 获取核心组件
-      this.llmManager = this.agent.getLLMManager();
-      this.contextComponent = this.agent.getContextComponent();
-      this.toolComponent = this.agent.getToolComponent();
     } catch (error) {
       console.error('命令编排器初始化失败:', error);
       throw error;
@@ -290,7 +280,7 @@ export class CommandOrchestrator {
   private async handleConfigSet(key: string, value: string): Promise<CommandResult> {
     try {
       // 这里可以实现配置设置逻辑
-      
+
       return {
         success: false,
         error: '配置设置功能尚未实现',

@@ -12,7 +12,7 @@ interface AppProps {
 }
 
 // Blade AI 界面组件
-const BladeInterface: React.FC<{ 
+const BladeInterface: React.FC<{
   isInitialized: boolean;
   sessionState: any;
   addUserMessage: (message: string) => void;
@@ -20,7 +20,15 @@ const BladeInterface: React.FC<{
   debug: boolean;
   testMode: boolean;
   hasApiKey: boolean;
-}> = ({ isInitialized, sessionState, addUserMessage, addAssistantMessage, debug, testMode, hasApiKey }) => {
+}> = ({
+  isInitialized,
+  sessionState,
+  addUserMessage,
+  addAssistantMessage,
+  debug,
+  testMode,
+  hasApiKey,
+}) => {
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
@@ -28,23 +36,23 @@ const BladeInterface: React.FC<{
   const { exit } = useApp();
   const { dispatch } = useSession();
   const { stdout } = useStdout();
-  
+
   // 获取终端宽度
   const [terminalWidth, setTerminalWidth] = useState(80);
-  
+
   useEffect(() => {
     const updateTerminalWidth = () => {
       setTerminalWidth(stdout.columns || 80);
     };
-    
+
     updateTerminalWidth();
     stdout.on('resize', updateTerminalWidth);
-    
+
     return () => {
       stdout.off('resize', updateTerminalWidth);
     };
   }, [stdout]);
-  
+
   // 初始化命令协调器
   const [commandOrchestrator] = useState(() => {
     try {
@@ -56,74 +64,84 @@ const BladeInterface: React.FC<{
   });
 
   // 处理命令提交
-  const handleCommandSubmit = useCallback(async (command: string): Promise<CommandResult> => {
-    console.log('[DEBUG] handleCommandSubmit 被调用，命令:', command);
-    
-    if (!commandOrchestrator) {
-      console.log('[ERROR] commandOrchestrator 不可用');
-      return { success: false, error: 'Command orchestrator not available' };
-    }
-    
-    try {
-      console.log('[DEBUG] 添加用户消息到UI');
-      addUserMessage(command);
-      
-      console.log('[DEBUG] 开始执行命令...');
-      const result = await commandOrchestrator.executeCommand(command);
-      
-      console.log('[DEBUG] 命令执行结果:', result);
-      
-      if (result.success && result.output) {
-        console.log('[DEBUG] 添加助手消息到UI');
-        addAssistantMessage(result.output);
-      } else if (!result.success && result.error) {
-        console.log('[DEBUG] 命令执行失败:', result.error);
-        addAssistantMessage(`❌ ${result.error}`);
+  const handleCommandSubmit = useCallback(
+    async (command: string): Promise<CommandResult> => {
+      console.log('[DEBUG] handleCommandSubmit 被调用，命令:', command);
+
+      if (!commandOrchestrator) {
+        console.log('[ERROR] commandOrchestrator 不可用');
+        return { success: false, error: 'Command orchestrator not available' };
       }
-      
-      return result;
-    } catch (error) {
-      console.log('[ERROR] handleCommandSubmit 异常:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      const errorResult = { success: false, error: errorMessage };
-      addAssistantMessage(`❌ ${errorMessage}`);
-      return errorResult;
-    }
-  }, [commandOrchestrator, addUserMessage, addAssistantMessage]);
+
+      try {
+        console.log('[DEBUG] 添加用户消息到UI');
+        addUserMessage(command);
+
+        console.log('[DEBUG] 开始执行命令...');
+        const result = await commandOrchestrator.executeCommand(command);
+
+        console.log('[DEBUG] 命令执行结果:', result);
+
+        if (result.success && result.output) {
+          console.log('[DEBUG] 添加助手消息到UI');
+          addAssistantMessage(result.output);
+        } else if (!result.success && result.error) {
+          console.log('[DEBUG] 命令执行失败:', result.error);
+          addAssistantMessage(`❌ ${result.error}`);
+        } else if (result.success && !result.output) {
+          // 成功但没有输出内容的情况
+          console.log('[DEBUG] 命令执行成功但无输出内容');
+          addAssistantMessage('✅ 处理完成');
+        } else {
+          // 未知状态
+          console.log('[DEBUG] 未知的执行结果状态:', result);
+          addAssistantMessage('⚠️ 处理完成，但结果状态不明确');
+        }
+
+        return result;
+      } catch (error) {
+        console.log('[ERROR] handleCommandSubmit 异常:', error);
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        const errorResult = { success: false, error: errorMessage };
+        addAssistantMessage(`❌ ${errorMessage}`);
+        return errorResult;
+      }
+    },
+    [commandOrchestrator, addUserMessage, addAssistantMessage]
+  );
 
   // 处理提交
   const handleSubmit = useCallback(async () => {
     console.log('[DEBUG] handleSubmit 被调用，输入:', input, '处理中:', isProcessing);
-    
+
     if (input.trim() && !isProcessing) {
       const command = input.trim();
-      
+
       console.log('[DEBUG] 开始处理命令:', command);
-      
+
       // 立即清空输入框
       setInput('');
-      
+
       // 添加到历史记录
       setCommandHistory(prev => [...prev, command]);
       setHistoryIndex(-1);
-      
+
       console.log('[DEBUG] 设置处理状态为 true');
       setIsProcessing(true);
       dispatch({ type: 'SET_THINKING', payload: true });
-      
+
       try {
         console.log('[DEBUG] 开始执行 handleCommandSubmit...');
         const result = await handleCommandSubmit(command);
-        
+
         console.log('[DEBUG] handleCommandSubmit 完成，结果:', result);
-        
+
         if (!result.success && result.error) {
           console.log('[DEBUG] 设置错误状态:', result.error);
           dispatch({ type: 'SET_ERROR', payload: result.error });
         } else {
           console.log('[DEBUG] 命令执行成功');
         }
-        
       } catch (error) {
         console.log('[ERROR] handleSubmit 异常:', error);
         const errorMessage = error instanceof Error ? error.message : '未知错误';
@@ -165,7 +183,8 @@ const BladeInterface: React.FC<{
       handleClear();
     } else if (key.upArrow && commandHistory.length > 0) {
       // 上箭头 - 命令历史
-      const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
+      const newIndex =
+        historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
       setHistoryIndex(newIndex);
       setInput(commandHistory[newIndex] || '');
     } else if (key.downArrow) {
@@ -197,19 +216,28 @@ const BladeInterface: React.FC<{
     <Box flexDirection="column" width="100%" height="100%">
       {/* Header */}
       <Box flexDirection="row" justifyContent="space-between" marginBottom={1} paddingX={2}>
-        <Text color="cyan" bold>⚡ Blade AI</Text>
+        <Text color="cyan" bold>
+          ⚡ Blade AI
+        </Text>
         <Box flexDirection="row" gap={2}>
-          {testMode && <Text backgroundColor="red" color="white"> TEST </Text>}
-          <Text color="gray" dimColor>Press Ctrl+C to exit</Text>
+          {testMode && (
+            <Text backgroundColor="red" color="white">
+              {' '}
+              TEST{' '}
+            </Text>
+          )}
+          <Text color="gray" dimColor>
+            Press Ctrl+C to exit
+          </Text>
         </Box>
       </Box>
 
       {/* Main Content Area */}
-      <Box 
-        flexDirection="column" 
-        flexGrow={1} 
-        borderStyle={showWelcome ? "round" : undefined}
-        paddingX={2} 
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        borderStyle={showWelcome ? 'round' : undefined}
+        paddingX={2}
         paddingY={showWelcome ? 1 : 0}
       >
         {/* Message Area */}
@@ -222,7 +250,7 @@ const BladeInterface: React.FC<{
                   <Text color="gray">• Type your question to start chatting</Text>
                   <Text color="gray">• Press Ctrl+C to exit</Text>
                   {!isInitialized && (
-                    <Text color="yellow">⚠️  检测到尚未配置 API 密钥，请先配置后使用</Text>
+                    <Text color="yellow">⚠️ 检测到尚未配置 API 密钥，请先配置后使用</Text>
                   )}
                 </>
               ) : (
@@ -250,29 +278,33 @@ const BladeInterface: React.FC<{
               ))}
               {isProcessing && (
                 <Box paddingX={2}>
-                  <Text color="yellow" dimColor>正在思考中...</Text>
+                  <Text color="yellow" dimColor>
+                    正在思考中...
+                  </Text>
                 </Box>
               )}
             </Box>
           )}
         </Box>
       </Box>
-      
+
       {/* 交互式输入区域 */}
       <Box flexDirection="row" paddingX={2} paddingY={0} borderStyle="round" borderColor="gray">
-        <Text color="blue" bold>{'> '}</Text>
+        <Text color="blue" bold>
+          {'> '}
+        </Text>
         <Text>{input}</Text>
         {isProcessing && <Text color="yellow">█</Text>}
       </Box>
-      
+
       {/* 状态栏 */}
       <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
         <Box flexDirection="row" gap={2}>
-          {!hasApiKey && (
-            <Text color="red">⚠ API 密钥未配置</Text>
-          )}
+          {!hasApiKey && <Text color="red">⚠ API 密钥未配置</Text>}
           {sessionState.messages.length > 0 && (
-            <Text color="gray" dimColor>{sessionState.messages.length} messages</Text>
+            <Text color="gray" dimColor>
+              {sessionState.messages.length} messages
+            </Text>
           )}
         </Box>
         <Text color="gray" dimColor>
@@ -283,14 +315,11 @@ const BladeInterface: React.FC<{
   );
 };
 
-export const BladeApp: React.FC<AppProps> = ({ 
-  debug = false, 
-  testMode = false 
-}) => {
+export const BladeApp: React.FC<AppProps> = ({ debug = false, testMode = false }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('正在初始化...');
   const [hasApiKey, setHasApiKey] = useState(false);
-  
+
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
 
   // 初始化应用
@@ -304,7 +333,7 @@ export const BladeApp: React.FC<AppProps> = ({
       const config = configService.getConfig();
 
       setLoadingStatus('检查 API 密钥...');
-      
+
       // 检查 API 密钥配置
       if (!config.auth.apiKey || config.auth.apiKey.trim() === '') {
         setHasApiKey(false);
@@ -312,17 +341,19 @@ export const BladeApp: React.FC<AppProps> = ({
         addAssistantMessage('🚀 欢迎使用 Blade AI 助手！');
         addAssistantMessage('/help for help, /status for your current setup');
         addAssistantMessage(`Cwd: ${process.cwd()}`);
-        addAssistantMessage('API Base URL: https://apis.iflow.cn\n\n1. 配置密钥：export BLADE_API_KEY="your-api-key"\n2. 重新启动 Blade');
+        addAssistantMessage(
+          '⚠️  API Key 未配置\n\nAPI Base URL: https://apis.iflow.cn\n\n📋 配置步骤:\n1. 访问 https://iflow.cn/ 获取API Key\n2. 设置环境变量: export BLADE_API_KEY="your-api-key"\n3. 重新启动 Blade\n\n💡 或者使用命令行参数: blade --api-key="your-api-key"'
+        );
         return;
       }
 
       setLoadingStatus('初始化完成!');
       setHasApiKey(true);
       setIsInitialized(true);
-      
+
       addAssistantMessage('🚀 Blade AI 助手已就绪！');
       addAssistantMessage('请输入您的问题，我将为您提供帮助。');
-      
+
       console.log('Blade 应用初始化完成');
     } catch (error) {
       console.error('应用初始化失败:', error);
@@ -341,14 +372,16 @@ export const BladeApp: React.FC<AppProps> = ({
   if (!isInitialized) {
     return (
       <Box flexDirection="column" justifyContent="center" alignItems="center">
-        <Text color="cyan" bold>⚡ Blade AI</Text>
+        <Text color="cyan" bold>
+          ⚡ Blade AI
+        </Text>
         <Text color="yellow">⏳ {loadingStatus}</Text>
       </Box>
     );
   }
 
   return (
-    <BladeInterface 
+    <BladeInterface
       isInitialized={isInitialized}
       sessionState={sessionState}
       addUserMessage={addUserMessage}
@@ -361,7 +394,7 @@ export const BladeApp: React.FC<AppProps> = ({
 };
 
 // 包装器组件 - 提供会话上下文
-export const AppWrapper: React.FC<AppProps> = (props) => {
+export const AppWrapper: React.FC<AppProps> = props => {
   return (
     <SessionProvider>
       <BladeApp {...props} />

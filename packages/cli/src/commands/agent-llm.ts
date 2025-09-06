@@ -5,9 +5,9 @@
  * 直接使用三要素配置驱动命令
  */
 
-import { Command } from 'commander';
+import { createMainAgent, MainAgent } from '@blade-ai/core';
 import chalk from 'chalk';
-import { Agent } from '@blade-ai/core';
+import { Command } from 'commander';
 
 /**
  * 注册Agent-LLM相关命令
@@ -22,7 +22,10 @@ export function agentLlmCommand(program: Command) {
     .option('-m, --model <name>', '模型名称')
     .option('-s, --system <prompt>', '系统提示词')
     .option('-i, --interactive', '交互式对话')
-    .option('--theme <name>', '界面主题 (default|dark|dracula|nord|tokyo-night|github|monokai|ayu-dark|solarized-light|solarized-dark|gruvbox|one-dark|catppuccin|rose-pine|kanagawa)')
+    .option(
+      '--theme <name>',
+      '界面主题 (default|dark|dracula|nord|tokyo-night|github|monokai|ayu-dark|solarized-light|solarized-dark|gruvbox|one-dark|catppuccin|rose-pine|kanagawa)'
+    )
     .action(async (message, options) => {
       await handleChat(message, options);
     });
@@ -52,8 +55,8 @@ async function handleChat(
     if (options.baseUrl) configUpdates.baseUrl = options.baseUrl;
     if (options.model) configUpdates.modelName = options.model;
 
-    // 创建Agent实例
-    const agent = new Agent(configUpdates);
+    // 创建MainAgent实例
+    const agent = await createMainAgent(configUpdates);
 
     // 设置主题
     if (options.theme) {
@@ -84,7 +87,7 @@ async function handleChat(
 /**
  * 交互式聊天
  */
-async function interactiveChat(agent: Agent, systemPrompt?: string): Promise<void> {
+async function interactiveChat(agent: MainAgent, systemPrompt?: string): Promise<void> {
   const readline = require('readline');
   const rl = readline.createInterface({
     input: process.stdin,

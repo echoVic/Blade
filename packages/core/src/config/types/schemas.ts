@@ -9,19 +9,19 @@ export const AuthConfigSchema = z.object({
   // 基础认证
   apiKey: z.string().default(''),
   baseUrl: z.string().url().default('https://apis.iflow.cn/v1'),
-  
+
   // LLM 模型配置 (统一在auth下，类似Claude Code)
   modelName: z.string().default('Qwen3-Coder'),
   temperature: z.number().min(0).max(2).default(0.7),
   maxTokens: z.number().min(1).max(100000).default(4000),
   stream: z.boolean().default(true),
-  
+
   // 高级参数
   topP: z.number().min(0).max(1).default(0.9),
   topK: z.number().min(1).max(100).default(50),
   frequencyPenalty: z.number().min(-2).max(2).default(0),
   presencePenalty: z.number().min(-2).max(2).default(0),
-  
+
   // 其他
   searchApiKey: z.string().default(''),
   timeout: z.number().min(1000).max(300000).default(30000),
@@ -29,7 +29,7 @@ export const AuthConfigSchema = z.object({
 
 // UI 配置 Schema
 export const UIConfigSchema = z.object({
-  theme: z.enum(['GitHub', 'dark', 'light', 'auto']).default('GitHub'),
+  theme: z.enum(['GitHub', 'dark', 'light', 'auto', 'default']).default('GitHub'),
   hideTips: z.boolean().default(false),
   hideBanner: z.boolean().default(false),
   outputFormat: z.enum(['text', 'json', 'markdown']).default('text'),
@@ -42,44 +42,54 @@ export const UIConfigSchema = z.object({
 export const SecurityConfigSchema = z.object({
   sandbox: z.enum(['docker', 'none']).default('docker'),
   trustedFolders: z.array(z.string()).default([]),
-  allowedOperations: z.array(z.enum(['read', 'write', 'execute', 'network'])).default(['read', 'write', 'execute']),
+  allowedOperations: z
+    .array(z.enum(['read', 'write', 'execute', 'network']))
+    .default(['read', 'write', 'execute']),
   requireConfirmation: z.boolean().default(true),
   disableSafetyChecks: z.boolean().default(false),
-  maxFileSize: z.number().min(1024).max(1024 * 1024 * 100).default(1024 * 1024 * 10), // 10MB
+  maxFileSize: z
+    .number()
+    .min(1024)
+    .max(1024 * 1024 * 100)
+    .default(1024 * 1024 * 10), // 10MB
 });
 
 // 工具配置 Schema
 export const ToolsConfigSchema = z.object({
   toolDiscoveryCommand: z.string().default('bin/get_tools'),
   toolCallCommand: z.string().default('bin/call_tool'),
-  summarizeToolOutput: z.record(
-    z.object({
-      tokenBudget: z.number().min(1).optional(),
-      enabled: z.boolean().default(true),
-      maxOutputLength: z.number().min(100).optional(),
-    })
-  ).default({}),
+  summarizeToolOutput: z
+    .record(
+      z.object({
+        tokenBudget: z.number().min(1).optional(),
+        enabled: z.boolean().default(true),
+        maxOutputLength: z.number().min(100).optional(),
+      })
+    )
+    .default({}),
   autoUpdate: z.boolean().default(true),
   toolTimeout: z.number().min(1000).max(300000).default(30000),
 });
 
 // MCP 配置 Schema
 export const MCPConfigSchema = z.object({
-  mcpServers: z.record(
-    z.object({
-      command: z.string(),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string()).optional(),
-      workingDir: z.string().optional(),
-      autoStart: z.boolean().default(true),
-      timeout: z.number().min(1000).max(300000).default(30000),
-    })
-  ).default({
-    main: {
-      command: 'bin/mcp_server.py',
-      autoStart: true,
-    },
-  }),
+  mcpServers: z
+    .record(
+      z.object({
+        command: z.string(),
+        args: z.array(z.string()).optional(),
+        env: z.record(z.string()).optional(),
+        workingDir: z.string().optional(),
+        autoStart: z.boolean().default(true),
+        timeout: z.number().min(1000).max(300000).default(30000),
+      })
+    )
+    .default({
+      main: {
+        command: 'bin/mcp_server.py',
+        autoStart: true,
+      },
+    }),
   maxRetries: z.number().min(0).max(10).default(3),
   retryDelay: z.number().min(100).max(10000).default(1000),
 });
@@ -99,25 +109,29 @@ export const TelemetryConfigSchema = z.object({
 export const UsageConfigSchema = z.object({
   usageStatisticsEnabled: z.boolean().default(true),
   maxSessionTurns: z.number().min(1).max(100).default(10),
-  rateLimit: z.object({
-    requestsPerMinute: z.number().min(1).default(60),
-    requestsPerHour: z.number().min(1).default(3600),
-    requestsPerDay: z.number().min(1).default(86400),
-  }).default({
-    requestsPerMinute: 60,
-    requestsPerHour: 3600,
-    requestsPerDay: 86400,
-  }),
+  rateLimit: z
+    .object({
+      requestsPerMinute: z.number().min(1).default(60),
+      requestsPerHour: z.number().min(1).default(3600),
+      requestsPerDay: z.number().min(1).default(86400),
+    })
+    .default({
+      requestsPerMinute: 60,
+      requestsPerHour: 3600,
+      requestsPerDay: 86400,
+    }),
   sessionTimeout: z.number().min(60000).max(3600000).default(1800000), // 30分钟
-  conversationHistory: z.object({
-    maxMessages: z.number().min(1).max(1000).default(100),
-    maxTokens: z.number().min(1000).max(100000).default(10000),
-    ttl: z.number().min(3600000).max(604800000).default(86400000), // 24小时
-  }).default({
-    maxMessages: 100,
-    maxTokens: 10000,
-    ttl: 86400000,
-  }),
+  conversationHistory: z
+    .object({
+      maxMessages: z.number().min(1).max(1000).default(100),
+      maxTokens: z.number().min(1000).max(100000).default(10000),
+      ttl: z.number().min(3600000).max(604800000).default(86400000), // 24小时
+    })
+    .default({
+      maxMessages: 100,
+      maxTokens: 10000,
+      ttl: 86400000,
+    }),
 });
 
 // 调试配置 Schema
@@ -126,24 +140,28 @@ export const DebugConfigSchema = z.object({
   logLevel: z.enum(['error', 'warn', 'info', 'debug', 'trace']).default('info'),
   logToFile: z.boolean().default(false),
   logFilePath: z.string().default('./logs/blade.log'),
-  logRotation: z.object({
-    maxSize: z.string().default('10MB'),
-    maxFiles: z.number().min(1).max(100).default(5),
-    compress: z.boolean().default(true),
-  }).default({
-    maxSize: '10MB',
-    maxFiles: 5,
-    compress: true,
-  }),
-  performanceMonitoring: z.object({
-    enabled: z.boolean().default(true),
-    samplingRate: z.number().min(0.01).max(1).default(0.1),
-    reportInterval: z.number().min(1000).max(60000).default(10000),
-  }).default({
-    enabled: true,
-    samplingRate: 0.1,
-    reportInterval: 10000,
-  }),
+  logRotation: z
+    .object({
+      maxSize: z.string().default('10MB'),
+      maxFiles: z.number().min(1).max(100).default(5),
+      compress: z.boolean().default(true),
+    })
+    .default({
+      maxSize: '10MB',
+      maxFiles: 5,
+      compress: true,
+    }),
+  performanceMonitoring: z
+    .object({
+      enabled: z.boolean().default(true),
+      samplingRate: z.number().min(0.01).max(1).default(0.1),
+      reportInterval: z.number().min(1000).max(60000).default(10000),
+    })
+    .default({
+      enabled: true,
+      samplingRate: 0.1,
+      reportInterval: 10000,
+    }),
 });
 
 // 扩展配置 Schema
@@ -153,15 +171,17 @@ export const ExtensionsConfigSchema = z.object({
   autoLoad: z.boolean().default(true),
   allowedExtensions: z.array(z.string()).default(['.js', '.ts', '.json']),
   dependencies: z.record(z.string()).default({}),
-  security: z.object({
-    codeSigning: z.boolean().default(true),
-    sandbox: z.boolean().default(true),
-    networkAccess: z.boolean().default(false),
-  }).default({
-    codeSigning: true,
-    sandbox: true,
-    networkAccess: false,
-  }),
+  security: z
+    .object({
+      codeSigning: z.boolean().default(true),
+      sandbox: z.boolean().default(true),
+      networkAccess: z.boolean().default(false),
+    })
+    .default({
+      codeSigning: true,
+      sandbox: true,
+      networkAccess: false,
+    }),
 });
 
 // 全局配置 Schema（系统级默认配置）
@@ -176,7 +196,10 @@ export const GlobalConfigSchema = z.object({
   debug: DebugConfigSchema.default({}),
   extensions: ExtensionsConfigSchema.default({}),
   version: z.string().default('1.0.0'),
-  createdAt: z.string().datetime().default(() => new Date().toISOString()),
+  createdAt: z
+    .string()
+    .datetime()
+    .default(() => new Date().toISOString()),
   isValid: z.boolean().default(true),
 });
 
@@ -192,7 +215,10 @@ export const EnvConfigSchema = z.object({
   debug: DebugConfigSchema.partial().default({}),
   extensions: ExtensionsConfigSchema.partial().default({}),
   version: z.string().default('1.0.0'),
-  createdAt: z.string().datetime().default(() => new Date().toISOString()),
+  createdAt: z
+    .string()
+    .datetime()
+    .default(() => new Date().toISOString()),
   isValid: z.boolean().default(true),
 });
 
@@ -210,16 +236,21 @@ export const UserConfigSchema = z.object({
   currentProvider: z.enum(['qwen', 'volcengine']).optional(),
   currentModel: z.string().optional(),
   lastUpdated: z.string().datetime().optional(),
-  preferences: z.object({
-    autoSave: z.boolean().default(true),
-    backupEnabled: z.boolean().default(true),
-    backupInterval: z.number().min(1).default(3600), // 秒
-    autoUpdate: z.boolean().default(true),
-    telemetryOptIn: z.boolean().default(true),
-    darkMode: z.boolean().default(false),
-  }).default({}),
+  preferences: z
+    .object({
+      autoSave: z.boolean().default(true),
+      backupEnabled: z.boolean().default(true),
+      backupInterval: z.number().min(1).default(3600), // 秒
+      autoUpdate: z.boolean().default(true),
+      telemetryOptIn: z.boolean().default(true),
+      darkMode: z.boolean().default(false),
+    })
+    .default({}),
   version: z.string().default('1.0.0'),
-  createdAt: z.string().datetime().default(() => new Date().toISOString()),
+  createdAt: z
+    .string()
+    .datetime()
+    .default(() => new Date().toISOString()),
   isValid: z.boolean().default(true),
 });
 
@@ -234,15 +265,20 @@ export const ProjectConfigSchema = z.object({
   usage: UsageConfigSchema.partial().default({}),
   debug: DebugConfigSchema.partial().default({}),
   extensions: ExtensionsConfigSchema.partial().default({}),
-  projectSpecific: z.object({
-    enabled: z.boolean().default(true),
-    overridesGlobal: z.boolean().default(false),
-    inheritFromParent: z.boolean().default(true),
-    environment: z.enum(['development', 'staging', 'production']).default('development'),
-    features: z.record(z.boolean()).default({}),
-  }).default({}),
+  projectSpecific: z
+    .object({
+      enabled: z.boolean().default(true),
+      overridesGlobal: z.boolean().default(false),
+      inheritFromParent: z.boolean().default(true),
+      environment: z.enum(['development', 'staging', 'production']).default('development'),
+      features: z.record(z.boolean()).default({}),
+    })
+    .default({}),
   version: z.string().default('1.0.0'),
-  createdAt: z.string().datetime().default(() => new Date().toISOString()),
+  createdAt: z
+    .string()
+    .datetime()
+    .default(() => new Date().toISOString()),
   isValid: z.boolean().default(true),
 });
 
@@ -257,25 +293,31 @@ export const BladeUnifiedConfigSchema = z.object({
   usage: UsageConfigSchema,
   debug: DebugConfigSchema,
   extensions: ExtensionsConfigSchema,
-  metadata: z.object({
-    sources: z.array(z.enum(['global', 'env', 'user', 'project'])).default(['global']),
-    loadedAt: z.string().datetime(),
-    configVersion: z.string().default('1.0.0'),
-    validationErrors: z.array(z.string()).default([]),
-    validationWarnings: z.array(z.string()).default([]),
-    mergeConflicts: z.array(z.object({
-      path: z.string(),
-      sources: z.array(z.string()),
-      resolution: z.string(),
-    })).default([]),
-  }).default({
-    sources: ['global'],
-    loadedAt: new Date().toISOString(),
-    configVersion: '1.0.0',
-    validationErrors: [],
-    validationWarnings: [],
-    mergeConflicts: [],
-  }),
+  metadata: z
+    .object({
+      sources: z.array(z.enum(['global', 'env', 'user', 'project'])).default(['global']),
+      loadedAt: z.string().datetime(),
+      configVersion: z.string().default('1.0.0'),
+      validationErrors: z.array(z.string()).default([]),
+      validationWarnings: z.array(z.string()).default([]),
+      mergeConflicts: z
+        .array(
+          z.object({
+            path: z.string(),
+            sources: z.array(z.string()),
+            resolution: z.string(),
+          })
+        )
+        .default([]),
+    })
+    .default({
+      sources: ['global'],
+      loadedAt: new Date().toISOString(),
+      configVersion: '1.0.0',
+      validationErrors: [],
+      validationWarnings: [],
+      mergeConflicts: [],
+    }),
 });
 
 // 配置状态 Schema
@@ -322,7 +364,7 @@ export interface BladeConfig {
   maxTokens?: number;
   temperature?: number;
   stream?: boolean;
-  
+
   // UI配置 (扁平结构)
   theme?: 'GitHub' | 'dark' | 'light' | 'auto';
   hideTips?: boolean;
@@ -331,7 +373,7 @@ export interface BladeConfig {
   colorScheme?: 'default' | 'monokai' | 'solarized';
   fontSize?: number;
   lineHeight?: number;
-  
+
   // 安全配置 (扁平结构)
   sandbox?: 'docker' | 'none';
   trustedFolders?: string[];
@@ -339,34 +381,34 @@ export interface BladeConfig {
   requireConfirmation?: boolean;
   disableSafetyChecks?: boolean;
   maxFileSize?: number;
-  
+
   // 工具配置 (扁平结构)
   toolDiscoveryCommand?: string;
   toolCallCommand?: string;
   autoUpdate?: boolean;
   toolTimeout?: number;
-  
+
   // 遥测配置 (扁平结构)
   telemetryEnabled?: boolean;
   telemetryTarget?: 'local' | 'remote';
   otlpEndpoint?: string;
   logPrompts?: boolean;
   logResponses?: boolean;
-  
+
   // 使用配置 (扁平结构)
   usageStatisticsEnabled?: boolean;
   maxSessionTurns?: number;
-  
+
   // 调试配置 (扁平结构)
   debug?: boolean;
   logLevel?: 'error' | 'warn' | 'info' | 'debug' | 'trace';
   logToFile?: boolean;
   logFilePath?: string;
-  
+
   // 扩展配置 (扁平结构)
   extensionsEnabled?: boolean;
   extensionsDirectory?: string;
-  
+
   // 版本信息
   version?: string;
   createdAt?: string;
@@ -388,37 +430,37 @@ export const ENV_MAPPING: EnvMapping = {
   BLADE_PRESENCE_PENALTY: 'auth.presencePenalty',
   BLADE_TIMEOUT: 'auth.timeout',
   BLADE_SEARCH_API_KEY: 'auth.searchApiKey',
-  
+
   // UI 配置
   BLADE_THEME: 'ui.theme',
   BLADE_HIDE_TIPS: 'ui.hideTips',
   BLADE_HIDE_BANNER: 'ui.hideBanner',
   BLADE_OUTPUT_FORMAT: 'ui.outputFormat',
   BLADE_COLOR_SCHEME: 'ui.colorScheme',
-  
+
   // 安全配置
   BLADE_SANDBOX: 'security.sandbox',
   BLADE_TRUSTED_FOLDERS: 'security.trustedFolders',
   BLADE_DISABLE_SAFETY_CHECKS: 'security.disableSafetyChecks',
-  
+
   // 工具配置
   BLADE_TOOL_DISCOVERY_COMMAND: 'tools.toolDiscoveryCommand',
   BLADE_TOOL_CALL_COMMAND: 'tools.toolCallCommand',
-  
+
   // 遥测配置
   BLADE_TELEMETRY_ENABLED: 'telemetry.enabled',
   BLADE_TELEMETRY_TARGET: 'telemetry.target',
   BLADE_TELEMETRY_ENDPOINT: 'telemetry.otlpEndpoint',
-  
+
   // 使用配置
   BLADE_MAX_TURNS: 'usage.maxSessionTurns',
   BLADE_USAGE_STATS: 'usage.usageStatisticsEnabled',
-  
+
   // 调试配置
   BLADE_DEBUG: 'debug.debug',
   BLADE_LOG_LEVEL: 'debug.logLevel',
   BLADE_LOG_TO_FILE: 'debug.logToFile',
-  
+
   // 扩展配置
   BLADE_EXTENSIONS_ENABLED: 'extensions.enabled',
   BLADE_EXTENSIONS_DIR: 'extensions.directory',
