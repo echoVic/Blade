@@ -1,16 +1,8 @@
 import type { ToolResult } from '../tools/types/index.js';
-
-export const GOAL_EXECUTION_HOST_FAILURE_CATEGORIES = [
-  'timeout',
-  'admission',
-  'spawn',
-  'finalization',
-  'sandbox_start',
-  'terminal',
-] as const;
-
-export type GoalExecutionHostFailureCategory =
-  (typeof GOAL_EXECUTION_HOST_FAILURE_CATEGORIES)[number];
+import {
+  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
+  type GoalExecutionHostFailureCategory,
+} from './types.js';
 
 export interface GoalExecutionHostFailureAccumulator {
   successfulBash: boolean;

@@ -776,6 +776,13 @@ export const zh: Dict = {
   'goal.metrics.tokens': 'tokens',
   'goal.metrics.continuationOne': '续跑 {n} 次',
   'goal.metrics.continuationMany': '续跑 {n} 次',
+  'goal.executionHostFailure.title': '执行宿主恢复',
+  'goal.executionHostFailure.category.timeout': '执行超时',
+  'goal.executionHostFailure.category.admission': '执行准入',
+  'goal.executionHostFailure.category.spawn': '进程启动',
+  'goal.executionHostFailure.category.finalization': '进程收尾',
+  'goal.executionHostFailure.category.sandbox_start': '沙箱启动',
+  'goal.executionHostFailure.category.terminal': '终端连接',
   'goal.dialog.title': '删除此目标？',
   'goal.dialog.description': '仅移除目标状态，会话历史与工作区文件不会受影响。',
 

@@ -4,15 +4,11 @@ export {
   getGoalTaskListId,
   readGoalExecutionFrontier,
 } from './executionFrontier.js';
-export type {
-  GoalExecutionHostFailureAccumulator,
-  GoalExecutionHostFailureCategory,
-} from './executionHostFailure.js';
+export type { GoalExecutionHostFailureAccumulator } from './executionHostFailure.js';
 export {
   buildGoalExecutionHostFailurePrompt,
   createGoalExecutionHostFailureAccumulator,
   executionHostFailureForTerminalFailure,
-  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
   isGoalExecutionHostFailureCategory,
   observeGoalExecutionHostToolResult,
   resolveGoalExecutionHostFailure,
@@ -28,6 +24,7 @@ export type {
   GoalChangeEvent,
   GoalCreateInput,
   GoalExecutionFrontier,
+  GoalExecutionHostFailureCategory,
   GoalExecutionHostFailureState,
   GoalFrontierStallCategory,
   GoalFrontierStallInput,
@@ -40,6 +37,7 @@ export type {
   GoalVerificationStallState,
 } from './types.js';
 export {
+  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
   GOAL_FRONTIER_STALL_CATEGORIES,
   GOAL_PREMATURE_STOP_PATTERNS,
   MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES,

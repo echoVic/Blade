@@ -22,7 +22,6 @@ const mockFollowUpQueue = vi.fn<
     | import('../../../../src/api/followUpQueueSchemas.js').FollowUpQueueSnapshot
     | null
 >(() => null);
-
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
     React.createElement('div', null, children),
@@ -173,5 +172,20 @@ describe('ChatStatusBar', () => {
     expect(markup).toContain('New tasks 1 · /resume');
     expect(markup).toContain('Task sync unavailable');
     expect(markup).not.toContain('retained-key');
+  });
+
+  it('显示 Goal execution-host failure 的有界状态', async () => {
+    const { formatGoalExecutionHostFailureStatus } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    expect(
+      formatGoalExecutionHostFailureStatus({
+        category: 'spawn',
+        consecutiveCount: 2,
+        detectedAt: '2026-09-06T00:00:00.000Z',
+      })
+    ).toBe('exec-host:spawn:2');
+    expect(formatGoalExecutionHostFailureStatus(undefined)).toBe('');
   });
 });

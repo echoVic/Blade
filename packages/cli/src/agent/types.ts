@@ -8,8 +8,11 @@ import { PermissionMode } from '../config/types.js';
 import type { SessionTurnRecoveryAssessment } from '../context/turnRecoveryAssessment.js';
 import type { MessagePersistenceMetadata } from '../context/types.js';
 import type { GoalExecutionFrontierPreparation } from '../goals/executionFrontier.js';
-import type { GoalExecutionHostFailureCategory } from '../goals/executionHostFailure.js';
-import type { GoalCompletionVerificationResult, GoalSnapshot } from '../goals/types.js';
+import type {
+  GoalCompletionVerificationResult,
+  GoalExecutionHostFailureCategory,
+  GoalSnapshot,
+} from '../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
   ContentPart,

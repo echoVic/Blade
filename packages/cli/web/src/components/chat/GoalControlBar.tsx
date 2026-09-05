@@ -181,6 +181,10 @@ export function GoalControlBar() {
           )}
           data-blade-goal-frontier-stall={goal.frontierStall?.category}
           data-blade-goal-frontier-stall-count={goal.frontierStall?.consecutiveCount}
+          data-blade-goal-execution-host-failure={goal.executionHostFailure?.category}
+          data-blade-goal-execution-host-failure-count={
+            goal.executionHostFailure?.consecutiveCount
+          }
         >
           {/* Compact strip */}
           <div
@@ -355,6 +359,19 @@ export function GoalControlBar() {
                       {locale === 'zh' ? '恢复提示' : 'Recovery nudge'}{' '}
                       {goal.prematureStop.consecutiveCount} ·{' '}
                       {goal.prematureStop.pattern.replaceAll('_', ' ')}
+                    </div>
+                  )}
+                  {goal.executionHostFailure && (
+                    <div className="mt-2 rounded-md border border-amber-200/50 bg-amber-50/60 px-2.5 py-2 text-[11px] text-amber-900 dark:border-amber-400/15 dark:bg-amber-400/[0.05] dark:text-amber-100">
+                      <p className="font-medium">
+                        {t('goal.executionHostFailure.title')}
+                      </p>
+                      <p className="mt-1 font-mono opacity-80">
+                        {t(
+                          `goal.executionHostFailure.category.${goal.executionHostFailure.category}`
+                        )}{' '}
+                        · {goal.executionHostFailure.consecutiveCount}/3
+                      </p>
                     </div>
                   )}
                   {goal.completionVerification && (

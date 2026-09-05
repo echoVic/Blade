@@ -12,9 +12,9 @@ import {
 import type { SessionGoalFinalizationInfo } from '../context/types.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
-import { GOAL_EXECUTION_HOST_FAILURE_CATEGORIES } from './executionHostFailure.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
+  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
   GOAL_FRONTIER_STALL_CATEGORIES,
   GOAL_PREMATURE_STOP_PATTERNS,
   GOAL_STATUSES,

@@ -31,6 +31,12 @@ import { isThinkingModel } from '../../utils/modelDetection.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
 import { formatProviderRecoveryPresentation } from '../utils/providerRecoveryPresentation.js';
 
+export function formatGoalExecutionHostFailureStatus(
+  failure: GoalSnapshot['executionHostFailure']
+): string {
+  return failure ? `exec-host:${failure.category}:${failure.consecutiveCount}` : '';
+}
+
 /**
  * 聊天状态栏组件
  * 显示权限模式、快捷键提示、API状态和处理状态
@@ -193,6 +199,11 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                   : ''}
                 {goal.frontierStall
                   ? ` frontier:${goal.frontierStall.category}:${goal.frontierStall.consecutiveCount}`
+                  : ''}
+                {goal.executionHostFailure
+                  ? ` ${formatGoalExecutionHostFailureStatus(
+                      goal.executionHostFailure
+                    )}`
                   : ''}
               </Text>
               <Text color="gray">·</Text>

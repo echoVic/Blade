@@ -6,7 +6,7 @@ import type {
   BrowserToolName,
 } from '../../browser/types.js';
 import type { PermissionMode } from '../../config/types.js';
-import type { GoalExecutionHostFailureCategory } from '../../goals/executionHostFailure.js';
+import type { GoalExecutionHostFailureCategory } from '../../goals/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
 /**

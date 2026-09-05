@@ -1,5 +1,3 @@
-import type { GoalExecutionHostFailureCategory } from './executionHostFailure.js';
-
 export const GOAL_STATUSES = [
   'active',
   'verifying',
@@ -43,6 +41,17 @@ export type GoalPrematureStopPattern = (typeof GOAL_PREMATURE_STOP_PATTERNS)[num
 
 export const MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS = 3;
 export const MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES = 3;
+export const GOAL_EXECUTION_HOST_FAILURE_CATEGORIES = [
+  'timeout',
+  'admission',
+  'spawn',
+  'finalization',
+  'sandbox_start',
+  'terminal',
+] as const;
+
+export type GoalExecutionHostFailureCategory =
+  (typeof GOAL_EXECUTION_HOST_FAILURE_CATEGORIES)[number];
 
 export interface GoalExecutionHostFailureState {
   category: GoalExecutionHostFailureCategory;

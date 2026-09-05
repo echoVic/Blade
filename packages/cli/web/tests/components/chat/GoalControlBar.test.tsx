@@ -71,6 +71,19 @@ const sessionState = vi.hoisted(() => ({
           digestSha256: string;
           detectedAt: string;
         },
+    executionHostFailure: undefined as
+      | undefined
+      | {
+          category:
+            | 'timeout'
+            | 'admission'
+            | 'spawn'
+            | 'finalization'
+            | 'sandbox_start'
+            | 'terminal';
+          consecutiveCount: number;
+          detectedAt: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -106,6 +119,7 @@ describe('GoalControlBar', () => {
     sessionState.goal.verificationStall = undefined;
     sessionState.goal.executionFrontier = undefined;
     sessionState.goal.frontierStall = undefined;
+    sessionState.goal.executionHostFailure = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -281,6 +295,32 @@ describe('GoalControlBar', () => {
         bladeGoalFrontierStallCount: '2',
       },
     });
+  });
+
+  it('renders durable execution-host recovery without private diagnostics', async () => {
+    (sessionState.goal as { status: string }).status = 'active';
+    sessionState.goal.executionHostFailure = {
+      category: 'spawn',
+      consecutiveCount: 2,
+      detectedAt: '2026-09-06T00:00:00.000Z',
+    };
+
+    act(() => root.render(<GoalControlBar />));
+
+    expect(
+      container.querySelector(
+        '[data-blade-goal-execution-host-failure="spawn"]' +
+          '[data-blade-goal-execution-host-failure-count="2"]'
+      )
+    ).toBeTruthy();
+    await act(async () => {
+      container
+        .querySelector('[aria-label="Expand goal details"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Execution host recovery');
+    expect(container.textContent).toContain('Spawn · 2/3');
   });
 
   it('edits without resuming and exposes resume as a separate action', async () => {

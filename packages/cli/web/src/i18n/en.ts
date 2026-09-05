@@ -823,6 +823,13 @@ export const en = {
   'goal.metrics.tokens': 'tokens',
   'goal.metrics.continuationOne': '{n} continuation',
   'goal.metrics.continuationMany': '{n} continuations',
+  'goal.executionHostFailure.title': 'Execution host recovery',
+  'goal.executionHostFailure.category.timeout': 'Timeout',
+  'goal.executionHostFailure.category.admission': 'Admission',
+  'goal.executionHostFailure.category.spawn': 'Spawn',
+  'goal.executionHostFailure.category.finalization': 'Finalization',
+  'goal.executionHostFailure.category.sandbox_start': 'Sandbox startup',
+  'goal.executionHostFailure.category.terminal': 'Terminal',
   'goal.dialog.title': 'Delete this goal?',
   'goal.dialog.description':
     'The goal state will be removed. Session history and workspace files are not affected.',
