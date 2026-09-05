@@ -248,6 +248,40 @@ describe('production qualification contract', () => {
     expect(acpRunner).toContain('newSession');
   });
 
+  it('registers the execution-host failure release matrix', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectoryPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/goal-execution-host-failure-trajectory.test.ts'
+    );
+    const fixturePath = path.resolve(
+      __dirname,
+      '../../support/goalExecutionHostFailureFixture.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      __dirname,
+      '../../support/goalExecutionHostFailurePtyRunner.ts'
+    );
+    const trajectory = fs.readFileSync(trajectoryPath, 'utf8');
+    const fixture = fs.readFileSync(fixturePath, 'utf8');
+    const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/goal-execution-host-failure-trajectory.test.ts'"
+    );
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain("['headless', 'acp', 'pty', 'web']");
+    expect(trajectory).toContain('await chromium.launch({ headless: true })');
+    expect(trajectory).toContain('bashToolCallCount()).toBe(3)');
+    expect(trajectory).toContain('requestCount()).toBe(6)');
+    expect(fixture).toContain('upstreamBaseUrl');
+    expect(fixture).toContain('isBashToolCallResponse');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+  });
+
   it('registers the production Chromium durable task unread trajectory', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),

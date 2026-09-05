@@ -70,6 +70,7 @@ export const testTypes = {
       'tests/integration/real-api/side-conversation-trajectory.test.ts',
       'tests/integration/real-api/follow-up-queue-trajectory.test.ts',
       'tests/integration/real-api/compaction-memory-consolidation-trajectory.test.ts',
+      'tests/integration/real-api/goal-execution-host-failure-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',
