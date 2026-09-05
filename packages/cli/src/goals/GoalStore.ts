@@ -12,6 +12,7 @@ import {
 import type { SessionGoalFinalizationInfo } from '../context/types.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
+import { GOAL_EXECUTION_HOST_FAILURE_CATEGORIES } from './executionHostFailure.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
   GOAL_FRONTIER_STALL_CATEGORIES,
@@ -24,6 +25,7 @@ import {
   type GoalFrontierStallState,
   type GoalProgress,
   type GoalSnapshot,
+  MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES,
   MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
   MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
@@ -78,6 +80,15 @@ const GoalFrontierStallSchema = Type.Object({
   detectedAt: Type.String({ format: 'date-time' }),
 });
 
+const GoalExecutionHostFailureSchema = Type.Object({
+  category: StringEnum(GOAL_EXECUTION_HOST_FAILURE_CATEGORIES),
+  consecutiveCount: Type.Integer({
+    minimum: 1,
+    maximum: MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES,
+  }),
+  detectedAt: Type.String({ format: 'date-time' }),
+});
+
 const GoalSnapshotSchema = Type.Object({
   version: Type.Union([Type.Literal(1), Type.Literal(2)]),
   sessionId: Type.String({ minLength: 1 }),
@@ -104,6 +115,7 @@ const GoalSnapshotSchema = Type.Object({
       detectedAt: Type.String({ format: 'date-time' }),
     })
   ),
+  executionHostFailure: Type.Optional(GoalExecutionHostFailureSchema),
   executionFrontier: Type.Optional(GoalExecutionFrontierSchema),
   frontierStall: Type.Optional(GoalFrontierStallSchema),
   createdAt: Type.String({ format: 'date-time' }),
@@ -226,6 +238,7 @@ export class GoalStore {
         completionVerification: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        executionHostFailure: undefined,
         frontierStall: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
@@ -328,6 +341,7 @@ export class GoalStore {
         statusReason: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        executionHostFailure: undefined,
         frontierStall: undefined,
         updatedAt: new Date().toISOString(),
       };
@@ -354,6 +368,7 @@ export class GoalStore {
         status: 'verifying',
         statusReason: 'awaiting independent completion verification',
         prematureStop: undefined,
+        executionHostFailure: undefined,
         frontierStall: undefined,
         completionVerification: {
           attempt: (goal.completionVerification?.attempt ?? 0) + 1,
@@ -469,6 +484,7 @@ export class GoalStore {
         statusReason: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        executionHostFailure: undefined,
         frontierStall: undefined,
         updatedAt: new Date().toISOString(),
       };
@@ -503,6 +519,7 @@ export class GoalStore {
         status: 'complete',
         statusReason: undefined,
         verificationStall: undefined,
+        executionHostFailure: undefined,
         updatedAt: new Date().toISOString(),
       });
       await this.persistUnlocked(next);
@@ -555,9 +572,27 @@ export class GoalStore {
             detectedAt: now,
           }
         : undefined;
+      const executionHostFailure = progress.executionHostFailureCategory
+        ? {
+            category: progress.executionHostFailureCategory,
+            consecutiveCount:
+              goal.executionHostFailure?.category ===
+              progress.executionHostFailureCategory
+                ? Math.min(
+                    MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES,
+                    goal.executionHostFailure.consecutiveCount + 1
+                  )
+                : 1,
+            detectedAt: now,
+          }
+        : undefined;
       const livenessBlocked =
         prematureStop !== undefined &&
         prematureStop.consecutiveCount >= MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS;
+      const executionHostBlocked =
+        executionHostFailure !== undefined &&
+        executionHostFailure.consecutiveCount >=
+          MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES;
       const next: GoalSnapshot = {
         ...goal,
         version: 2,
@@ -565,16 +600,23 @@ export class GoalStore {
         timeUsedSeconds: goal.timeUsedSeconds + elapsedSeconds,
         status: budgetLimited
           ? 'budget_limited'
-          : livenessBlocked
+          : executionHostBlocked
             ? 'blocked'
-            : goal.status,
+            : livenessBlocked
+              ? 'blocked'
+              : goal.status,
         statusReason: budgetLimited
           ? 'token budget exhausted'
-          : livenessBlocked
-            ? `automatic liveness guard after ${prematureStop.consecutiveCount} consecutive ${prematureStop.pattern} turns`
-            : goal.statusReason,
-        ...(livenessBlocked ? { completionVerification: undefined } : {}),
+          : executionHostBlocked
+            ? `automatic execution host guard after ${executionHostFailure.consecutiveCount} consecutive ${executionHostFailure.category} failure turns`
+            : livenessBlocked
+              ? `automatic liveness guard after ${prematureStop.consecutiveCount} consecutive ${prematureStop.pattern} turns`
+              : goal.statusReason,
+        ...(livenessBlocked || executionHostBlocked
+          ? { completionVerification: undefined }
+          : {}),
         prematureStop,
+        executionHostFailure,
         updatedAt: now,
       };
       await this.persistUnlocked(next);

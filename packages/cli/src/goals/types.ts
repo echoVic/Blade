@@ -1,3 +1,5 @@
+import type { GoalExecutionHostFailureCategory } from './executionHostFailure.js';
+
 export const GOAL_STATUSES = [
   'active',
   'verifying',
@@ -40,6 +42,13 @@ export const GOAL_PREMATURE_STOP_PATTERNS = [
 export type GoalPrematureStopPattern = (typeof GOAL_PREMATURE_STOP_PATTERNS)[number];
 
 export const MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS = 3;
+export const MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES = 3;
+
+export interface GoalExecutionHostFailureState {
+  category: GoalExecutionHostFailureCategory;
+  consecutiveCount: number;
+  detectedAt: string;
+}
 
 export interface GoalPrematureStopState {
   pattern: GoalPrematureStopPattern;
@@ -110,6 +119,7 @@ export interface GoalSnapshot {
   completionVerification?: GoalCompletionVerification;
   verificationStall?: GoalVerificationStallState;
   prematureStop?: GoalPrematureStopState;
+  executionHostFailure?: GoalExecutionHostFailureState;
   executionFrontier?: GoalExecutionFrontier;
   frontierStall?: GoalFrontierStallState;
   createdAt: string;
@@ -131,6 +141,7 @@ export interface GoalProgress {
   tokens: number;
   elapsedMs: number;
   prematureStopPattern?: GoalPrematureStopPattern;
+  executionHostFailureCategory?: GoalExecutionHostFailureCategory;
 }
 
 export interface GoalCompletionVerificationResult {

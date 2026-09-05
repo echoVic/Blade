@@ -81,6 +81,85 @@ describe('GoalStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(created);
   });
 
+  it('blocks after three consecutive execution-host failure turns', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'recover the execution host' });
+
+    const first = await store.recordProgress({
+      tokens: 10,
+      elapsedMs: 100,
+      executionHostFailureCategory: 'spawn',
+    });
+    expect(first).toMatchObject({
+      status: 'active',
+      executionHostFailure: { category: 'spawn', consecutiveCount: 1 },
+    });
+
+    const second = await new GoalStore(workspaceRoot, sessionId).recordProgress({
+      tokens: 10,
+      elapsedMs: 100,
+      executionHostFailureCategory: 'spawn',
+    });
+    expect(second).toMatchObject({
+      status: 'active',
+      executionHostFailure: { category: 'spawn', consecutiveCount: 2 },
+    });
+
+    const third = await new GoalStore(workspaceRoot, sessionId).recordProgress({
+      tokens: 10,
+      elapsedMs: 100,
+      executionHostFailureCategory: 'spawn',
+    });
+    expect(third).toMatchObject({
+      status: 'blocked',
+      statusReason:
+        'automatic execution host guard after 3 consecutive spawn failure turns',
+      executionHostFailure: { category: 'spawn', consecutiveCount: 3 },
+    });
+    expect(third?.completionVerification).toBeUndefined();
+  });
+
+  it('resets the execution-host streak after progress or a different category', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'reset execution failures' });
+    await store.recordProgress({
+      tokens: 1,
+      elapsedMs: 1,
+      executionHostFailureCategory: 'timeout',
+    });
+    const changed = await store.recordProgress({
+      tokens: 1,
+      elapsedMs: 1,
+      executionHostFailureCategory: 'terminal',
+    });
+    expect(changed?.executionHostFailure).toMatchObject({
+      category: 'terminal',
+      consecutiveCount: 1,
+    });
+
+    const cleared = await store.recordProgress({ tokens: 1, elapsedMs: 1 });
+    expect(cleared?.executionHostFailure).toBeUndefined();
+  });
+
+  it('clears the execution-host streak on edit and explicit resume', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'clear execution failures' });
+    await store.recordProgress({
+      tokens: 1,
+      elapsedMs: 1,
+      executionHostFailureCategory: 'admission',
+    });
+    expect((await store.edit('edited objective')).executionHostFailure).toBeUndefined();
+
+    await store.recordProgress({
+      tokens: 1,
+      elapsedMs: 1,
+      executionHostFailureCategory: 'admission',
+    });
+    await store.block('external inspection required');
+    expect((await store.resume()).executionHostFailure).toBeUndefined();
+  });
+
   it('stores remote goals directly under an explicitly authorized state root', async () => {
     const descriptor = createAcpRemoteWorkspaceDescriptor(
       createAcpRemotePathProfile('C:\\Remote\\Blade')
