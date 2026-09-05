@@ -50,6 +50,8 @@
   * [Compaction Project Memory Qualification Evidence](/en/testing/compaction-memory-consolidation-evidence.md)
   * [Fresh Independent Verification](/en/reference/fresh-independent-verification.md)
   * [Goal Completion Verification](/en/reference/goal-completion-verification.md)
+  * [Goal Execution-Host Failure Guard](/en/reference/goal-execution-host-failure-guard.md)
+  * [Goal Execution-Host Failure Guard Qualification Evidence](/en/testing/goal-execution-host-failure-evidence.md)
   * [Workspace Agent Resources](/en/reference/workspace-agent-resources.md)
   * [Workspace Plugin Lifecycle](/en/reference/workspace-plugin-lifecycle.md)
   * [Workspace Model & Provider Isolation](/en/reference/workspace-model-resources.md)

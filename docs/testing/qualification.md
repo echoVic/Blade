@@ -99,6 +99,12 @@ Goal premature-stop recovery 固定运行当前资格环境中的 DeepSeek、Cla
 Goal verifier feedback 轨迹必须先让真实 verifier 拒绝缺失产物，再证明执行 Agent 从
 持久化、脱敏后的具体缺口中恢复并完成；相同反馈指纹的二次升级与三次自动阻断由确定性
 状态机测试覆盖。
+Goal execution-host failure 轨迹固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
+stdio、raw PTY TUI 与 production Chromium Web 八格矩阵。每格由真实模型发起三次 Bash
+tool call，production Bash adapter 产生三次 typed timeout，GoalStore 在第三个 logical turn
+原子 blocked 且不发起第四次 continuation。普通非零退出不得进入该 streak；Web reload、
+ACP metadata、TUI 状态与 Headless JSONL 必须从同一 durable Goal snapshot 得到一致结果。
+详见[Goal 执行宿主故障保护资格验证证据](./goal-execution-host-failure-evidence.md)。
 完整 `test:real-api` 另含 GPT Prompt Cache efficiency 轨迹：先等待真实 cache read，
 再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
 该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较
