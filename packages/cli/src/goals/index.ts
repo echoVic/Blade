@@ -7,6 +7,7 @@ export {
 export { detectGoalPrematureStop } from './prematureStop.js';
 export {
   createGoalExecutionHostFailureAccumulator,
+  executionHostFailureForTerminalFailure,
   GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
   isGoalExecutionHostFailureCategory,
   observeGoalExecutionHostToolResult,

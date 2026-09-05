@@ -30,6 +30,22 @@ export function isGoalExecutionHostFailureCategory(
   );
 }
 
+export function executionHostFailureForTerminalFailure(
+  value: unknown
+): GoalExecutionHostFailureCategory | undefined {
+  switch (value) {
+    case 'timeout':
+    case 'admission':
+    case 'spawn':
+    case 'finalization':
+      return value;
+    case 'unavailable':
+      return 'terminal';
+    default:
+      return undefined;
+  }
+}
+
 export function observeGoalExecutionHostToolResult(
   state: GoalExecutionHostFailureAccumulator,
   toolName: string,

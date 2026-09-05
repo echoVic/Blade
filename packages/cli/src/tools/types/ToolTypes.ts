@@ -6,6 +6,7 @@ import type {
   BrowserToolName,
 } from '../../browser/types.js';
 import type { PermissionMode } from '../../config/types.js';
+import type { GoalExecutionHostFailureCategory } from '../../goals/executionHostFailure.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
 /**
@@ -202,6 +203,7 @@ interface BashBackgroundMetadataFields extends BaseMetadataFields {
  */
 interface BashForegroundMetadataFields extends BaseMetadataFields {
   command: string;
+  execution_host_failure?: GoalExecutionHostFailureCategory;
   background?: false;
   execution_time: number;
   exit_code: number | null;

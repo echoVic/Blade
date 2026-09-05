@@ -10,6 +10,7 @@ import {
   prepareForegroundProcess,
 } from '../../../context/storage/DurableForegroundProcess.js';
 import { Default, Type } from '../../../schema/index.js';
+import { executionHostFailureForTerminalFailure } from '../../../goals/executionHostFailure.js';
 import { getCwd } from '../../../utils/cwd.js';
 import {
   stripSafeEnvVars,
@@ -366,6 +367,9 @@ Before executing commands:
           },
           metadata: {
             command,
+            ...(error instanceof WorkspaceSandboxUnavailableError
+              ? { execution_host_failure: 'sandbox_start' as const }
+              : {}),
             sandbox_required: true,
             sandboxed: false,
             summary: 'Workspace sandbox unavailable; command not started',
@@ -380,6 +384,10 @@ Before executing commands:
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
           details: err,
+        },
+        metadata: {
+          command,
+          execution_host_failure: 'spawn',
         },
       };
     }
@@ -670,6 +678,7 @@ function completedManagedShellResult(
       },
       metadata: {
         ...metadata,
+        execution_host_failure: 'timeout',
         timeout: true,
         stdout: projected.stdout,
         stderr: projected.stderr,
@@ -703,6 +712,7 @@ function completedManagedShellResult(
       },
       metadata: {
         ...metadata,
+        execution_host_failure: 'spawn',
         stdout: projected.stdout,
         stderr: projected.stderr,
       },
@@ -889,6 +899,10 @@ async function executeWithForegroundHandoff(
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Foreground command state unavailable',
       },
+      metadata: {
+        command,
+        execution_host_failure: 'terminal',
+      },
     };
   }
   return completedManagedShellResult(snapshot, startedAt);
@@ -993,6 +1007,7 @@ async function executeWithAcpTerminal(
         },
         metadata: {
           command,
+          execution_host_failure: 'timeout',
           timeout: true,
           ...(projected ? { stdout: projected.stdout, stderr: projected.stderr } : {}),
           execution_time: executionTime,
@@ -1017,6 +1032,13 @@ async function executeWithAcpTerminal(
       acp_mode: true,
       summary,
       ...outputMetadata,
+      ...(executionHostFailureForTerminalFailure(result.failureKind)
+        ? {
+            execution_host_failure: executionHostFailureForTerminalFailure(
+              result.failureKind
+            ),
+          }
+        : {}),
     };
 
     if (!projected) {
@@ -1072,6 +1094,7 @@ async function executeWithAcpTerminal(
       },
       metadata: {
         command,
+        execution_host_failure: 'terminal',
         execution_time: executionTime,
         error: nodeError.message,
       },
@@ -1244,6 +1267,7 @@ async function executeWithTimeout(
               command,
               sandboxed: Boolean(sandboxedCommand),
             }),
+            execution_host_failure: 'timeout',
             timeout: true,
             stdout: projected.stdout,
             stderr: projected.stderr,
@@ -1288,6 +1312,7 @@ async function executeWithTimeout(
               command,
               sandboxed: Boolean(sandboxedCommand),
             }),
+            execution_host_failure: 'admission',
             admission_failed: true,
             stdout: projected.stdout,
             stderr: projected.stderr,
@@ -1310,6 +1335,7 @@ async function executeWithTimeout(
               command,
               sandboxed: Boolean(sandboxedCommand),
             }),
+            execution_host_failure: 'finalization',
             finalization_failed: true,
             stdout: projected.stdout,
             stderr: projected.stderr,
@@ -1333,6 +1359,7 @@ async function executeWithTimeout(
           },
           metadata: {
             ...metadataFor(projected, { command }),
+            execution_host_failure: 'sandbox_start',
             sandbox_required: true,
             sandboxed: false,
             execution_time: executionTime,
@@ -1445,6 +1472,15 @@ async function executeWithTimeout(
                 : finalizationError
                   ? { finalization_failed: true }
                   : { error: error.message }),
+          ...(terminalState.timedOut
+            ? { execution_host_failure: 'timeout' as const }
+            : admissionError
+              ? { execution_host_failure: 'admission' as const }
+              : finalizationError
+                ? { execution_host_failure: 'finalization' as const }
+                : terminalState.aborted
+                  ? {}
+                  : { execution_host_failure: 'spawn' as const }),
           stdout: projected.stdout,
           stderr: projected.stderr,
           execution_time: executionTime,

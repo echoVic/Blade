@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createGoalExecutionHostFailureAccumulator,
+  executionHostFailureForTerminalFailure,
   observeGoalExecutionHostToolResult,
   resolveGoalExecutionHostFailure,
 } from '../../../../src/goals/executionHostFailure.js';
@@ -30,6 +31,18 @@ function result(input: {
 }
 
 describe('goal execution host failure accumulator', () => {
+  it('maps only infrastructure terminal failures to goal categories', () => {
+    expect(executionHostFailureForTerminalFailure('timeout')).toBe('timeout');
+    expect(executionHostFailureForTerminalFailure('admission')).toBe('admission');
+    expect(executionHostFailureForTerminalFailure('spawn')).toBe('spawn');
+    expect(executionHostFailureForTerminalFailure('finalization')).toBe(
+      'finalization'
+    );
+    expect(executionHostFailureForTerminalFailure('unavailable')).toBe('terminal');
+    expect(executionHostFailureForTerminalFailure('aborted')).toBeUndefined();
+    expect(executionHostFailureForTerminalFailure('unknown')).toBeUndefined();
+  });
+
   it('accepts only a typed Bash execution-host failure marker', () => {
     const state = createGoalExecutionHostFailureAccumulator();
 

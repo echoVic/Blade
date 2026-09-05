@@ -11,6 +11,7 @@ import { bashTool } from '../../../../../src/tools/builtin/shell/bash.js';
 import {
   installWorkspaceSandboxBackendForTests,
   type WorkspaceSandboxBackend,
+  WorkspaceSandboxUnavailableError,
 } from '../../../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
 import { ControlledTerminalClient } from '../../../../support/acp/ControlledTerminalClient.js';
 import {
@@ -68,6 +69,7 @@ describe('Bash Tool', () => {
       exit_code: 7,
       has_stderr: true,
     });
+    expect(result.metadata).not.toHaveProperty('execution_host_failure');
   });
 
   it('never includes a command or its output in raw progress', async () => {
@@ -221,6 +223,8 @@ describe('Bash Tool', () => {
         terminal_output_merged: false,
       });
     }
+    expect(timeoutResult.metadata?.execution_host_failure).toBe('timeout');
+    expect(abortResult.metadata).not.toHaveProperty('execution_host_failure');
   });
 
   it('projects real ACP terminal capture without forwarding raw output as progress', async () => {
@@ -447,7 +451,63 @@ describe('Bash Tool', () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.message).toContain('ACP terminal unavailable');
+    expect(result.metadata?.execution_host_failure).toBe('terminal');
     await expect(realpath(marker)).rejects.toThrow();
+  });
+
+  it('marks a required sandbox startup failure without exposing its details', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-sandbox-start-'));
+    const privateDetail = 'PRIVATE_SANDBOX_START_DETAIL';
+    const prepare = vi.fn<WorkspaceSandboxBackend['prepare']>(async () => {
+      throw new WorkspaceSandboxUnavailableError(privateDetail);
+    });
+    cleanups.push(installWorkspaceSandboxBackendForTests({ prepare }), () =>
+      rm(workspace, { recursive: true, force: true })
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: 'printf must-not-run',
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      { workspaceRoot: workspace, worktreeActive: true }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.metadata).toMatchObject({
+      execution_host_failure: 'sandbox_start',
+      sandbox_required: true,
+      sandboxed: false,
+    });
+    expect(result.metadata?.execution_host_failure).not.toContain(privateDetail);
+  });
+
+  it('does not classify a sandbox boundary rejection as a host failure', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-sandbox-boundary-'));
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'blade-outside-boundary-'));
+    cleanups.push(
+      () => rm(workspace, { recursive: true, force: true }),
+      () => rm(outside, { recursive: true, force: true })
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: 'printf must-not-run',
+        cwd: outside,
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      { workspaceRoot: workspace, worktreeActive: true }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('permission_denied');
+    expect(result.metadata).not.toHaveProperty('execution_host_failure');
   });
 
   it('merges Session environment before invocation overrides', async () => {
