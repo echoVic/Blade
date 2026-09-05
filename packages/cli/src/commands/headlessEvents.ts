@@ -335,6 +335,17 @@ const GoalEventSchema = event({
   verification_stall_count: Type.Optional(Type.Integer({ minimum: 1 })),
   premature_stop_pattern: Type.Optional(StringEnum(GOAL_PREMATURE_STOP_PATTERNS)),
   premature_stop_count: Type.Optional(Type.Integer({ minimum: 1 })),
+  execution_host_failure_category: Type.Optional(
+    StringEnum([
+      'timeout',
+      'admission',
+      'spawn',
+      'finalization',
+      'sandbox_start',
+      'terminal',
+    ])
+  ),
+  execution_host_failure_count: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
   frontier_stall_category: Type.Optional(
     StringEnum(['waiting_dependency', 'same_task_no_effect', 'repeated_deferral'])
   ),

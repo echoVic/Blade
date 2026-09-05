@@ -1000,6 +1000,9 @@ function createEventWriter(
           verification_stall_count: event.goal?.verificationStall?.consecutiveCount,
           premature_stop_pattern: event.goal?.prematureStop?.pattern,
           premature_stop_count: event.goal?.prematureStop?.consecutiveCount,
+          execution_host_failure_category: event.goal?.executionHostFailure?.category,
+          execution_host_failure_count:
+            event.goal?.executionHostFailure?.consecutiveCount,
           frontier_stall_category: event.goal?.frontierStall?.category,
           frontier_stall_count: event.goal?.frontierStall?.consecutiveCount,
         });

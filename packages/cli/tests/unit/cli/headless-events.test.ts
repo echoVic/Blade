@@ -550,6 +550,8 @@ describe('headless event contract', () => {
       verification_stall_count: 2,
       premature_stop_pattern: 'internal_wait',
       premature_stop_count: 2,
+      execution_host_failure_category: 'spawn',
+      execution_host_failure_count: 2,
     });
     expect(goal).toEqual({
       event_version: 1,
@@ -565,6 +567,8 @@ describe('headless event contract', () => {
       verification_stall_count: 2,
       premature_stop_pattern: 'internal_wait',
       premature_stop_count: 2,
+      execution_host_failure_category: 'spawn',
+      execution_host_failure_count: 2,
     });
     expect(() => HeadlessJsonlEventSchema.parse(goal)).not.toThrow();
 

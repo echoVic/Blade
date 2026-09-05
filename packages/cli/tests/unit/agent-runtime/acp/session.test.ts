@@ -4016,6 +4016,11 @@ describe('AcpSession', () => {
               consecutiveCount: 2,
               detectedAt: '2026-08-22T00:00:01.000Z',
             },
+            executionHostFailure: {
+              category: 'terminal',
+              consecutiveCount: 2,
+              detectedAt: '2026-08-22T00:00:01.000Z',
+            },
             createdAt: '2026-08-22T00:00:00.000Z',
             updatedAt: '2026-08-22T00:00:01.000Z',
           },
@@ -4033,6 +4038,11 @@ describe('AcpSession', () => {
             continuationCount: 2,
             prematureStop: {
               pattern: 'self_deferral',
+              consecutiveCount: 2,
+              detectedAt: '2026-08-22T00:00:00.000Z',
+            },
+            executionHostFailure: {
+              category: 'terminal',
               consecutiveCount: 2,
               detectedAt: '2026-08-22T00:00:00.000Z',
             },
@@ -4062,6 +4072,10 @@ describe('AcpSession', () => {
               continuation: 2,
               prematureStopPattern: 'self_deferral',
               prematureStopCount: 2,
+              executionHostFailure: {
+                category: 'terminal',
+                consecutiveCount: 2,
+              },
             },
           },
         },
@@ -4081,6 +4095,10 @@ describe('AcpSession', () => {
               verificationEvidenceSha256: 'a'.repeat(64),
               verificationSummary: 'The restart assertion is still missing.',
               verificationStallCount: 2,
+              executionHostFailure: {
+                category: 'terminal',
+                consecutiveCount: 2,
+              },
             },
           },
         },

@@ -177,6 +177,56 @@ describe('API Schemas', () => {
         consecutiveCount: 2,
       });
     });
+
+    it('accepts only a bounded execution-host failure diagnostic', () => {
+      const base = {
+        version: 2 as const,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'Recover the execution host.',
+        status: 'active' as const,
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        continuationCount: 2,
+        createdAt: '2026-09-06T00:00:00.000Z',
+        updatedAt: '2026-09-06T00:00:01.000Z',
+      };
+
+      expect(
+        GoalSchema.parse({
+          ...base,
+          executionHostFailure: {
+            category: 'terminal',
+            consecutiveCount: 2,
+            detectedAt: '2026-09-06T00:00:01.000Z',
+          },
+        }).executionHostFailure
+      ).toEqual({
+        category: 'terminal',
+        consecutiveCount: 2,
+        detectedAt: '2026-09-06T00:00:01.000Z',
+      });
+      expect(() =>
+        GoalSchema.parse({
+          ...base,
+          executionHostFailure: {
+            category: 'unknown',
+            consecutiveCount: 2,
+            detectedAt: '2026-09-06T00:00:01.000Z',
+          },
+        })
+      ).toThrow();
+      expect(() =>
+        GoalSchema.parse({
+          ...base,
+          executionHostFailure: {
+            category: 'spawn',
+            consecutiveCount: 4,
+            detectedAt: '2026-09-06T00:00:01.000Z',
+          },
+        })
+      ).toThrow();
+    });
   });
 
   describe('PermissionModeSchema', () => {

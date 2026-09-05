@@ -1,3 +1,4 @@
+import { GOAL_EXECUTION_HOST_FAILURE_CATEGORIES } from '../goals/executionHostFailure.js';
 import type {
   GoalPrematureStopPattern,
   GoalVerificationStallState,
@@ -376,6 +377,16 @@ export const GoalSchema = Runtime(
         consecutiveCount: Type.Integer({ minimum: 1 }),
         detectedAt: Type.String(),
       })
+    ),
+    executionHostFailure: Type.Optional(
+      Type.Object(
+        {
+          category: StringEnum(GOAL_EXECUTION_HOST_FAILURE_CATEGORIES),
+          consecutiveCount: Type.Integer({ minimum: 1, maximum: 3 }),
+          detectedAt: Type.String(),
+        },
+        { additionalProperties: false }
+      )
     ),
     verificationStall: Type.Optional(
       Type.Unsafe<GoalVerificationStallState>({ type: 'object' })

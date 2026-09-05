@@ -1987,6 +1987,15 @@ export class AcpSession {
                     ...(event.prematureStopCount !== undefined
                       ? { prematureStopCount: event.prematureStopCount }
                       : {}),
+                    ...(event.goal.executionHostFailure
+                      ? {
+                          executionHostFailure: {
+                            category: event.goal.executionHostFailure.category,
+                            consecutiveCount:
+                              event.goal.executionHostFailure.consecutiveCount,
+                          },
+                        }
+                      : {}),
                   },
                 },
               });
@@ -3133,6 +3142,14 @@ export class AcpSession {
           verificationEvidenceSha256: goal.completionVerification?.evidenceSha256,
           verificationSummary: goal.completionVerification?.summary,
           verificationStallCount: goal.verificationStall?.consecutiveCount,
+          ...(goal.executionHostFailure
+            ? {
+                executionHostFailure: {
+                  category: goal.executionHostFailure.category,
+                  consecutiveCount: goal.executionHostFailure.consecutiveCount,
+                },
+              }
+            : {}),
         },
       },
     };
