@@ -8,6 +8,7 @@ import { PermissionMode } from '../config/types.js';
 import type { SessionTurnRecoveryAssessment } from '../context/turnRecoveryAssessment.js';
 import type { MessagePersistenceMetadata } from '../context/types.js';
 import type { GoalExecutionFrontierPreparation } from '../goals/executionFrontier.js';
+import type { GoalExecutionHostFailureCategory } from '../goals/executionHostFailure.js';
 import type { GoalCompletionVerificationResult, GoalSnapshot } from '../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
@@ -232,6 +233,7 @@ export interface LoopResult {
     tokensUsed?: number; // Token 使用量
     toolSuccessRate?: number; // 工具成功率 (0-1)
     totalToolFailures?: number; // 工具总失败次数
+    executionHostFailureCategory?: GoalExecutionHostFailureCategory;
     configuredMaxTurns?: number;
     actualMaxTurns?: number;
     hitSafetyLimit?: boolean;

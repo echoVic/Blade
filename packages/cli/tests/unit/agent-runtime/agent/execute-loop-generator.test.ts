@@ -3167,6 +3167,131 @@ describe('executeLoopGenerator', () => {
   // 3. Tool call → tool result → final response (2 turns)
   // ------------------------------------------------------------------
   describe('tool call → tool result → final response (2 turns)', () => {
+    it('returns a typed Bash execution-host failure for the logical turn', async () => {
+      const deps = createMockDeps();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'bash-host-failure',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{"command":"true"}' },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce(finalResponse(120, 'Host execution is unavailable.'));
+      vi.mocked(deps.toolExecutor.execute).mockResolvedValueOnce({
+        success: false,
+        llmContent: 'private failure',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'private failure',
+        },
+        metadata: { execution_host_failure: 'spawn' },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Run the required command.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        metadata: { executionHostFailureCategory: 'spawn' },
+      });
+      expect(JSON.stringify(result.metadata)).not.toContain('private failure');
+    });
+
+    it('suppresses the turn failure after a later successful Bash result', async () => {
+      const deps = createMockDeps();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const bashCall = (id: string): ChatResponse => ({
+        content: '',
+        toolCalls: [
+          {
+            id,
+            type: 'function',
+            function: { name: 'Bash', arguments: '{"command":"true"}' },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      chatMock
+        .mockResolvedValueOnce(bashCall('bash-host-failure'))
+        .mockResolvedValueOnce(bashCall('bash-host-success'))
+        .mockResolvedValueOnce(finalResponse(140, 'Recovered execution.'));
+      vi.mocked(deps.toolExecutor.execute)
+        .mockResolvedValueOnce({
+          success: false,
+          llmContent: 'failed',
+          error: { type: ToolErrorType.EXECUTION_ERROR, message: 'failed' },
+          metadata: { execution_host_failure: 'terminal' },
+        })
+        .mockResolvedValueOnce({ success: true, llmContent: 'ok' });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Recover the command.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.metadata).not.toHaveProperty('executionHostFailureCategory');
+    });
+
+    it('does not let a successful non-Bash tool hide a Bash host failure', async () => {
+      const deps = createMockDeps();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'bash-host-timeout',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{"command":"true"}' },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce(toolResponse(120))
+        .mockResolvedValueOnce(finalResponse(140, 'Read succeeded.'));
+      vi.mocked(deps.toolExecutor.execute)
+        .mockResolvedValueOnce({
+          success: false,
+          llmContent: 'failed',
+          error: { type: ToolErrorType.TIMEOUT_ERROR, message: 'failed' },
+          metadata: { execution_host_failure: 'timeout' },
+        })
+        .mockResolvedValueOnce({ success: true, llmContent: 'read' });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Try Bash, then inspect the file.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result.metadata).toMatchObject({
+        executionHostFailureCategory: 'timeout',
+      });
+    });
+
     it('emits static project rule provenance once for a fresh conversation', async () => {
       const deps = createMockDeps();
       deps.staticProjectRules = {

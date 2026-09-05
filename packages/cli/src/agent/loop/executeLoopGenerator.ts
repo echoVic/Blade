@@ -35,6 +35,11 @@ import type {
   SessionTurnFinalizationInfo,
   SubagentRunRef,
 } from '../../context/types.js';
+import {
+  createGoalExecutionHostFailureAccumulator,
+  observeGoalExecutionHostToolResult,
+  resolveGoalExecutionHostFailure,
+} from '../../goals/executionHostFailure.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderMcpInstructionReminder } from '../../mcp/McpServerInstructions.js';
@@ -1038,6 +1043,11 @@ export async function* executeLoopGenerator(
       ];
     };
     const failureTracker = createToolFailureTracker();
+    const executionHostFailure = createGoalExecutionHostFailureAccumulator();
+    const executionHostFailureMetadata = () => {
+      const category = resolveGoalExecutionHostFailure(executionHostFailure);
+      return category ? { executionHostFailureCategory: category } : {};
+    };
     const staleDetector = createStaleLoopDetector();
     const actionStationarity = createActionStationarityDetector();
 
@@ -3268,6 +3278,7 @@ validates the object and may return a bounded corrective error.`;
                     allToolResults.length
                   : undefined,
               totalToolFailures: failureTracker.totalFailures || undefined,
+              ...executionHostFailureMetadata(),
               ...(goalCompletionVerified
                 ? {
                     goalCompletionVerified: true,
@@ -4060,6 +4071,11 @@ validates the object and may return a bounded corrective error.`;
           } else {
             recordToolFailure(failureTracker, toolCall.function.name);
           }
+          observeGoalExecutionHostToolResult(
+            executionHostFailure,
+            toolCall.function.name,
+            result
+          );
 
           let toolResultContent = result.success
             ? result.llmContent || ''
