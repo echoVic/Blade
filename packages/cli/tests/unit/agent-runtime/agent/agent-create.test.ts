@@ -2,9 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
 import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
-import type { UserMessageContent } from '../../../../src/agent/types.js';
+import type {
+  ChatContext,
+  LoopOptions,
+  LoopResult,
+  UserMessageContent,
+} from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import type { MessagePersistenceMetadata } from '../../../../src/context/types.js';
+import type { GoalProgress, GoalSnapshot } from '../../../../src/goals/types.js';
 import * as promptBuilder from '../../../../src/prompts/index.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -2200,5 +2206,135 @@ describe('Agent runLoop system prompt injection', () => {
       })
     );
     expect(next.value).toMatchObject({ success: true });
+  });
+
+  it('persists execution-host failures and stops before a fourth Goal turn', async () => {
+    const activeGoal: GoalSnapshot = {
+      version: 2,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'recover the execution host',
+      status: 'active',
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 0,
+      createdAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:00.000Z',
+    };
+    let failureCount = 0;
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      beginTurn: vi.fn(() => ({ id: `goal-host-turn-${failureCount + 1}` })),
+      beginGoalContinuation: vi.fn(),
+      getGoal: vi.fn(async () =>
+        failureCount >= 3
+          ? {
+              ...activeGoal,
+              status: 'blocked' as const,
+              executionHostFailure: {
+                category: 'spawn' as const,
+                consecutiveCount: 3,
+                detectedAt: '2026-09-06T00:00:00.000Z',
+              },
+            }
+          : activeGoal
+      ),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+      drainSteering: vi.fn().mockResolvedValue([]),
+      drainSteeringOrSeal: vi.fn().mockResolvedValue({
+        messages: [],
+        sealed: true,
+      }),
+      prepareInputTurn: vi.fn(),
+    };
+    runtime.beginGoalContinuation.mockImplementation(async () => ({
+      ...activeGoal,
+      continuationCount: failureCount + 1,
+      ...(failureCount > 0
+        ? {
+            executionHostFailure: {
+              category: 'spawn' as const,
+              consecutiveCount: failureCount,
+              detectedAt: '2026-09-06T00:00:00.000Z',
+            },
+          }
+        : {}),
+    }));
+    runtime.recordGoalProgress.mockImplementation(async (progress: GoalProgress) => {
+      failureCount += progress.executionHostFailureCategory === 'spawn' ? 1 : 0;
+      return {
+        ...activeGoal,
+        status: failureCount >= 3 ? ('blocked' as const) : ('active' as const),
+        executionHostFailure: {
+          category: 'spawn' as const,
+          consecutiveCount: failureCount,
+          detectedAt: '2026-09-06T00:00:00.000Z',
+        },
+      };
+    });
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const testAgent = agent as unknown as {
+      isInitialized: boolean;
+      runLoop: (
+        message: UserMessageContent,
+        context: ChatContext,
+        options?: LoopOptions
+      ) => AsyncGenerator<never, LoopResult, void>;
+    };
+    testAgent.isInitialized = true;
+    const prompts: string[] = [];
+    testAgent.runLoop = vi.fn(async function* (
+      message: UserMessageContent
+    ): AsyncGenerator<never, LoopResult, void> {
+      prompts.push(String(message));
+      if (Date.now() < 0) yield* [];
+      return {
+        success: true,
+        finalMessage: 'Execution host unavailable.',
+        metadata: {
+          turnsCount: 1,
+          toolCallsCount: 1,
+          duration: 1,
+          executionHostFailureCategory: 'spawn',
+        },
+      };
+    });
+
+    const stream = agent.chatStream(
+      '',
+      {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      },
+      { goalContinuationOnly: true }
+    );
+    const events: unknown[] = [];
+    let next;
+    while (!(next = await stream.next()).done) events.push(next.value);
+    const result = next.value;
+
+    expect(result.success).toBe(true);
+    expect(testAgent.runLoop).toHaveBeenCalledTimes(3);
+    expect(runtime.recordGoalProgress).toHaveBeenCalledTimes(3);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'goal_updated',
+        goal: expect.objectContaining({
+          status: 'blocked',
+          executionHostFailure: expect.objectContaining({ consecutiveCount: 3 }),
+        }),
+      })
+    );
+    expect(prompts.some((prompt) => prompt.includes('Consecutive turns: 2/3'))).toBe(
+      true
+    );
   });
 });

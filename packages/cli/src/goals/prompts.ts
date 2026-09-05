@@ -1,4 +1,5 @@
 import { formatGoalExecutionFrontier } from './executionFrontier.js';
+import { buildGoalExecutionHostFailurePrompt } from './executionHostFailure.js';
 import { formatGoalFrontierStall } from './frontierStall.js';
 import { type GoalSnapshot, MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS } from './types.js';
 
@@ -57,6 +58,9 @@ and choose a different executable next step.`
       }
 `
     : '';
+  const executionHostFailure = goal.executionHostFailure
+    ? `\n${buildGoalExecutionHostFailurePrompt(goal.executionHostFailure)}\n`
+    : '';
 
   return `<system-reminder>
 <goal-state>
@@ -71,6 +75,7 @@ ${verification}
 </goal-state>
 ${goal.executionFrontier ? formatGoalExecutionFrontier(goal.executionFrontier) : ''}
 ${goal.frontierStall ? formatGoalFrontierStall(goal.frontierStall) : ''}
+${executionHostFailure}
 ${recovery}
 
 Continue working toward the active goal. Use the current workspace and transcript as

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGoalExecutionHostFailurePrompt,
   createGoalExecutionHostFailureAccumulator,
   executionHostFailureForTerminalFailure,
   observeGoalExecutionHostToolResult,
@@ -31,13 +32,32 @@ function result(input: {
 }
 
 describe('goal execution host failure accumulator', () => {
+  it('builds a bounded strategy nudge without carrying private diagnostics', () => {
+    expect(
+      buildGoalExecutionHostFailurePrompt({
+        category: 'spawn',
+        consecutiveCount: 2,
+      })
+    ).toBe(
+      [
+        '<goal-execution-host-failure>',
+        'Category: spawn',
+        'Consecutive turns: 2/3',
+        '</goal-execution-host-failure>',
+        '',
+        'The execution host has failed in consecutive Goal turns. Do not blindly',
+        'repeat the same command path. Validate shell, sandbox, and terminal',
+        'availability, then switch to a different executable strategy or call',
+        'UpdateGoal blocked with concrete evidence if external intervention is required.',
+      ].join('\n')
+    );
+  });
+
   it('maps only infrastructure terminal failures to goal categories', () => {
     expect(executionHostFailureForTerminalFailure('timeout')).toBe('timeout');
     expect(executionHostFailureForTerminalFailure('admission')).toBe('admission');
     expect(executionHostFailureForTerminalFailure('spawn')).toBe('spawn');
-    expect(executionHostFailureForTerminalFailure('finalization')).toBe(
-      'finalization'
-    );
+    expect(executionHostFailureForTerminalFailure('finalization')).toBe('finalization');
     expect(executionHostFailureForTerminalFailure('unavailable')).toBe('terminal');
     expect(executionHostFailureForTerminalFailure('aborted')).toBeUndefined();
     expect(executionHostFailureForTerminalFailure('unknown')).toBeUndefined();

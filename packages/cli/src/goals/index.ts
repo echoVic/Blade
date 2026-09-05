@@ -9,6 +9,7 @@ export type {
   GoalExecutionHostFailureCategory,
 } from './executionHostFailure.js';
 export {
+  buildGoalExecutionHostFailurePrompt,
   createGoalExecutionHostFailureAccumulator,
   executionHostFailureForTerminalFailure,
   GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,

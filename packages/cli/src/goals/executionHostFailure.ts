@@ -46,6 +46,24 @@ export function executionHostFailureForTerminalFailure(
   }
 }
 
+export function buildGoalExecutionHostFailurePrompt(state: {
+  category: GoalExecutionHostFailureCategory;
+  consecutiveCount: number;
+}): string {
+  const lines = [
+    '<goal-execution-host-failure>',
+    `Category: ${state.category}`,
+    `Consecutive turns: ${state.consecutiveCount}/3`,
+    '</goal-execution-host-failure>',
+    '',
+    'The execution host has failed in consecutive Goal turns. Do not blindly',
+    'repeat the same command path. Validate shell, sandbox, and terminal',
+    'availability, then switch to a different executable strategy or call',
+    'UpdateGoal blocked with concrete evidence if external intervention is required.',
+  ];
+  return lines.join('\n');
+}
+
 export function observeGoalExecutionHostToolResult(
   state: GoalExecutionHostFailureAccumulator,
   toolName: string,

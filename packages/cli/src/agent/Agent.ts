@@ -1108,6 +1108,7 @@ export class Agent {
           let goal = await this.sessionRuntime.recordGoalProgress({
             tokens: result.metadata?.tokensUsed ?? 0,
             elapsedMs: result.metadata?.duration ?? 0,
+            executionHostFailureCategory: result.metadata?.executionHostFailureCategory,
             prematureStopPattern: result.success
               ? detectGoalPrematureStop(result.finalMessage)
               : undefined,
