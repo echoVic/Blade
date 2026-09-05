@@ -5,6 +5,17 @@ export {
   readGoalExecutionFrontier,
 } from './executionFrontier.js';
 export { detectGoalPrematureStop } from './prematureStop.js';
+export {
+  createGoalExecutionHostFailureAccumulator,
+  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
+  isGoalExecutionHostFailureCategory,
+  observeGoalExecutionHostToolResult,
+  resolveGoalExecutionHostFailure,
+} from './executionHostFailure.js';
+export type {
+  GoalExecutionHostFailureAccumulator,
+  GoalExecutionHostFailureCategory,
+} from './executionHostFailure.js';
 export { buildGoalContinuationPrompt, formatGoalSummary } from './prompts.js';
 export type {
   GoalChangeEvent,
