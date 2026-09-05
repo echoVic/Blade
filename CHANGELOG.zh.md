@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.141] - 2026-09-06
+
+### 新增
+- 新增 durable Goal execution-host failure guard：对 typed Bash timeout、admission、spawn、finalization、sandbox-start 与 terminal 故障分类，并跨 continuation 和进程重启持久化同类 streak。
+- 在 TUI 状态栏与双语 Web Goal 控制区增加一等恢复状态，同时提供有界 ACP metadata 和 Headless JSONL 投影。
+
+### 修复
+- 同一类别连续第三个 execution-host failure logical turn 后自动阻断 active Goal，不再发起第四次 continuation；普通非零退出、测试失败、权限拒绝和用户取消不受影响。
+- Bash 成功、类别变化、Goal edit、显式 resume 或 completion 时清除 streak，并确保 command、output、raw error、path 和 credential 不进入公开投影。
+
+### 测试
+- 新增 production Headless、真实 ACP stdio、raw PTY TUI 与 Chromium Web 确定性资格测试，并连续通过三轮四端执行。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成 `8/8` 真实 API 矩阵；每格验证三次模型真实 Bash tool call、精确六次 Provider 请求边界、Web reload 恢复和零第四个 logical turn。
+
 ## [0.10.140] - 2026-09-06
 
 ### 新增

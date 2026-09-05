@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.141] - 2026-09-06
+
+### Added
+- Added a durable Goal execution-host failure guard for typed Bash timeout, admission, spawn, finalization, sandbox-start, and terminal failures, with same-category streaks persisted across continuations and restarts.
+- Added first-class recovery state to the TUI status bar and localized Web Goal controls, plus bounded ACP metadata and Headless JSONL projections.
+
+### Fixed
+- Automatically block an active Goal after the third consecutive same-category execution-host failure turn, preventing a fourth continuation while leaving ordinary non-zero exits, test failures, permission denials, and cancellations untouched.
+- Reset the streak after a successful Bash turn, category change, Goal edit, explicit resume, or completion, and keep commands, output, raw errors, paths, and credentials outside public projections.
+
+### Tests
+- Added deterministic production Headless, real ACP stdio, raw PTY TUI, and Chromium Web qualification, passing three consecutive four-surface runs.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through an `8/8` real-API matrix with three verified model-generated Bash calls per cell, exact six-request boundaries, Web reload hydration, and no fourth logical turn.
+
 ## [0.10.140] - 2026-09-06
 
 ### Added
