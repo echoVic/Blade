@@ -63,4 +63,5 @@ runner PATH。修正后的完整八格矩阵一次通过。
 不含 metadata。该路径现在有明确的 admission authority，因此补充专用
 `ForegroundProcessAdmissionError` 并将断言更新为 typed `admission`；定向复验通过。第二次
 全量运行只出现未修改源码中的 cross-process capacity 间歇失败，精确单测复跑通过。第三次
-全量运行完整通过。
+全量运行完整通过。版本元数据与证据提交后的最终 `bun run build && bun run test:all` 捕获到
+未修改 Chromium 测试中的 snapshot 刷新竞态；同一用例精确复跑通过。

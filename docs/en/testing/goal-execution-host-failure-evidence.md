@@ -72,4 +72,6 @@ metadata after foreground lease-registration failure. That path now has authorit
 admission evidence, so a dedicated `ForegroundProcessAdmissionError` and typed `admission`
 assertion were added and the focused rerun passed. The second full run had one intermittent
 failure in unchanged cross-process capacity sources; its exact rerun passed. The third full
-run passed completely.
+run passed completely. The final `bun run build && bun run test:all` after version and evidence
+commits caught a snapshot-refresh race in unchanged Chromium test sources; its exact rerun
+passed.
