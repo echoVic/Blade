@@ -16,6 +16,7 @@ const runnerInventory = [
   'foregroundBoundedOutputPtyRunner.ts',
   'foregroundCommandHandoffPtyRunner.ts',
   'foregroundProviderRecoveryPtyRunner.ts',
+  'goalExecutionHostFailurePtyRunner.ts',
   'goalFinalizationPtyRunner.ts',
   'gracefulShutdownPtyRunner.ts',
   'memoryConsolidationPtyRunner.ts',
@@ -132,6 +133,15 @@ describe('raw PTY marker latching source contract', () => {
       ).toBe(true);
     }
   );
+
+  it('latches Goal execution-host failure states across raw PTY redraws', () => {
+    const source = readRunner('goalExecutionHostFailurePtyRunner.ts');
+
+    expect(source).toContain("sawFirst ||= visible.includes('exec-host:timeout:1')");
+    expect(source).toContain("sawSecond ||= visible.includes('exec-host:timeout:2')");
+    expect(source).toContain('blocked ||=');
+    expect(source).toContain('waitForPtyExit(');
+  });
 
   it('overrides inherited CI flags for interactive PTY children', () => {
     expect(

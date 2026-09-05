@@ -146,6 +146,37 @@ describe('session surface qualification harness', () => {
     expect(ptyRunner).toContain('Saved 1 project memories');
   });
 
+  it('keeps Goal execution-host failure qualification on every production surface', async () => {
+    const integrationPath = path.resolve(
+      import.meta.dirname,
+      '../../integration/goal-execution-host-failure.test.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/goalExecutionHostFailureAcpRunner.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/goalExecutionHostFailurePtyRunner.ts'
+    );
+    const [integration, acpRunner, ptyRunner] = await Promise.all([
+      readFile(integrationPath, 'utf8'),
+      readFile(acpRunnerPath, 'utf8'),
+      readFile(ptyRunnerPath, 'utf8'),
+    ]);
+
+    expect(integration).toContain("import { chromium } from 'playwright'");
+    expect(integration).toContain('../../dist/blade.js');
+    expect(integration).toContain('execution_host_failure_count');
+    expect(integration).toContain('page.reload');
+    expect(integration).toContain('data-blade-goal-execution-host-failure');
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('blade/goal');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(ptyRunner).toContain('exec-host:timeout:1');
+    expect(ptyRunner).toContain('goal:blocked');
+  });
+
   it('creates a disconnected production ACP fixture with redacted evidence and temporary session refs', async () => {
     const fixtureRoot = await createFixtureRoot();
     cleanupRoots.push(fixtureRoot);
