@@ -54,3 +54,22 @@ Bash tool call and then have the proxy return one fixed, portable infinite shell
 product classification semantics changed. The first PTY matrix run also exposed a PATH shim
 shadowing the runner's own Node executable. The fix leaves runner PATH unchanged. The complete
 eight-cell matrix passed after these corrections.
+
+## Final gates
+
+- `bun run build && bun run type-check && bun run lint`: passed; CLI lint checked 1,418
+  files and Web lint checked 208 files.
+- `bun run test:all`: passed; the non-performance stage passed 499 files and 5,839 tests
+  with 101 files and 89 tests skipped. Performance passed 4 files and 9 tests with one file
+  and one test skipped. Total time was 497.61s.
+- `bun run --filter blade-code test:coverage`: passed; 499 files and 5,839 tests passed
+  with 101 files and 89 tests skipped. Coverage was 73.89% statements, 67.26% branches,
+  75.74% functions, and 75.26% lines.
+- `bun run test:web`: passed; 69 files and 666 tests.
+
+The first full gate exposed an old process-tree integration assertion that still required no
+metadata after foreground lease-registration failure. That path now has authoritative
+admission evidence, so a dedicated `ForegroundProcessAdmissionError` and typed `admission`
+assertion were added and the focused rerun passed. The second full run had one intermittent
+failure in unchanged cross-process capacity sources; its exact rerun passed. The third full
+run passed completely.

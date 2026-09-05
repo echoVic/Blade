@@ -46,3 +46,21 @@ Bash tool-call response 为 3；稳定等待后仍没有第 7 个请求。
 先验证真实模型确实产生 Bash tool call，再由代理返回固定可移植的无限 shell 命令；未修改产品
 分类语义。第一次 PTY 矩阵运行还暴露 PATH shim 抢占 runner 自身 Node 的问题，修正为不改变
 runner PATH。修正后的完整八格矩阵一次通过。
+
+## 最终门禁
+
+- `bun run build && bun run type-check && bun run lint`：passed；CLI lint 检查 1,418 个
+  文件，Web lint 检查 208 个文件；
+- `bun run test:all`：passed；非 performance 阶段 499 files passed、101 skipped，5,839
+  tests passed、89 skipped；performance 阶段 4 files passed、1 skipped，9 tests passed、
+  1 skipped；总耗时 497.61s；
+- `bun run --filter blade-code test:coverage`：passed；499 files / 5,839 tests passed，
+  101 files / 89 tests skipped；statements 73.89%、branches 67.26%、functions 75.74%、
+  lines 75.26%；
+- `bun run test:web`：passed；69 files、666 tests。
+
+第一次全量门禁发现旧 process-tree integration assertion 仍要求 foreground lease 注册失败
+不含 metadata。该路径现在有明确的 admission authority，因此补充专用
+`ForegroundProcessAdmissionError` 并将断言更新为 typed `admission`；定向复验通过。第二次
+全量运行只出现未修改源码中的 cross-process capacity 间歇失败，精确单测复跑通过。第三次
+全量运行完整通过。
