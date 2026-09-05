@@ -13,6 +13,13 @@ export interface ForegroundProcessOwnership {
   projectPath: string;
 }
 
+export class ForegroundProcessAdmissionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ForegroundProcessAdmissionError';
+  }
+}
+
 export interface PreparedForegroundProcess {
   child: ChildProcess;
   processTree: OwnedProcessTree;
@@ -39,7 +46,9 @@ export async function prepareForegroundProcess(
   );
   if (!child.pid) {
     await processTree.terminate();
-    throw new Error('Foreground command gate did not expose a PID');
+    throw new ForegroundProcessAdmissionError(
+      'Foreground command gate did not expose a PID'
+    );
   }
 
   const leaseStore = ownership
@@ -49,7 +58,10 @@ export async function prepareForegroundProcess(
     leaseStore?.register(processId, child.pid);
   } catch (error) {
     await processTree.terminate();
-    throw error;
+    throw new ForegroundProcessAdmissionError(
+      'Failed to register durable foreground command lease',
+      { cause: error }
+    );
   }
 
   let releasePromise: Promise<void> | undefined;

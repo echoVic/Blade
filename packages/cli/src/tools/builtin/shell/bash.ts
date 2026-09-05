@@ -6,11 +6,12 @@ import {
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { normalizeForegroundCommandHandoffMs } from '../../../config/foregroundCommandHandoff.js';
 import {
+  ForegroundProcessAdmissionError,
   type ForegroundProcessOwnership,
   prepareForegroundProcess,
 } from '../../../context/storage/DurableForegroundProcess.js';
-import { Default, Type } from '../../../schema/index.js';
 import { executionHostFailureForTerminalFailure } from '../../../goals/executionHostFailure.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import {
   stripSafeEnvVars,
@@ -387,7 +388,11 @@ Before executing commands:
         },
         metadata: {
           command,
-          execution_host_failure: 'spawn',
+          execution_host_failure:
+            error instanceof ForegroundProcessAdmissionError ? 'admission' : 'spawn',
+          ...(error instanceof ForegroundProcessAdmissionError
+            ? { admission_failed: true }
+            : {}),
         },
       };
     }

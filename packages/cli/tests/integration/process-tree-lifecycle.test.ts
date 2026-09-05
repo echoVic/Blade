@@ -444,7 +444,11 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       );
 
       expect(result.success).toBe(false);
-      expect(result.metadata).toBeUndefined();
+      expect(result.metadata).toMatchObject({
+        command: `printf admitted > ${shellQuote(marker)}`,
+        execution_host_failure: 'admission',
+        admission_failed: true,
+      });
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
