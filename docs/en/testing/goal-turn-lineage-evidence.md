@@ -2,7 +2,7 @@
 
 - Date: 2026-09-06
 - Feature version: `blade-code@0.10.142`
-- Release-fix version: `blade-code@0.10.143`
+- Release-fix version: `blade-code@0.10.144`
 - Implementation and real-API qualification baseline: `228292f8`
 - Deterministic surface command: `bunx vitest run --config vitest.config.ts tests/integration/goal-turn-lineage.test.ts --project integration`
 - Real-API command: `REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/goal-turn-lineage-trajectory.test.ts`
@@ -114,3 +114,13 @@ After the `0.10.143` version metadata and fix evidence were committed as `db0bb4
 `bun run build && bun run test:all` was executed at that exact HEAD. Build, 500
 non-performance files with 5,874 tests, and 4 performance files with 9 tests all passed in
 526.12 seconds.
+
+The `v0.10.143` workflow no longer showed the model-configuration failure, but serial Linux
+coverage reached the test runner's exact `900000ms` hard timeout without reporting an
+assertion failure. The outer runner then terminated the complete process tree as designed,
+and publishing remained blocked. After adding the four production-surface cases, 15 minutes
+no longer left enough room for test finalization and coverage aggregation on that platform. A
+failing-first contract raises only the coverage-specific budget to 20 minutes; ordinary
+all-suite tests remain at 10 minutes and all other test-type budgets remain unchanged. This
+ships as the independent `0.10.144` patch. The `v0.10.143` tag remains in place and has no
+corresponding npm package or GitHub Release.

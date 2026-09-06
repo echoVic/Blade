@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.144] - 2026-09-06
+
+### 修复
+- 扩展后的 production surface 矩阵使串行 Linux CI 超过旧上限，因此将全量 coverage 的有界进程预算从 15 分钟调整为 20 分钟。
+- 普通全量测试仍保持原有 10 分钟预算，单元、集成、性能与真实 API 的限制均不变。
+
+### 测试
+- 新增 test runner 契约，将 coverage 专用预算固定为 20 分钟，并在 failing-first 回归后通过全部 60 项 runner/qualification 测试。
+- 保留上一 fixture 隔离 patch 的空 home 完整 coverage、四端确定性测试与 DeepSeek Flash/Pro `8/8` 资格证据。
+
 ## [0.10.143] - 2026-09-06
 
 ### 修复

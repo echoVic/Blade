@@ -2,7 +2,7 @@
 
 - 日期：2026-09-06
 - 功能版本：`blade-code@0.10.142`
-- 发布修复版本：`blade-code@0.10.143`
+- 发布修复版本：`blade-code@0.10.144`
 - 实现与真实 API 资格基线：`228292f8`
 - 确定性表面命令：`bunx vitest run --config vitest.config.ts tests/integration/goal-turn-lineage.test.ts --project integration`
 - 真实 API 命令：`REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/goal-turn-lineage-trajectory.test.ts`
@@ -97,3 +97,10 @@ skipped；statements 73.90%、branches 67.27%、functions 75.76%、lines 75.27%�
 `0.10.143` 版本元数据与修复证据提交为 `db0bb43a` 后，在该精确 HEAD 执行
 `bun run build && bun run test:all`。build、非 performance 500 files / 5,874 tests、
 performance 4 files / 9 tests 全部通过，总耗时 526.12s。
+
+`v0.10.143` workflow 不再出现模型配置错误，但串行 Linux coverage 在没有断言失败时达到
+测试 runner 自身的精确 `900000ms` hard timeout；外层 runner 随即按设计终止完整进程树，
+publish 继续被阻断。新增四端 production fixture 后，15 分钟不再为该平台保留足够的测试
+收尾与 coverage 汇总窗口。通过 failing-first 契约将 coverage 专用预算提高到 20 分钟，普通
+全量测试仍为 10 分钟，其他测试类型预算不变。该调整作为独立 `0.10.144` patch 发布；
+`v0.10.143` tag 保持原位且没有对应 npm 包或 GitHub Release。

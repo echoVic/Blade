@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.144] - 2026-09-06
+
+### Fixed
+- Extended the bounded all-suite coverage process budget from 15 to 20 minutes after the expanded production-surface matrix exceeded the old limit on the serial Linux CI runner.
+- Kept ordinary all-suite runs on their existing 10-minute budget and left unit, integration, performance, and real-API limits unchanged.
+
+### Tests
+- Added a test-runner contract that fixes the coverage-specific budget at 20 minutes and verified all 60 runner/qualification tests after a failing-first regression.
+- Retained the empty-home full coverage, four-surface deterministic, and DeepSeek Flash/Pro `8/8` qualification evidence from the preceding fixture-isolation patch.
+
 ## [0.10.143] - 2026-09-06
 
 ### Fixed
