@@ -109,3 +109,8 @@ only a separate `PLAYWRIGHT_BROWSERS_PATH` to reuse the installed Chromium binar
 500 files and 5,874 tests with 102 files and 90 tests skipped. Coverage was 73.90% statements,
 67.27% branches, 75.76% functions, and 75.27% lines; total time was 552.54 seconds. This
 matches the failed Linux coverage gate's condition of having no personal Blade configuration.
+
+After the `0.10.143` version metadata and fix evidence were committed as `db0bb43a`,
+`bun run build && bun run test:all` was executed at that exact HEAD. Build, 500
+non-performance files with 5,874 tests, and 4 performance files with 9 tests all passed in
+526.12 seconds.

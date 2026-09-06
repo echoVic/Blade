@@ -93,3 +93,7 @@ passed，普通四端 `4/4`、资格契约 `47/47`、type-check 与 Biome 均通
 执行完整 `bun run test:coverage`：500 files / 5,874 tests passed，102 files / 90 tests
 skipped；statements 73.90%、branches 67.27%、functions 75.76%、lines 75.27%，总耗时
 552.54s。该命令与失败的 Linux coverage gate 具有相同的无个人 Blade 配置条件。
+
+`0.10.143` 版本元数据与修复证据提交为 `db0bb43a` 后，在该精确 HEAD 执行
+`bun run build && bun run test:all`。build、非 performance 500 files / 5,874 tests、
+performance 4 files / 9 tests 全部通过，总耗时 526.12s。
