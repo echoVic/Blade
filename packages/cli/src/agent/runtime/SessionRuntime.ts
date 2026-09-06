@@ -2350,6 +2350,9 @@ export class SessionRuntime {
           );
           continue;
         }
+        if (queued.delivery === 'current_turn' && queued.turnId) {
+          await this.goalStore.invalidateTurnLineageRoot(queued.turnId);
+        }
         this.backgroundTaskCompletionSettledIds.add(session.id);
         if (queued.duplicate) continue;
         enqueued++;
@@ -2516,6 +2519,9 @@ export class SessionRuntime {
             origin: 'user_shell',
           })
         : undefined;
+      if (steering?.delivery === 'current_turn' && steering.turnId) {
+        await this.goalStore.invalidateTurnLineageRoot(steering.turnId);
+      }
       const result: SessionUserShellCommandResult = {
         executionId,
         messageId,

@@ -1213,6 +1213,35 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('invalidates Goal root lineage when user shell output joins the active turn', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-user-shell-lineage-workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'goal-user-shell-lineage',
+      workspaceRoot,
+      userShellExecutor: {
+        execute: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: 'aux-output',
+          stderr: '',
+        })),
+      },
+    });
+    const active = await runtime.prepareInputTurn('start active Goal work');
+    if (!active.accepted) throw new Error('Expected active Goal turn');
+    await runtime.createGoal(
+      { objective: 'invalidate ambiguous shell ancestry' },
+      { turnId: active.handle.id }
+    );
+
+    await runtime.executeUserShellCommand('echo aux');
+
+    const goal = await runtime.getGoal();
+    expect(goal?.turnLineage).toEqual({ currentTurnId: active.handle.id });
+    await runtime.finishTurn(active.handle);
+    await runtime.dispose();
+  });
+
   it('keeps SessionStart environment inside the owned runtime', async () => {
     const variable = 'BLADE_TEST_SESSION_ONLY_ENV';
     const previous = process.env[variable];
@@ -4200,6 +4229,10 @@ describe('SessionRuntime', () => {
     const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
     const prepared = await runtime.prepareInputTurn('launch and wait');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    await runtime.createGoal(
+      { objective: 'invalidate ambiguous background ancestry' },
+      { turnId: prepared.handle.id }
+    );
     const contextManager = runtime.getExecutionEngine().getContextManager();
     const persistCompletion = vi.spyOn(
       contextManager.persistentStore,
@@ -4269,6 +4302,9 @@ describe('SessionRuntime', () => {
       ])
     );
     await expect(waiting).resolves.toBe(true);
+    expect((await runtime.getGoal())?.turnLineage).toEqual({
+      currentTurnId: prepared.handle.id,
+    });
     await runtime.notifyBackgroundSubagentCompleted(childSessionId);
     expect(persistCompletion).toHaveBeenCalledTimes(1);
     const next = await runtime.finishTurn(prepared.handle, {
