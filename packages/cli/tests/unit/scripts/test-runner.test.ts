@@ -59,7 +59,7 @@ describe('test runner timeout selection', () => {
   });
 
   it('uses the extended process budget for all-suite coverage runs', () => {
-    expect(resolveTestTimeout(testTypes.all, { coverage: true })).toBe(900_000);
+    expect(resolveTestTimeout(testTypes.all, { coverage: true })).toBe(1_200_000);
   });
 
   it('falls back to the standard budget without a coverage-specific timeout', () => {

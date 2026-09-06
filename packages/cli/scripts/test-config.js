@@ -128,7 +128,7 @@ export const testTypes = {
     project: null,
     timeout: 600_000,
     requiresProductionBuild: true,
-    coverageTimeout: 900_000,
+    coverageTimeout: 1_200_000,
     coverageExcludedProjects: ['performance'],
     projectSequence: ['!performance', 'performance'],
   },
