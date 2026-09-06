@@ -6,7 +6,10 @@
  */
 
 import { MemoryConsolidationProjectionSchema } from '../api/memoryConsolidationSchemas.js';
-import { GOAL_PREMATURE_STOP_PATTERNS } from '../goals/types.js';
+import {
+  GOAL_PREMATURE_STOP_PATTERNS,
+  MAX_GOAL_TURN_ID_CHARS,
+} from '../goals/types.js';
 import {
   Runtime,
   type Static,
@@ -350,6 +353,15 @@ const GoalEventSchema = event({
     StringEnum(['waiting_dependency', 'same_task_no_effect', 'repeated_deferral'])
   ),
   frontier_stall_count: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+  root_turn_id: Type.Optional(
+    Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+  ),
+  current_turn_id: Type.Optional(
+    Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+  ),
+  parent_turn_id: Type.Optional(
+    Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+  ),
 });
 
 const SubagentEventSchema = event({

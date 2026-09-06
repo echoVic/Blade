@@ -4002,6 +4002,11 @@ describe('AcpSession', () => {
             tokensUsed: 100,
             timeUsedSeconds: 2,
             continuationCount: 2,
+            turnLineage: {
+              rootTurnId: 'root-turn',
+              currentTurnId: 'current-turn',
+              parentTurnId: 'parent-turn',
+            },
             completionVerification: {
               attempt: 2,
               status: 'fail',
@@ -4036,6 +4041,11 @@ describe('AcpSession', () => {
             tokensUsed: 100,
             timeUsedSeconds: 2,
             continuationCount: 2,
+            turnLineage: {
+              rootTurnId: 'root-turn',
+              currentTurnId: 'continuation-turn',
+              parentTurnId: 'current-turn',
+            },
             prematureStop: {
               pattern: 'self_deferral',
               consecutiveCount: 2,
@@ -4076,6 +4086,11 @@ describe('AcpSession', () => {
                 category: 'terminal',
                 consecutiveCount: 2,
               },
+              turnLineage: {
+                rootTurnId: 'root-turn',
+                currentTurnId: 'continuation-turn',
+                parentTurnId: 'current-turn',
+              },
             },
           },
         },
@@ -4098,6 +4113,11 @@ describe('AcpSession', () => {
               executionHostFailure: {
                 category: 'terminal',
                 consecutiveCount: 2,
+              },
+              turnLineage: {
+                rootTurnId: 'root-turn',
+                currentTurnId: 'current-turn',
+                parentTurnId: 'parent-turn',
               },
             },
           },

@@ -6833,6 +6833,11 @@ describe('SessionRoutes runtime reuse', () => {
           tokensUsed: 100,
           timeUsedSeconds: 2,
           continuationCount: 2,
+          turnLineage: {
+            rootTurnId: 'root-turn',
+            currentTurnId: 'continuation-turn',
+            parentTurnId: 'parent-turn',
+          },
           prematureStop: {
             pattern: 'internal_wait',
             consecutiveCount: 2,
@@ -7055,6 +7060,13 @@ describe('SessionRoutes runtime reuse', () => {
       'goal.continuation.started',
       expect.objectContaining({
         continuation: 2,
+        goal: expect.objectContaining({
+          turnLineage: {
+            rootTurnId: 'root-turn',
+            currentTurnId: 'continuation-turn',
+            parentTurnId: 'parent-turn',
+          },
+        }),
         prematureStopPattern: 'internal_wait',
         prematureStopCount: 2,
       })

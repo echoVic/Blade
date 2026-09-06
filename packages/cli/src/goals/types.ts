@@ -9,6 +9,7 @@ export const GOAL_STATUSES = [
 ] as const;
 
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
+export const MAX_GOAL_TURN_ID_CHARS = 128;
 
 export const GOAL_COMPLETION_VERIFICATION_STATUSES = [
   'pending',

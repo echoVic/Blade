@@ -1996,6 +1996,9 @@ export class AcpSession {
                           },
                         }
                       : {}),
+                    ...(event.goal.turnLineage
+                      ? { turnLineage: event.goal.turnLineage }
+                      : {}),
                   },
                 },
               });
@@ -3150,6 +3153,7 @@ export class AcpSession {
                 },
               }
             : {}),
+          ...(goal.turnLineage ? { turnLineage: goal.turnLineage } : {}),
         },
       },
     };

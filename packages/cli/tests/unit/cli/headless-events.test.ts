@@ -552,6 +552,9 @@ describe('headless event contract', () => {
       premature_stop_count: 2,
       execution_host_failure_category: 'spawn',
       execution_host_failure_count: 2,
+      root_turn_id: 'root-turn',
+      current_turn_id: 'current-turn',
+      parent_turn_id: 'parent-turn',
     });
     expect(goal).toEqual({
       event_version: 1,
@@ -569,8 +572,23 @@ describe('headless event contract', () => {
       premature_stop_count: 2,
       execution_host_failure_category: 'spawn',
       execution_host_failure_count: 2,
+      root_turn_id: 'root-turn',
+      current_turn_id: 'current-turn',
+      parent_turn_id: 'parent-turn',
     });
     expect(() => HeadlessJsonlEventSchema.parse(goal)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        ...goal,
+        current_turn_id: '',
+      })
+    ).toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        ...goal,
+        parent_turn_id: 'x'.repeat(129),
+      })
+    ).toThrow();
 
     const shellStarted = createHeadlessJsonlEvent('user_shell_started', {
       execution_id: 'shell-1',

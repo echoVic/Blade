@@ -51,6 +51,39 @@ import {
 
 describe('API Schemas', () => {
   describe('GoalSchema', () => {
+    it('accepts only a strict bounded Goal turn lineage', () => {
+      const base = {
+        version: 2 as const,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'Trace the durable turn chain.',
+        status: 'active' as const,
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        continuationCount: 2,
+        createdAt: '2026-09-06T00:00:00.000Z',
+        updatedAt: '2026-09-06T00:00:01.000Z',
+      };
+      const turnLineage = {
+        rootTurnId: 'root-turn',
+        currentTurnId: 'current-turn',
+        parentTurnId: 'parent-turn',
+      };
+
+      expect(GoalSchema.parse({ ...base, turnLineage }).turnLineage).toEqual(
+        turnLineage
+      );
+      for (const invalid of [
+        { currentTurnId: '' },
+        { currentTurnId: 'x'.repeat(129) },
+        { currentTurnId: 'current-turn', rootTurnId: '' },
+        { currentTurnId: 'current-turn', parentTurnId: 'x'.repeat(129) },
+        { currentTurnId: 'current-turn', unknownTurnId: 'unknown-turn' },
+      ]) {
+        expect(() => GoalSchema.parse({ ...base, turnLineage: invalid })).toThrow();
+      }
+    });
+
     it('preserves durable completion verification evidence', () => {
       const goal = GoalSchema.parse({
         version: 1,

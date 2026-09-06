@@ -319,6 +319,53 @@ describe('headless runner', () => {
     );
   });
 
+  it('projects Goal turn lineage as bounded snake_case JSONL fields', async () => {
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'goal_updated',
+          goal: {
+            version: 2,
+            sessionId: 'headless-session',
+            goalId: 'goal-lineage',
+            objective: 'Expose durable lineage.',
+            status: 'active',
+            tokensUsed: 10,
+            timeUsedSeconds: 1,
+            continuationCount: 2,
+            turnLineage: {
+              rootTurnId: 'root-turn',
+              currentTurnId: 'current-turn',
+              parentTurnId: 'parent-turn',
+            },
+            createdAt: '2026-09-06T00:00:00.000Z',
+            updatedAt: '2026-09-06T00:00:01.000Z',
+          },
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    await runHeadless(
+      { headless: true, outputFormat: 'jsonl', message: 'continue' },
+      { stdout, stderr }
+    );
+
+    expect(stdout.write.mock.calls.map(([chunk]) => JSON.parse(chunk))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'goal',
+          goal_id: 'goal-lineage',
+          root_turn_id: 'root-turn',
+          current_turn_id: 'current-turn',
+          parent_turn_id: 'parent-turn',
+        }),
+      ])
+    );
+  });
+
   it('fails closed when a bare resume has no unfinished work', async () => {
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };

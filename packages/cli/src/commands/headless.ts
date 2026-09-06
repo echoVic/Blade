@@ -1005,6 +1005,9 @@ function createEventWriter(
             event.goal?.executionHostFailure?.consecutiveCount,
           frontier_stall_category: event.goal?.frontierStall?.category,
           frontier_stall_count: event.goal?.frontierStall?.consecutiveCount,
+          root_turn_id: event.goal?.turnLineage?.rootTurnId,
+          current_turn_id: event.goal?.turnLineage?.currentTurnId,
+          parent_turn_id: event.goal?.turnLineage?.parentTurnId,
         });
         return;
       }

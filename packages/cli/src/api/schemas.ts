@@ -2,7 +2,10 @@ import type {
   GoalPrematureStopPattern,
   GoalVerificationStallState,
 } from '../goals/types.js';
-import { GOAL_EXECUTION_HOST_FAILURE_CATEGORIES } from '../goals/types.js';
+import {
+  GOAL_EXECUTION_HOST_FAILURE_CATEGORIES,
+  MAX_GOAL_TURN_ID_CHARS,
+} from '../goals/types.js';
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -340,6 +343,22 @@ export const SessionUnarchiveResponseSchema = Runtime(
 );
 export type SessionUnarchiveResponse = Static<typeof SessionUnarchiveResponseSchema>;
 
+export const GoalTurnLineageSchema = Type.Object(
+  {
+    rootTurnId: Type.Optional(
+      Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+    ),
+    currentTurnId: Type.String({
+      minLength: 1,
+      maxLength: MAX_GOAL_TURN_ID_CHARS,
+    }),
+    parentTurnId: Type.Optional(
+      Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+    ),
+  },
+  { additionalProperties: false }
+);
+
 export const GoalSchema = Runtime(
   Type.Object({
     version: Type.Union([Type.Literal(1), Type.Literal(2)]),
@@ -388,6 +407,7 @@ export const GoalSchema = Runtime(
         { additionalProperties: false }
       )
     ),
+    turnLineage: Type.Optional(GoalTurnLineageSchema),
     verificationStall: Type.Optional(
       Type.Unsafe<GoalVerificationStallState>({ type: 'object' })
     ),
