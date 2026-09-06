@@ -113,6 +113,24 @@ describe('durable turn lifecycle', () => {
     );
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('rejects a Goal lineage that does not identify the started turn', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-turn-lineage-invalid-'));
+    const store = new PersistentStore(root);
+
+    await expect(
+      store.saveTurnStart('lineage-session', {
+        turnId: 'goal-turn-2',
+        kind: 'goal',
+        startedAt: '2026-09-06T00:00:00.000Z',
+        goalLineage: {
+          goalId: 'goal-1',
+          currentTurnId: 'different-turn',
+        },
+      })
+    ).rejects.toThrow('Goal lineage current turn must match turn start');
+    rmSync(root, { recursive: true, force: true });
+  });
   let storageRoot: string;
   let workspaceRoot: string;
 

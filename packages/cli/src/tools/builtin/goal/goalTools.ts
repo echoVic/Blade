@@ -100,7 +100,10 @@ export function createGoalTools(options: GoalToolOptions) {
     },
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        const goal = await getStore(context, options).create(params);
+        const goal = await getStore(context, options).create(
+          params,
+          context.turnId ? { turnId: context.turnId } : undefined
+        );
         return {
           success: true,
           llmContent: { goal },

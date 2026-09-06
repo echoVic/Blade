@@ -16,6 +16,10 @@ const loggerSpies = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+const streamingToolExecutorState = vi.hoisted(() => ({
+  executionContexts: [] as Array<Record<string, unknown>>,
+}));
+
 vi.mock('nanoid', () => ({ nanoid: () => 'mock-nanoid' }));
 
 vi.mock('../../../../src/context/CompactionService.js', () => ({
@@ -112,6 +116,10 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
 
 vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
   StreamingToolExecutor: class MockStreamingToolExecutor {
+    constructor(_pipeline: unknown, executionContext: Record<string, unknown>) {
+      streamingToolExecutorState.executionContexts.push(executionContext);
+    }
+
     setAdmissionPolicy(): void {
       // No admission behavior is needed for this loop-level mock.
     }
@@ -653,6 +661,7 @@ function contextualRuleResolution() {
 describe('executeLoopGenerator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    streamingToolExecutorState.executionContexts.length = 0;
     vi.mocked(CompactionService.compact).mockReset();
     memoryConsolidationState.commit.mockResolvedValue({
       outcome: 'nothing_to_store',
@@ -718,6 +727,88 @@ describe('executeLoopGenerator', () => {
         sessionId: 'test-session',
         taskListId: 'agent-team-shared',
       })
+    );
+  });
+
+  it('propagates the host turn ID to non-streaming tool execution', async () => {
+    const deps = createMockDeps();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-host-turn',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: '{"path":"package.json"}',
+            },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Read the file.',
+        toolCalls: undefined,
+        usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+        finishReason: 'stop',
+      });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Read package.json.',
+        createMockContext(),
+        {
+          stream: false,
+          turnFinalization: {
+            turnId: 'host-turn-non-streaming',
+            getInputMessageIds: async () => [],
+          },
+        },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.toolExecutor.execute).toHaveBeenCalledWith(
+      'Read',
+      { path: 'package.json' },
+      expect.objectContaining({ turnId: 'host-turn-non-streaming' })
+    );
+  });
+
+  it('propagates the host turn ID to streaming tool execution', async () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.chatService.streamChat).mockImplementationOnce(async function* () {
+      yield {
+        content: 'Done.',
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'stop',
+      } satisfies StreamChunk;
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Stream the result.',
+        createMockContext(),
+        {
+          stream: true,
+          turnFinalization: {
+            turnId: 'host-turn-streaming',
+            getInputMessageIds: async () => [],
+          },
+        },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(streamingToolExecutorState.executionContexts).toContainEqual(
+      expect.objectContaining({ turnId: 'host-turn-streaming' })
     );
   });
 

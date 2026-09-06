@@ -1142,6 +1142,9 @@ export class PersistentStore {
   }
 
   async saveTurnStart(sessionId: string, turn: SessionTurnStartInfo): Promise<void> {
+    if (turn.goalLineage && turn.goalLineage.currentTurnId !== turn.turnId) {
+      throw new Error('Goal lineage current turn must match turn start');
+    }
     await this.ensureSessionCreated(sessionId);
     try {
       await this.log(sessionId).commitValidated((events) => {

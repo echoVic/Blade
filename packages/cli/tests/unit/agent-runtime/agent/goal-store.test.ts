@@ -198,6 +198,60 @@ describe('GoalStore', () => {
     expect(resumed.turnLineage).toEqual(paused.turnLineage);
   });
 
+  it('invalidates only the root of the matching active turn lineage', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create(
+      { objective: 'invalidate ambiguous ancestry' },
+      { turnId: 'root-user-turn' }
+    );
+    const claim = await store.prepareTurnBinding('active-goal-turn', true);
+    if (!claim) throw new Error('Expected active Goal turn claim');
+    await store.commitTurnBinding(claim);
+
+    await expect(store.invalidateTurnLineageRoot('unrelated-turn')).resolves.toBeNull();
+    const invalidated = await store.invalidateTurnLineageRoot('active-goal-turn');
+
+    expect(invalidated?.turnLineage).toEqual({
+      currentTurnId: 'active-goal-turn',
+      parentTurnId: 'root-user-turn',
+    });
+  });
+
+  it('ignores progress from a stale Goal turn after an objective edit', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create(
+      { objective: 'original progress target' },
+      { turnId: 'root-user-turn' }
+    );
+    const claim = await store.prepareTurnBinding('stale-progress-turn', true);
+    if (!claim) throw new Error('Expected stale progress turn claim');
+    await store.commitTurnBinding(claim);
+    const edited = await store.edit('replacement progress target');
+
+    const result = await store.recordProgress({
+      tokens: 100,
+      elapsedMs: 1_000,
+      goalId: created.goalId,
+      objective: created.objective,
+      turnId: 'stale-progress-turn',
+    });
+
+    expect(result).toEqual(edited);
+    await expect(store.get()).resolves.toEqual(edited);
+  });
+
+  it('rejects empty and overlong host turn identifiers', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+
+    await expect(
+      store.create({ objective: 'reject invalid root' }, { turnId: '' })
+    ).rejects.toThrow('Goal turn ID');
+    await store.create({ objective: 'reject invalid continuation' });
+    await expect(store.prepareTurnBinding('x'.repeat(129), true)).rejects.toThrow(
+      'Goal turn ID'
+    );
+  });
+
   it('blocks after three consecutive execution-host failure turns', async () => {
     const store = new GoalStore(workspaceRoot, sessionId);
     await store.create({ objective: 'recover the execution host' });

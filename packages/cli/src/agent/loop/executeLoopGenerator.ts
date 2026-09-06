@@ -2248,6 +2248,7 @@ validates the object and may return a bounded corrective error.`;
               deps.toolExecutor,
               {
                 sessionId: context.sessionId,
+                turnId: options?.turnFinalization?.turnId,
                 taskListId: context.taskListId,
                 goalTaskListId: context.goalTaskListId,
                 userId: context.userId || 'default',
@@ -3514,6 +3515,7 @@ validates the object and may return a bounded corrective error.`;
 
               const result = await executeAdmittedTool(toolCall.function.name, params, {
                 sessionId: context.sessionId,
+                turnId: options?.turnFinalization?.turnId,
                 taskListId: context.taskListId,
                 goalTaskListId: context.goalTaskListId,
                 userId: context.userId || 'default',

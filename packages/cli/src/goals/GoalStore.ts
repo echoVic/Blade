@@ -240,7 +240,8 @@ export class GoalStore {
 
       const now = new Date().toISOString();
       const tokenBudget = normalizeTokenBudget(input.tokenBudget);
-      const turnId = options.turnId ? normalizeTurnId(options.turnId) : undefined;
+      const turnId =
+        options.turnId === undefined ? undefined : normalizeTurnId(options.turnId);
       const goal: GoalSnapshot = {
         version: 2,
         sessionId: this.sessionId,
@@ -595,6 +596,14 @@ export class GoalStore {
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return goal;
       }
+      if (
+        (progress.goalId !== undefined && progress.goalId !== goal.goalId) ||
+        (progress.objective !== undefined && progress.objective !== goal.objective) ||
+        (progress.turnId !== undefined &&
+          progress.turnId !== goal.turnLineage?.currentTurnId)
+      ) {
+        return goal;
+      }
 
       const tokens = Math.max(0, Math.round(progress.tokens));
       const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
@@ -730,6 +739,32 @@ export class GoalStore {
         version: 2,
         continuationCount: goal.continuationCount + (claim.continuation ? 1 : 0),
         turnLineage: claim.lineage,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.persistUnlocked(next);
+      this.emit(next);
+      return next;
+    });
+  }
+
+  async invalidateTurnLineageRoot(turnId: string): Promise<GoalSnapshot | null> {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
+      const goal = await this.readUnlocked();
+      if (
+        !goal ||
+        goal.turnLineage?.currentTurnId !== normalizeTurnId(turnId) ||
+        !goal.turnLineage.rootTurnId
+      ) {
+        return null;
+      }
+      const next = parseSchema(GoalSnapshotSchema, {
+        ...goal,
+        turnLineage: {
+          currentTurnId: goal.turnLineage.currentTurnId,
+          ...(goal.turnLineage.parentTurnId
+            ? { parentTurnId: goal.turnLineage.parentTurnId }
+            : {}),
+        },
         updatedAt: new Date().toISOString(),
       });
       await this.persistUnlocked(next);

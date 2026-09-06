@@ -164,6 +164,9 @@ export interface GoalCreateInput {
 export interface GoalProgress {
   tokens: number;
   elapsedMs: number;
+  goalId?: string;
+  objective?: string;
+  turnId?: string;
   prematureStopPattern?: GoalPrematureStopPattern;
   executionHostFailureCategory?: GoalExecutionHostFailureCategory;
 }

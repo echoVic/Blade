@@ -95,6 +95,8 @@ export interface ToolProgressUpdate {
 export interface ExecutionContext {
   userId?: string;
   sessionId?: string;
+  /** Host-generated ID of the top-level turn that owns this execution. */
+  turnId?: string;
   taskListId?: string; // Optional shared task-list scope (used by agent teams)
   goalTaskListId?: string; // Goal-scoped task list; Team taskListId takes precedence
   messageId?: string; // 对话消息 ID（用于快照管理）

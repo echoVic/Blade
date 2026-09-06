@@ -61,6 +61,7 @@ import type {
   SessionTurnFinalizationInfo,
   SessionTurnKind,
   SessionTurnMetrics,
+  SessionTurnStartInfo,
 } from '../../context/types.js';
 import {
   type GoalExecutionFrontierPreparation,
@@ -1574,8 +1575,41 @@ export class SessionRuntime {
     return metadata;
   }
 
-  createGoal(input: GoalCreateInput): Promise<GoalSnapshot> {
-    return this.goalStore.create(input);
+  createGoal(
+    input: GoalCreateInput,
+    options?: { turnId?: string }
+  ): Promise<GoalSnapshot> {
+    return this.goalStore.create(input, options);
+  }
+
+  async beginGoalTurn(
+    expectedGoal: Pick<GoalSnapshot, 'goalId' | 'objective'>
+  ): Promise<{ handle: ActiveTurnHandle; goal: GoalSnapshot } | null> {
+    const mailbox = this.getActiveTurnMailbox();
+    const handle = await mailbox.beginTurn();
+    const claim = await this.goalStore.prepareTurnBinding(handle.id, true);
+    if (
+      !claim ||
+      claim.goalId !== expectedGoal.goalId ||
+      claim.objective !== expectedGoal.objective
+    ) {
+      await mailbox.finishTurn(handle).catch(() => undefined);
+      return null;
+    }
+    let durableStarted = false;
+    try {
+      await this.saveTurnStart(handle, 'goal', [], {
+        goalId: claim.goalId,
+        ...claim.lineage,
+      });
+      durableStarted = true;
+      const goal = await this.goalStore.commitTurnBinding(claim);
+      if (!goal) throw new Error('Goal changed before turn lineage commit');
+      return { handle, goal };
+    } catch (error) {
+      await this.releaseFailedTurnStart(handle, durableStarted);
+      throw error;
+    }
   }
 
   editGoal(objective: string): Promise<GoalSnapshot> {
@@ -1614,10 +1648,6 @@ export class SessionRuntime {
 
   recordGoalProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
     return this.goalStore.recordProgress(progress);
-  }
-
-  beginGoalContinuation(): Promise<GoalSnapshot | null> {
-    return this.goalStore.tryBeginContinuation();
   }
 
   async pauseActiveGoal(reason: string): Promise<GoalSnapshot | null> {
@@ -1821,15 +1851,25 @@ export class SessionRuntime {
     });
     if (!preparation.accepted) return preparation;
 
+    let durableStarted = false;
     try {
+      const claim = await this.goalStore.prepareTurnBinding(
+        preparation.handle.id,
+        false
+      );
       await this.saveTurnStart(
         preparation.handle,
         preparation.mode === 'direct' ? 'user' : 'pending',
-        await mailbox.reservedMessageIds(preparation.handle)
+        await mailbox.reservedMessageIds(preparation.handle),
+        claim ? { goalId: claim.goalId, ...claim.lineage } : undefined
       );
+      durableStarted = true;
+      if (claim && !(await this.goalStore.commitTurnBinding(claim))) {
+        throw new Error('Goal changed before user turn lineage commit');
+      }
       return preparation;
     } catch (error) {
-      await mailbox.finishTurn(preparation.handle).catch(() => undefined);
+      await this.releaseFailedTurnStart(preparation.handle, durableStarted);
       throw error;
     }
   }
@@ -1852,6 +1892,9 @@ export class SessionRuntime {
       ...options,
       ...(materialized.metadata ? { metadata: materialized.metadata } : {}),
     });
+    if (result.accepted && result.delivery === 'current_turn' && result.turnId) {
+      await this.goalStore.invalidateTurnLineageRoot(result.turnId);
+    }
     if (result.accepted) this.signalBackgroundSubagentCompletionWaiters();
     return result;
   }
@@ -2018,17 +2061,22 @@ export class SessionRuntime {
 
     const next = await this.getActiveTurnMailbox().finishTurn(handle, options);
     if (!next) return undefined;
+    let durableStarted = false;
     try {
+      const claim = await this.goalStore.prepareTurnBinding(next.id, false);
       await this.saveTurnStart(
         next,
         'pending',
-        await this.getActiveTurnMailbox().reservedMessageIds(next)
+        await this.getActiveTurnMailbox().reservedMessageIds(next),
+        claim ? { goalId: claim.goalId, ...claim.lineage } : undefined
       );
+      durableStarted = true;
+      if (claim && !(await this.goalStore.commitTurnBinding(claim))) {
+        throw new Error('Goal changed before pending turn lineage commit');
+      }
       return next;
     } catch (error) {
-      await this.getActiveTurnMailbox()
-        .finishTurn(next)
-        .catch(() => undefined);
+      await this.releaseFailedTurnStart(next, durableStarted);
       throw error;
     }
   }
@@ -2037,15 +2085,22 @@ export class SessionRuntime {
     const mailbox = this.getActiveTurnMailbox();
     const handle = await mailbox.beginPendingTurn();
     if (!handle) return undefined;
+    let durableStarted = false;
     try {
+      const claim = await this.goalStore.prepareTurnBinding(handle.id, false);
       await this.saveTurnStart(
         handle,
         'pending',
-        await mailbox.reservedMessageIds(handle)
+        await mailbox.reservedMessageIds(handle),
+        claim ? { goalId: claim.goalId, ...claim.lineage } : undefined
       );
+      durableStarted = true;
+      if (claim && !(await this.goalStore.commitTurnBinding(claim))) {
+        throw new Error('Goal changed before pending turn lineage commit');
+      }
       return handle;
     } catch (error) {
-      await mailbox.finishTurn(handle).catch(() => undefined);
+      await this.releaseFailedTurnStart(handle, durableStarted);
       throw error;
     }
   }
@@ -3027,7 +3082,8 @@ export class SessionRuntime {
   private async saveTurnStart(
     handle: ActiveTurnHandle,
     kind: SessionTurnKind,
-    inputMessageIds: string[] = []
+    inputMessageIds: string[] = [],
+    goalLineage?: SessionTurnStartInfo['goalLineage']
   ): Promise<void> {
     await this.getExecutionEngine()
       .getContextManager()
@@ -3036,7 +3092,33 @@ export class SessionRuntime {
         kind,
         startedAt: new Date().toISOString(),
         ...(inputMessageIds.length > 0 ? { inputMessageIds } : {}),
+        ...(goalLineage ? { goalLineage } : {}),
       });
+  }
+
+  private async releaseFailedTurnStart(
+    handle: ActiveTurnHandle,
+    durableStarted: boolean
+  ): Promise<void> {
+    if (durableStarted) {
+      try {
+        await this.finishTurn(handle, {
+          outcome: {
+            status: 'aborted',
+            cause: 'failed',
+            turnsCount: 0,
+            toolCallsCount: 0,
+            durationMs: 0,
+          },
+        });
+        return;
+      } catch {
+        // The durable abort failed, but the in-memory owner must still be released.
+      }
+    }
+    await this.getActiveTurnMailbox()
+      .finishTurn(handle)
+      .catch(() => undefined);
   }
 
   private assertRewindIdle(): void {

@@ -104,6 +104,30 @@ describe('goal tools', () => {
     });
   });
 
+  it('takes Goal origin lineage only from the host execution context', async () => {
+    const create = getTool('CreateGoal').build({
+      objective: 'trace the originating user turn',
+    });
+
+    const result = await create.execute(new AbortController().signal, undefined, {
+      sessionId,
+      workspaceRoot,
+      turnId: 'trusted-user-turn',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: {
+        goal: {
+          turnLineage: {
+            rootTurnId: 'trusted-user-turn',
+            currentTurnId: 'trusted-user-turn',
+          },
+        },
+      },
+    });
+  });
+
   it('requires a concrete reason when the model marks a goal blocked', async () => {
     await execute('CreateGoal', { objective: 'finish the migration' });
 

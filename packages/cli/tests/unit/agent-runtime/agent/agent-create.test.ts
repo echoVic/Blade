@@ -10,7 +10,11 @@ import type {
 } from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import type { MessagePersistenceMetadata } from '../../../../src/context/types.js';
-import type { GoalProgress, GoalSnapshot } from '../../../../src/goals/types.js';
+import type {
+  GoalProgress,
+  GoalSnapshot,
+  GoalTurnLineage,
+} from '../../../../src/goals/types.js';
 import * as promptBuilder from '../../../../src/prompts/index.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -1991,8 +1995,15 @@ describe('Agent runLoop system prompt injection', () => {
 
   it('lets the model continue an active goal beyond 20 turns until it reaches a terminal state', async () => {
     const totalContinuations = 21;
-    const makeGoal = (status: 'active' | 'complete', continuationCount: number) => ({
-      version: 1 as const,
+    const makeGoal = (
+      status: 'active' | 'complete',
+      continuationCount: number,
+      turnLineage: GoalTurnLineage = {
+        rootTurnId: 'root-user-turn',
+        currentTurnId: 'root-user-turn',
+      }
+    ): GoalSnapshot => ({
+      version: 2,
       sessionId: 'session-1',
       goalId: 'goal-1',
       objective: 'finish the migration',
@@ -2000,19 +2011,25 @@ describe('Agent runLoop system prompt injection', () => {
       tokensUsed: continuationCount * 100,
       timeUsedSeconds: continuationCount,
       continuationCount,
+      turnLineage,
       createdAt: '2026-08-04T00:00:00.000Z',
       updatedAt: '2026-08-04T00:00:00.000Z',
     });
     let claimedContinuations = 0;
     let completedContinuations = 0;
+    let previousTurnId = 'root-user-turn';
     const runtime = {
       ...createGoalRuntimeMocks(),
-      beginTurn: vi.fn(() => ({
-        id: `goal-turn-${claimedContinuations + 1}`,
-      })),
-      beginGoalContinuation: vi.fn(async () => {
+      beginGoalTurn: vi.fn(async () => {
         claimedContinuations++;
-        return makeGoal('active', claimedContinuations);
+        const turnId = `goal-turn-${claimedContinuations}`;
+        const goal = makeGoal('active', claimedContinuations, {
+          rootTurnId: 'root-user-turn',
+          currentTurnId: turnId,
+          parentTurnId: previousTurnId,
+        });
+        previousTurnId = turnId;
+        return { handle: { id: turnId }, goal };
       }),
       getGoal: vi.fn(async () =>
         makeGoal(
@@ -2081,7 +2098,7 @@ describe('Agent runLoop system prompt injection', () => {
     }
 
     expect(runtime.prepareInputTurn).not.toHaveBeenCalled();
-    expect(runtime.beginGoalContinuation).toHaveBeenCalledTimes(totalContinuations);
+    expect(runtime.beginGoalTurn).toHaveBeenCalledTimes(totalContinuations);
     expect(optionsSeen).toHaveLength(totalContinuations);
     expect(
       optionsSeen.every((options) => options.transientInput === 'goal_continuation')
@@ -2089,6 +2106,17 @@ describe('Agent runLoop system prompt injection', () => {
     expect(
       events.filter((event) => event.kind === 'goal_continuation_started')
     ).toHaveLength(totalContinuations);
+    expect(
+      events.flatMap((event) =>
+        event.kind === 'goal_continuation_started' ? [event.goal.turnLineage] : []
+      )
+    ).toEqual(
+      Array.from({ length: totalContinuations }, (_, index) => ({
+        rootTurnId: 'root-user-turn',
+        currentTurnId: `goal-turn-${index + 1}`,
+        parentTurnId: index === 0 ? 'root-user-turn' : `goal-turn-${index}`,
+      }))
+    );
     expect(next.value).toMatchObject({ success: true });
   });
 
@@ -2120,12 +2148,23 @@ describe('Agent runLoop system prompt injection', () => {
     });
     let completedTurns = 0;
     let claimedTurns = 0;
+    let previousTurnId = 'root-user-turn';
     const runtime = {
       ...createGoalRuntimeMocks(),
-      beginTurn: vi.fn(() => ({ id: `goal-turn-${claimedTurns}` })),
-      beginGoalContinuation: vi.fn(async () => {
+      beginGoalTurn: vi.fn(async () => {
         claimedTurns++;
-        return makeGoal('active', claimedTurns, claimedTurns > 1);
+        const turnId = `goal-turn-${claimedTurns}`;
+        const goal = {
+          ...makeGoal('active', claimedTurns, claimedTurns > 1),
+          version: 2 as const,
+          turnLineage: {
+            rootTurnId: 'root-user-turn',
+            currentTurnId: turnId,
+            parentTurnId: previousTurnId,
+          },
+        };
+        previousTurnId = turnId;
+        return { handle: { id: turnId }, goal };
       }),
       getGoal: vi.fn(async () =>
         completedTurns >= 2
@@ -2224,8 +2263,7 @@ describe('Agent runLoop system prompt injection', () => {
     let failureCount = 0;
     const runtime = {
       ...createGoalRuntimeMocks(),
-      beginTurn: vi.fn(() => ({ id: `goal-host-turn-${failureCount + 1}` })),
-      beginGoalContinuation: vi.fn(),
+      beginGoalTurn: vi.fn(),
       getGoal: vi.fn(async () =>
         failureCount >= 3
           ? {
@@ -2248,19 +2286,26 @@ describe('Agent runLoop system prompt injection', () => {
       }),
       prepareInputTurn: vi.fn(),
     };
-    runtime.beginGoalContinuation.mockImplementation(async () => ({
-      ...activeGoal,
-      continuationCount: failureCount + 1,
-      ...(failureCount > 0
-        ? {
-            executionHostFailure: {
-              category: 'spawn' as const,
-              consecutiveCount: failureCount,
-              detectedAt: '2026-09-06T00:00:00.000Z',
-            },
-          }
-        : {}),
-    }));
+    runtime.beginGoalTurn.mockImplementation(async () => {
+      const turnId = `goal-host-turn-${failureCount + 1}`;
+      return {
+        handle: { id: turnId },
+        goal: {
+          ...activeGoal,
+          continuationCount: failureCount + 1,
+          turnLineage: { currentTurnId: turnId },
+          ...(failureCount > 0
+            ? {
+                executionHostFailure: {
+                  category: 'spawn' as const,
+                  consecutiveCount: failureCount,
+                  detectedAt: '2026-09-06T00:00:00.000Z',
+                },
+              }
+            : {}),
+        },
+      };
+    });
     runtime.recordGoalProgress.mockImplementation(async (progress: GoalProgress) => {
       failureCount += progress.executionHostFailureCategory === 'spawn' ? 1 : 0;
       return {

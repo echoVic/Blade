@@ -757,21 +757,21 @@ export class Agent {
     let policyUserMessage = message;
     let inputPersistenceMetadata = preparedMetadata;
     let initialGoal: GoalSnapshot | null = null;
+    let initialGoalTurnHandle: ActiveTurnHandle | undefined;
     let initialFrontier: Extract<
       Awaited<ReturnType<SessionRuntime['prepareGoalContinuation']>>,
       { ok: true }
     > | null = null;
     if (requestedGoalContinuationOnly) {
-      initialGoal = await this.sessionRuntime!.beginGoalContinuation();
-      if (!initialGoal) {
+      const goal = await this.sessionRuntime!.getGoal();
+      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return {
           success: true,
           finalMessage: '',
           metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
         };
       }
-      const preparedFrontier =
-        await this.sessionRuntime!.prepareGoalContinuation(initialGoal);
+      const preparedFrontier = await this.sessionRuntime!.prepareGoalContinuation(goal);
       if (!preparedFrontier.ok) {
         if (preparedFrontier.goal)
           yield { kind: 'goal_updated', goal: preparedFrontier.goal };
@@ -784,8 +784,17 @@ export class Agent {
           metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
         };
       }
-      initialGoal = preparedFrontier.goal;
-      initialFrontier = preparedFrontier;
+      const goalTurn = await this.sessionRuntime!.beginGoalTurn(preparedFrontier.goal);
+      if (!goalTurn) {
+        return {
+          success: true,
+          finalMessage: '',
+          metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+        };
+      }
+      initialGoal = goalTurn.goal;
+      initialGoalTurnHandle = goalTurn.handle;
+      initialFrontier = { ...preparedFrontier, goal: goalTurn.goal };
       enhancedMessage = buildGoalContinuationPrompt(initialGoal);
     } else if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
       try {
@@ -841,7 +850,7 @@ export class Agent {
       let turnHandle: ActiveTurnHandle | undefined;
       if (this.sessionRuntime) {
         if (goalContinuation) {
-          turnHandle = await this.sessionRuntime.beginTurn('goal');
+          turnHandle = initialGoalTurnHandle;
         } else if (pendingInputOnly) {
           turnHandle = await this.sessionRuntime.beginPendingTurn();
         } else {
@@ -1108,6 +1117,13 @@ export class Agent {
           let goal = await this.sessionRuntime.recordGoalProgress({
             tokens: result.metadata?.tokensUsed ?? 0,
             elapsedMs: result.metadata?.duration ?? 0,
+            ...(persistedGoal
+              ? {
+                  goalId: persistedGoal.goalId,
+                  objective: persistedGoal.objective,
+                  turnId: ownedHandle.id,
+                }
+              : {}),
             executionHostFailureCategory: result.metadata?.executionHostFailureCategory,
             prematureStopPattern: result.success
               ? detectGoalPrematureStop(result.finalMessage)
@@ -1191,12 +1207,8 @@ export class Agent {
             return result;
           }
 
-          const nextGoal = await this.sessionRuntime.beginGoalContinuation();
-          if (!nextGoal) {
-            return result;
-          }
           const preparedFrontier =
-            await this.sessionRuntime.prepareGoalContinuation(nextGoal);
+            await this.sessionRuntime.prepareGoalContinuation(goal);
           if (!preparedFrontier.ok) {
             if (preparedFrontier.goal) {
               yield { kind: 'goal_updated', goal: preparedFrontier.goal };
@@ -1214,9 +1226,15 @@ export class Agent {
               },
             };
           }
-          currentGoal = preparedFrontier.goal;
-          initialFrontier = preparedFrontier;
-          turnHandle = await this.sessionRuntime.beginTurn('goal');
+          const goalTurn = await this.sessionRuntime.beginGoalTurn(
+            preparedFrontier.goal
+          );
+          if (!goalTurn) {
+            return result;
+          }
+          currentGoal = goalTurn.goal;
+          initialFrontier = { ...preparedFrontier, goal: goalTurn.goal };
+          turnHandle = goalTurn.handle;
           pendingInputOnly = false;
           goalContinuation = true;
           currentMessage = buildGoalContinuationPrompt(currentGoal);
@@ -1224,7 +1242,7 @@ export class Agent {
           currentOutputSchema = undefined;
           yield {
             kind: 'goal_frontier_updated',
-            goal: preparedFrontier.goal,
+            goal: currentGoal,
             frontier: preparedFrontier.frontier,
             tasks: preparedFrontier.tasks,
           };

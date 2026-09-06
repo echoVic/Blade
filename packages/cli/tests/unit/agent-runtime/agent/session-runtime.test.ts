@@ -795,6 +795,207 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('binds a durable Goal continuation before exposing its turn owner', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-lineage-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const sessionId = 'goal-lineage-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const created = await runtime.createGoal({ objective: 'trace every turn' });
+
+    const first = await runtime.beginGoalTurn(created);
+    if (!first) throw new Error('Expected first Goal turn');
+    expect(first.goal).toMatchObject({
+      continuationCount: 1,
+      turnLineage: { currentTurnId: first.handle.id },
+    });
+    const events =
+      (await new PersistentStore(workspaceRoot).loadEvents(sessionId)) ?? [];
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_started',
+          data: expect.objectContaining({
+            turnId: first.handle.id,
+            goalLineage: {
+              goalId: created.goalId,
+              currentTurnId: first.handle.id,
+            },
+          }),
+        }),
+      ])
+    );
+    await runtime.finishTurn(first.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+
+    const second = await runtime.beginGoalTurn(first.goal);
+    if (!second) throw new Error('Expected second Goal turn');
+    expect(second.goal).toMatchObject({
+      continuationCount: 2,
+      turnLineage: {
+        currentTurnId: second.handle.id,
+        parentTurnId: first.handle.id,
+      },
+    });
+    await runtime.finishTurn(second.handle);
+    await runtime.dispose();
+  });
+
+  it('binds a direct user turn into an existing Goal without incrementing it', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-user-lineage-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'goal-user-lineage-session',
+      workspaceRoot,
+    });
+    const created = await runtime.createGoal(
+      { objective: 'retain the root across user input' },
+      { turnId: 'root-user-turn' }
+    );
+
+    const prepared = await runtime.prepareInputTurn('intervening user input');
+    if (!prepared.accepted) throw new Error('Expected direct user turn');
+    await expect(runtime.getGoal()).resolves.toMatchObject({
+      continuationCount: created.continuationCount,
+      turnLineage: {
+        rootTurnId: 'root-user-turn',
+        currentTurnId: prepared.handle.id,
+        parentTurnId: 'root-user-turn',
+      },
+    });
+
+    await runtime.finishTurn(prepared.handle);
+    await runtime.dispose();
+  });
+
+  it('releases Goal turn ownership when durable start persistence fails', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-start-failure-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'goal-start-failure-session',
+      workspaceRoot,
+    });
+    const created = await runtime.createGoal({ objective: 'survive start failure' });
+    vi.spyOn(PersistentStore.prototype, 'saveTurnStart').mockRejectedValueOnce(
+      new Error('turn start fsync failed')
+    );
+
+    await expect(runtime.beginGoalTurn(created)).rejects.toThrow(
+      'turn start fsync failed'
+    );
+    expect(runtime.hasTurnOwner()).toBe(false);
+    await expect(runtime.getGoal()).resolves.toEqual(created);
+
+    await runtime.dispose();
+  });
+
+  it('aborts a durable provisional turn when the Goal identity becomes stale', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-stale-claim-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const sessionId = 'goal-stale-claim-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const created = await runtime.createGoal({
+      objective: 'retain the original claim',
+    });
+    const commitTurnBinding = GoalStore.prototype.commitTurnBinding;
+    vi.spyOn(GoalStore.prototype, 'commitTurnBinding').mockImplementationOnce(
+      async function (this: GoalStore, claim) {
+        await this.edit('replace the stale objective');
+        return commitTurnBinding.call(this, claim);
+      }
+    );
+
+    await expect(runtime.beginGoalTurn(created)).rejects.toThrow(
+      'Goal changed before turn lineage commit'
+    );
+    expect(runtime.hasTurnOwner()).toBe(false);
+    const edited = await runtime.getGoal();
+    expect(edited).toMatchObject({
+      objective: 'replace the stale objective',
+      continuationCount: 0,
+    });
+    expect(edited).not.toHaveProperty('turnLineage');
+    const events =
+      (await new PersistentStore(workspaceRoot).loadEvents(sessionId)) ?? [];
+    const started = events.findLast((event) => event.type === 'turn_started');
+    expect(started).toBeDefined();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'turn_aborted',
+        data: expect.objectContaining({
+          turnId: started?.type === 'turn_started' ? started.data.turnId : '',
+          cause: 'failed',
+        }),
+      })
+    );
+
+    await runtime.dispose();
+  });
+
+  it('binds a queued pending turn into the active Goal lineage', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-pending-lineage-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'goal-pending-lineage-session',
+      workspaceRoot,
+    });
+    const created = await runtime.createGoal(
+      { objective: 'chain queued user input' },
+      { turnId: 'root-user-turn' }
+    );
+    await runtime.enqueueSteering('queued user follow-up', { allowBeforeTurn: true });
+
+    const pending = await runtime.beginPendingTurn();
+    if (!pending) throw new Error('Expected queued pending turn');
+    await expect(runtime.getGoal()).resolves.toMatchObject({
+      continuationCount: created.continuationCount,
+      turnLineage: {
+        rootTurnId: 'root-user-turn',
+        currentTurnId: pending.id,
+        parentTurnId: 'root-user-turn',
+      },
+    });
+
+    await runtime.finishTurn(pending);
+    await runtime.dispose();
+  });
+
+  it('invalidates Goal root lineage when external steering joins the active turn', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-steering-lineage-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'goal-steering-lineage-session',
+      workspaceRoot,
+    });
+    await runtime.createGoal(
+      { objective: 'invalidate ambiguous active-turn ancestry' },
+      { turnId: 'root-user-turn' }
+    );
+    const active = await runtime.prepareInputTurn('start active work');
+    if (!active.accepted) throw new Error('Expected active user turn');
+
+    const steering = await runtime.enqueueSteering('external correction');
+
+    expect(steering).toMatchObject({
+      accepted: true,
+      delivery: 'current_turn',
+      turnId: active.handle.id,
+    });
+    const goal = await runtime.getGoal();
+    expect(goal?.turnLineage).toEqual({
+      currentTurnId: active.handle.id,
+      parentTurnId: 'root-user-turn',
+    });
+
+    await runtime.finishTurn(active.handle);
+    await runtime.dispose();
+  });
+
   it('persists frontier stall observations only across continuation boundaries', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-frontier-stall-project');
     mkdirSync(workspaceRoot, { recursive: true });
