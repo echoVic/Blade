@@ -4,11 +4,15 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { createProcessModelResources } from '../../src/agent/resources/WorkspaceModelResources.js';
 import { SessionRuntime } from '../../src/agent/runtime/SessionRuntime.js';
+import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { PermissionMode, type RuntimeConfig } from '../../src/config/types.js';
 import { resetProjectionDbCache } from '../../src/context/storage/sqlite/projection.js';
 import type { GoalTurnLineage } from '../../src/goals/types.js';
+import { getPiModelCatalog } from '../../src/services/pi/PiModelCatalog.js';
 import { SessionService } from '../../src/services/SessionService.js';
+import { getState, vanillaStore } from '../../src/store/vanilla.js';
 
 export interface GoalTurnLineageFixture {
   root: string;
@@ -251,20 +255,15 @@ export async function createGoalTurnLineageFixture(
   ]);
   await writeFile(proofPath, 'GOAL_LINEAGE_PROOF\n');
   const configuredModel = options.config?.models[0];
-  const models = options.config
+  if (options.config && !configuredModel) {
+    throw new Error('Goal turn lineage fixture requires one configured model');
+  }
+  const models: RuntimeConfig['models'] = configuredModel
     ? [
         {
-          ...(configuredModel && typeof configuredModel === 'object'
-            ? configuredModel
-            : {}),
+          ...configuredModel,
           overrides: {
-            ...(configuredModel &&
-            typeof configuredModel === 'object' &&
-            'overrides' in configuredModel &&
-            configuredModel.overrides &&
-            typeof configuredModel.overrides === 'object'
-              ? configuredModel.overrides
-              : {}),
+            ...configuredModel.overrides,
             baseUrl,
             maxRetries: 0,
             maxOutputTokens: 1024,
@@ -286,18 +285,30 @@ export async function createGoalTurnLineageFixture(
           },
         },
       ];
+  const runtimeConfig: RuntimeConfig = {
+    ...DEFAULT_CONFIG,
+    ...options.config,
+    currentModelId: options.config?.currentModelId ?? 'goal-lineage-fixture',
+    models,
+    modelProviders: options.config?.modelProviders ?? {},
+    permissionMode: PermissionMode.YOLO,
+    maxTurns: 3,
+    hooks: { enabled: false },
+    disableAllHooks: true,
+    mcpServers: {},
+  };
   await writeFile(
     path.join(home, '.blade', 'config.json'),
     JSON.stringify(
       {
-        currentModelId: options.config?.currentModelId ?? 'goal-lineage-fixture',
-        models,
-        modelProviders: options.config?.modelProviders ?? {},
-        permissionMode: PermissionMode.YOLO,
-        maxTurns: 3,
-        hooks: { enabled: false },
-        disableAllHooks: true,
-        mcpServers: {},
+        currentModelId: runtimeConfig.currentModelId,
+        models: runtimeConfig.models,
+        modelProviders: runtimeConfig.modelProviders,
+        permissionMode: runtimeConfig.permissionMode,
+        maxTurns: runtimeConfig.maxTurns,
+        hooks: runtimeConfig.hooks,
+        disableAllHooks: runtimeConfig.disableAllHooks,
+        mcpServers: runtimeConfig.mcpServers,
       },
       null,
       2
@@ -306,18 +317,21 @@ export async function createGoalTurnLineageFixture(
   );
 
   const previous = process.env.BLADE_STORAGE_ROOT;
+  const previousConfig = getState().config.config;
   process.env.BLADE_STORAGE_ROOT = storageRoot;
+  getState().config.actions.setConfig(runtimeConfig);
   resetProjectionDbCache();
   try {
     await SessionService.createSessionMetadata(sessionId, workspace, {
       title: 'Goal turn lineage',
       taskStatus: 'completed',
-      selectedModelId: options.config?.currentModelId ?? 'goal-lineage-fixture',
+      selectedModelId: runtimeConfig.currentModelId,
       permissionMode: PermissionMode.YOLO,
     });
     const runtime = await SessionRuntime.create({
       sessionId,
       workspaceRoot: workspace,
+      modelResources: createProcessModelResources(workspace, runtimeConfig),
     });
     try {
       const rootTurn = await runtime.prepareInputTurn('create the durable Goal');
@@ -395,6 +409,15 @@ export async function createGoalTurnLineageFixture(
     throw error;
   } finally {
     resetProjectionDbCache();
+    if (previousConfig) {
+      getState().config.actions.setConfig(previousConfig);
+    } else {
+      getPiModelCatalog().configureModelProviders({}, []);
+      vanillaStore.setState((state) => ({
+        ...state,
+        config: { ...state.config, config: null },
+      }));
+    }
     if (previous === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previous;
   }
