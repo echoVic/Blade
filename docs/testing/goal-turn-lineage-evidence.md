@@ -73,3 +73,7 @@ Blade Web `bun test` 残留，以及一个已失去 owner 的 Goal fixture Blade
 Blade 测试残留后，未修改产品代码或测试配置，原命令精确复跑完整通过，且没有产生新的
 crash report。现有证据只能确认这是原生 worker teardown 的间歇崩溃，不能把相关性表述为
 已证明的单一根因。
+
+版本元数据与上述证据提交为 `86c97008` 后，又在该精确 HEAD 执行
+`bun run build && bun run test:all`。build、非 performance 500 files / 5,874 tests、
+performance 4 files / 9 tests 全部通过，总耗时 559.59s；本次没有出现新的原生崩溃。

@@ -85,3 +85,8 @@ remnants were stopped, the exact command passed without any product-code or test
 change and produced no new crash report. The available evidence establishes an intermittent
 native worker-teardown crash, but does not prove the observed resource pressure as a single
 root cause.
+
+After version metadata and the evidence above were committed as `86c97008`,
+`bun run build && bun run test:all` was executed at that exact HEAD. Build, 500
+non-performance files with 5,874 tests, and 4 performance files with 9 tests all passed in
+559.59 seconds, with no new native crash.
