@@ -50,6 +50,8 @@
   * [Compaction 项目记忆资格验证证据](testing/compaction-memory-consolidation-evidence.md)
   * [Fresh Independent Verification](reference/fresh-independent-verification.md)
   * [Goal Completion Verification](reference/goal-completion-verification.md)
+  * [Durable Goal 回合链](reference/goal-turn-lineage.md)
+  * [Durable Goal 回合链资格验证证据](testing/goal-turn-lineage-evidence.md)
   * [Goal 执行宿主故障保护](reference/goal-execution-host-failure-guard.md)
   * [Goal 执行宿主故障保护资格验证证据](testing/goal-execution-host-failure-evidence.md)
   * [Workspace Agent 资源隔离](reference/workspace-agent-resources.md)

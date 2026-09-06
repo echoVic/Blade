@@ -105,6 +105,12 @@ tool call，production Bash adapter 产生三次 typed timeout，GoalStore 在�
 原子 blocked 且不发起第四次 continuation。普通非零退出不得进入该 streak；Web reload、
 ACP metadata、TUI 状态与 Headless JSONL 必须从同一 durable Goal snapshot 得到一致结果。
 详见[Goal 执行宿主故障保护资格验证证据](./goal-execution-host-failure-evidence.md)。
+Durable Goal turn lineage 轨迹固定运行 DeepSeek Flash/Pro × Headless、真实 ACP stdio、
+raw PTY TUI 与 production Chromium Web 八格矩阵。每格必须完成三个真实 upstream 模型
+工具决策和精确六次 downstream Provider 请求，形成 root/current/parent 连续链；framework
+retry 与 model retry 都为 0。Goal sidecar、durable `turn_started`、ACP metadata、Headless
+JSONL、TUI 状态与 Web reload 后的 DOM 属性必须一致，且 lineage 不得进入 Provider prompt。
+详见[Durable Goal 回合链资格验证证据](./goal-turn-lineage-evidence.md)。
 完整 `test:real-api` 另含 GPT Prompt Cache efficiency 轨迹：先等待真实 cache read，
 再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
 该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较
