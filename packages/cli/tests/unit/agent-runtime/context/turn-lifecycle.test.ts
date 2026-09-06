@@ -81,6 +81,38 @@ async function appendRawUserMessage(
 }
 
 describe('durable turn lifecycle', () => {
+  it('preserves bounded Goal lineage on a durable turn start', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-turn-lineage-'));
+    const store = new PersistentStore(root);
+    await store.saveTurnStart('lineage-session', {
+      turnId: 'goal-turn-2',
+      kind: 'goal',
+      startedAt: '2026-09-06T00:00:00.000Z',
+      goalLineage: {
+        goalId: 'goal-1',
+        rootTurnId: 'user-turn-1',
+        currentTurnId: 'goal-turn-2',
+        parentTurnId: 'goal-turn-1',
+      },
+    });
+
+    await expect(store.loadEvents('lineage-session')).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_started',
+          data: expect.objectContaining({
+            goalLineage: {
+              goalId: 'goal-1',
+              rootTurnId: 'user-turn-1',
+              currentTurnId: 'goal-turn-2',
+              parentTurnId: 'goal-turn-1',
+            },
+          }),
+        }),
+      ])
+    );
+    rmSync(root, { recursive: true, force: true });
+  });
   let storageRoot: string;
   let workspaceRoot: string;
 

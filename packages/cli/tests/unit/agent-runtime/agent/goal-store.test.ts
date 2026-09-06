@@ -81,6 +81,123 @@ describe('GoalStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(created);
   });
 
+  it('binds a tool-created goal to its host-authoritative user turn', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create(
+      { objective: 'preserve the initiating turn' },
+      { turnId: 'user-turn-1' }
+    );
+
+    expect(created.turnLineage).toEqual({
+      rootTurnId: 'user-turn-1',
+      currentTurnId: 'user-turn-1',
+    });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
+      created
+    );
+  });
+
+  it('keeps externally created goals rootless while chaining continuations', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'trace automatic work' });
+    expect(created.turnLineage).toBeUndefined();
+
+    const firstClaim = await store.prepareTurnBinding('goal-turn-1', true);
+    expect(firstClaim).toMatchObject({
+      goalId: created.goalId,
+      objective: created.objective,
+      continuation: true,
+      lineage: { currentTurnId: 'goal-turn-1' },
+    });
+    if (!firstClaim) throw new Error('Expected first Goal turn claim');
+    const first = await store.commitTurnBinding(firstClaim);
+    expect(first).toMatchObject({
+      continuationCount: 1,
+      turnLineage: { currentTurnId: 'goal-turn-1' },
+    });
+
+    const secondClaim = await store.prepareTurnBinding('goal-turn-2', true);
+    if (!secondClaim) throw new Error('Expected second Goal turn claim');
+    const second = await store.commitTurnBinding(secondClaim);
+    expect(second).toMatchObject({
+      continuationCount: 2,
+      turnLineage: {
+        currentTurnId: 'goal-turn-2',
+        parentTurnId: 'goal-turn-1',
+      },
+    });
+    expect(second?.turnLineage).not.toHaveProperty('rootTurnId');
+  });
+
+  it('binds user turns without incrementing continuation count and preserves root', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create(
+      { objective: 'keep user follow-up ancestry' },
+      { turnId: 'root-user-turn' }
+    );
+    const claim = await store.prepareTurnBinding('follow-up-turn', false);
+    if (!claim) throw new Error('Expected user-turn Goal binding');
+
+    const updated = await store.commitTurnBinding(claim);
+
+    expect(updated).toMatchObject({
+      continuationCount: created.continuationCount,
+      turnLineage: {
+        rootTurnId: 'root-user-turn',
+        currentTurnId: 'follow-up-turn',
+        parentTurnId: 'root-user-turn',
+      },
+    });
+  });
+
+  it('makes a repeated turn binding idempotent', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'commit once' });
+    const claim = await store.prepareTurnBinding('goal-turn-1', true);
+    if (!claim) throw new Error('Expected Goal turn claim');
+
+    const first = await store.commitTurnBinding(claim);
+    const repeated = await store.commitTurnBinding(claim);
+
+    expect(repeated).toEqual(first);
+    expect(repeated?.continuationCount).toBe(1);
+  });
+
+  it('rejects a stale turn binding after an external objective edit', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create(
+      { objective: 'original objective' },
+      { turnId: 'root-user-turn' }
+    );
+    const claim = await store.prepareTurnBinding('stale-goal-turn', true);
+    if (!claim) throw new Error('Expected stale Goal turn claim');
+
+    const edited = await store.edit('externally edited objective');
+    expect(edited.turnLineage).toBeUndefined();
+    await expect(store.commitTurnBinding(claim)).resolves.toBeNull();
+    await expect(store.get()).resolves.toMatchObject({
+      objective: 'externally edited objective',
+      continuationCount: 0,
+    });
+  });
+
+  it('preserves turn lineage through pause and explicit resume', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create(
+      { objective: 'resume the same lineage' },
+      { turnId: 'root-user-turn' }
+    );
+
+    const paused = await store.pause('manual pause');
+    const resumed = await store.resume();
+
+    expect(paused.turnLineage).toEqual({
+      rootTurnId: 'root-user-turn',
+      currentTurnId: 'root-user-turn',
+    });
+    expect(resumed.turnLineage).toEqual(paused.turnLineage);
+  });
+
   it('blocks after three consecutive execution-host failure turns', async () => {
     const store = new GoalStore(workspaceRoot, sessionId);
     await store.create({ objective: 'recover the execution host' });

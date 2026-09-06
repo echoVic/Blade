@@ -59,6 +59,20 @@ export interface GoalExecutionHostFailureState {
   detectedAt: string;
 }
 
+export interface GoalTurnLineage {
+  rootTurnId?: string;
+  currentTurnId: string;
+  parentTurnId?: string;
+}
+
+export interface GoalTurnBindingClaim {
+  goalId: string;
+  objective: string;
+  expectedUpdatedAt: string;
+  continuation: boolean;
+  lineage: GoalTurnLineage;
+}
+
 export interface GoalPrematureStopState {
   pattern: GoalPrematureStopPattern;
   consecutiveCount: number;
@@ -129,6 +143,7 @@ export interface GoalSnapshot {
   verificationStall?: GoalVerificationStallState;
   prematureStop?: GoalPrematureStopState;
   executionHostFailure?: GoalExecutionHostFailureState;
+  turnLineage?: GoalTurnLineage;
   executionFrontier?: GoalExecutionFrontier;
   frontierStall?: GoalFrontierStallState;
   createdAt: string;

@@ -25,6 +25,8 @@ import {
   type GoalFrontierStallState,
   type GoalProgress,
   type GoalSnapshot,
+  type GoalTurnBindingClaim,
+  type GoalTurnLineage,
   MAX_CONSECUTIVE_GOAL_EXECUTION_HOST_FAILURES,
   MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
@@ -34,6 +36,7 @@ import {
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
 const MAX_OBJECTIVE_CHARS = 100_000;
+const MAX_GOAL_TURN_ID_CHARS = 128;
 
 export interface GoalFinalizationReconciliation {
   goal: GoalSnapshot;
@@ -89,6 +92,22 @@ const GoalExecutionHostFailureSchema = Type.Object({
   detectedAt: Type.String({ format: 'date-time' }),
 });
 
+const GoalTurnLineageSchema = Type.Object(
+  {
+    rootTurnId: Type.Optional(
+      Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+    ),
+    currentTurnId: Type.String({
+      minLength: 1,
+      maxLength: MAX_GOAL_TURN_ID_CHARS,
+    }),
+    parentTurnId: Type.Optional(
+      Type.String({ minLength: 1, maxLength: MAX_GOAL_TURN_ID_CHARS })
+    ),
+  },
+  { additionalProperties: false }
+);
+
 const GoalSnapshotSchema = Type.Object({
   version: Type.Union([Type.Literal(1), Type.Literal(2)]),
   sessionId: Type.String({ minLength: 1 }),
@@ -116,6 +135,7 @@ const GoalSnapshotSchema = Type.Object({
     })
   ),
   executionHostFailure: Type.Optional(GoalExecutionHostFailureSchema),
+  turnLineage: Type.Optional(GoalTurnLineageSchema),
   executionFrontier: Type.Optional(GoalExecutionFrontierSchema),
   frontierStall: Type.Optional(GoalFrontierStallSchema),
   createdAt: Type.String({ format: 'date-time' }),
@@ -145,6 +165,15 @@ function normalizeTokenBudget(tokenBudget: number | undefined): number | undefin
     throw new Error('Goal token budget must be a positive integer');
   }
   return tokenBudget;
+}
+
+function normalizeTurnId(turnId: string): string {
+  if (turnId.length < 1 || turnId.length > MAX_GOAL_TURN_ID_CHARS) {
+    throw new Error(
+      `Goal turn ID must contain between 1 and ${MAX_GOAL_TURN_ID_CHARS} characters`
+    );
+  }
+  return turnId;
 }
 
 function normalizeVerificationSummary(summary: string | undefined): string | undefined {
@@ -197,7 +226,10 @@ export class GoalStore {
     );
   }
 
-  async create(input: GoalCreateInput): Promise<GoalSnapshot> {
+  async create(
+    input: GoalCreateInput,
+    options: { turnId?: string } = {}
+  ): Promise<GoalSnapshot> {
     return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const existing = await this.readUnlocked();
       if (existing && existing.status !== 'complete') {
@@ -208,6 +240,7 @@ export class GoalStore {
 
       const now = new Date().toISOString();
       const tokenBudget = normalizeTokenBudget(input.tokenBudget);
+      const turnId = options.turnId ? normalizeTurnId(options.turnId) : undefined;
       const goal: GoalSnapshot = {
         version: 2,
         sessionId: this.sessionId,
@@ -218,6 +251,14 @@ export class GoalStore {
         tokensUsed: 0,
         timeUsedSeconds: 0,
         continuationCount: 0,
+        ...(turnId
+          ? {
+              turnLineage: {
+                rootTurnId: turnId,
+                currentTurnId: turnId,
+              },
+            }
+          : {}),
         createdAt: now,
         updatedAt: now,
       };
@@ -239,6 +280,7 @@ export class GoalStore {
         verificationStall: undefined,
         prematureStop: undefined,
         executionHostFailure: undefined,
+        turnLineage: undefined,
         frontierStall: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
@@ -635,6 +677,64 @@ export class GoalStore {
         continuationCount: goal.continuationCount + 1,
         updatedAt: new Date().toISOString(),
       };
+    });
+  }
+
+  async prepareTurnBinding(
+    turnId: string,
+    continuation: boolean
+  ): Promise<GoalTurnBindingClaim | null> {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
+      const goal = await this.readUnlocked();
+      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
+        return null;
+      }
+      const currentTurnId = normalizeTurnId(turnId);
+      const previous = goal.turnLineage;
+      const lineage: GoalTurnLineage = {
+        ...(previous?.rootTurnId ? { rootTurnId: previous.rootTurnId } : {}),
+        currentTurnId,
+        ...(previous?.currentTurnId && previous.currentTurnId !== currentTurnId
+          ? { parentTurnId: previous.currentTurnId }
+          : previous?.parentTurnId
+            ? { parentTurnId: previous.parentTurnId }
+            : {}),
+      };
+      return {
+        goalId: goal.goalId,
+        objective: goal.objective,
+        expectedUpdatedAt: goal.updatedAt,
+        continuation,
+        lineage,
+      };
+    });
+  }
+
+  async commitTurnBinding(claim: GoalTurnBindingClaim): Promise<GoalSnapshot | null> {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
+      const goal = await this.readUnlocked();
+      if (
+        !goal ||
+        (goal.status !== 'active' && goal.status !== 'verifying') ||
+        goal.goalId !== claim.goalId ||
+        goal.objective !== claim.objective
+      ) {
+        return null;
+      }
+      if (goal.turnLineage?.currentTurnId === claim.lineage.currentTurnId) {
+        return goal;
+      }
+      if (goal.updatedAt !== claim.expectedUpdatedAt) return null;
+      const next = parseSchema(GoalSnapshotSchema, {
+        ...goal,
+        version: 2,
+        continuationCount: goal.continuationCount + (claim.continuation ? 1 : 0),
+        turnLineage: claim.lineage,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.persistUnlocked(next);
+      this.emit(next);
+      return next;
     });
   }
 

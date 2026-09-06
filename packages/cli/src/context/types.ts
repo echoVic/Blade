@@ -14,6 +14,7 @@ import type { SessionStateStorage } from './storage/SessionStateStorage.js';
 
 export const MAX_TURN_INPUT_MESSAGE_IDS = 120;
 export const MAX_TURN_INPUT_MESSAGE_ID_CHARS = 128;
+export const MAX_TURN_ID_CHARS = 128;
 
 export function parseTurnInputMessageIds(value: unknown): string[] | undefined {
   if (
@@ -511,6 +512,12 @@ export interface SessionTurnStartInfo {
   kind: SessionTurnKind;
   startedAt: string;
   inputMessageIds?: string[];
+  goalLineage?: {
+    goalId: string;
+    rootTurnId?: string;
+    currentTurnId: string;
+    parentTurnId?: string;
+  };
 }
 
 export interface SessionTurnMetrics {
