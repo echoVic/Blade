@@ -16,13 +16,13 @@ continuation count of four, and performs exactly six Provider requests. Web pres
 and parent across reload, while the PTY verifies complete lineage through real terminal output.
 
 The real-API release matrix uses `deepseek-v4-flash` and `deepseek-v4-pro` across the same four
-production entrypoints. All eight release cells passed; Vitest reported
-`8 passed | 1 skipped`, and the complete matrix took about 90 seconds.
+production entrypoints. All eight final release cells passed; Vitest reported
+`8 passed | 1 skipped` in 97.25 seconds:
 
 | Model | Headless | ACP stdio | raw PTY TUI | Chromium Web |
 | --- | ---: | ---: | ---: | ---: |
-| `deepseek-v4-flash` | passed | passed | passed | passed |
-| `deepseek-v4-pro` | passed | passed | passed | passed |
+| `deepseek-v4-flash` | 8.800s | 12.712s | 10.967s | 12.655s |
+| `deepseek-v4-pro` | 11.553s | 12.952s | 11.610s | 13.522s |
 
 Framework retry and model retry are disabled in every cell. Each of three real upstream
 requests requires the model to choose `Bash /usr/bin/true`. Only after parsing and confirming
@@ -59,14 +59,29 @@ continuation and projects the deterministic Goal-tool trajectory only after veri
 real decision. This does not change product lineage semantics or substitute a text response
 for a real model tool selection.
 
-## Completed focused gates
+## Final gates
 
-- `bun run build` from the current source: passed, with only the existing stale Browserslist
-  data warning;
+- `bun run build && bun run type-check && bun run lint`: passed; CLI lint checked 1,423 files,
+  Web lint checked 208 files, and build emitted only the existing stale Browserslist data
+  warning;
+- `bun run test:all`: passed; the non-performance stage passed 500 files and 5,874 tests with
+  102 files and 90 tests skipped. Performance passed 4 files and 9 tests with one file and one
+  test skipped. Total time was 568.71s;
+- `bun run test:web`: passed; 69 files and 668 tests;
+- the exact `bun run test:coverage` rerun: passed; 500 files and 5,874 tests passed with 102
+  files and 90 tests skipped. Coverage was 73.93% statements, 67.32% branches, 75.78%
+  functions, and 75.30% lines;
 - three final deterministic four-surface runs: `12/12` passed;
 - qualification, surface harness, and raw-PTY source contracts: `126/126` passed;
-- CLI `bun run type-check`, Biome checks for affected files, and `git diff --check`: passed;
-- the real-API DeepSeek Flash/Pro four-surface matrix: `8/8` release cells passed.
+- Chromium preflight and the real-API DeepSeek Flash/Pro four-surface matrix: passed, with
+  `8/8` release cells in the latter.
 
-The complete repository release gate is rerun before the version commit, and its fresh output
-remains authoritative for final counts.
+The first coverage run reported no assertion failure, but its Node process terminated with
+`SIGSEGV`. The macOS crash report places the fault in a V8 weak callback/GC during Vitest worker
+teardown, with native `rolldown-binding.darwin-arm64.node` loaded in the process. At that time,
+the machine also had two Blade Web `bun test` remnants running for more than 18 hours at one
+full CPU core each and an ownerless Goal-fixture Blade server. After those three Blade test
+remnants were stopped, the exact command passed without any product-code or test-configuration
+change and produced no new crash report. The available evidence establishes an intermittent
+native worker-teardown crash, but does not prove the observed resource pressure as a single
+root cause.

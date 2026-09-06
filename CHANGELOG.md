@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.142] - 2026-09-06
+
+### Added
+- Added host-authoritative, durable Goal turn lineage with bounded root, current, and direct-parent turn IDs across continuations, user follow-ups, pending turns, and process restarts.
+- Added first-class TUI status and `/goal status` output, localized Web Goal details with reload-safe DOM attributes, ACP metadata, Headless JSONL fields, and bilingual reference and qualification documentation.
+
+### Fixed
+- Ordered durable `turn_started` persistence before identity-fenced Goal binding, with owner release or failed abort on partial failure, so Provider execution cannot begin from a ghost or stale lineage.
+- Invalidated unprovable roots after Goal edits or ambiguous same-turn external input, rejected stale Goal progress, and kept internal lineage out of Provider prompts, permissions, user content, and credentials.
+
+### Tests
+- Added deterministic production Headless, real ACP stdio, raw PTY TUI, and Chromium Web qualification, passing three consecutive four-surface runs for `12/12`.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through an `8/8` real-API matrix with three verified model tool decisions and exactly six Provider requests per cell, zero framework/model retries, Web reload hydration, and exact durable chain agreement.
+
 ## [0.10.141] - 2026-09-06
 
 ### Added

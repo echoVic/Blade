@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.142] - 2026-09-06
+
+### 新增
+- 新增宿主权威、可持久化的 Goal 回合链，以有界 root、current 和直接 parent turn ID 覆盖 continuation、用户 follow-up、pending turn 与进程重启。
+- 在 TUI 状态栏和 `/goal status`、双语 Web Goal 详情与 reload-safe DOM 属性、ACP metadata、Headless JSONL 中增加一等 lineage 投影，并补充双语 reference 与资格证据。
+
+### 修复
+- 固定先持久写入 `turn_started`、再按 Goal identity fence 提交 binding 的顺序；部分失败时释放 owner 或写 failed abort，避免 Provider 从幽灵或过期 lineage 开始执行。
+- Goal edit 或同一 active turn 出现来源不明确的外部输入时使不可证明的 root 失效，拒绝 stale Goal progress，并确保内部 lineage 不进入 Provider prompt、权限语义、用户正文或 credential。
+
+### 测试
+- 新增 production Headless、真实 ACP stdio、raw PTY TUI 与 Chromium Web 确定性资格测试，连续三轮四端执行共 `12/12` passed。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成 `8/8` 真实 API 矩阵；每格验证三次模型真实工具决策和精确六次 Provider 请求，framework/model retry 均为 0，并覆盖 Web reload 恢复与 durable chain 精确一致。
+
 ## [0.10.141] - 2026-09-06
 
 ### 新增

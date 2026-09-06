@@ -15,12 +15,12 @@ production Chromium Web。最终 fixture 连续运行三轮，每轮 `4/4` passe
 请求。Web reload 后 current/parent 不变，PTY 从真实终端输出确认完整 lineage。
 
 真实 API release matrix 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 覆盖相同四个生产
-入口，八个 release cell 全部通过；Vitest 报告 `8 passed | 1 skipped`，完整矩阵约 90 秒。
+入口，最终八个 release cell 全部通过；Vitest 报告 `8 passed | 1 skipped`，耗时 97.25s：
 
 | 模型 | Headless | ACP stdio | raw PTY TUI | Chromium Web |
 | --- | ---: | ---: | ---: | ---: |
-| `deepseek-v4-flash` | passed | passed | passed | passed |
-| `deepseek-v4-pro` | passed | passed | passed | passed |
+| `deepseek-v4-flash` | 8.800s | 12.712s | 10.967s | 12.655s |
+| `deepseek-v4-pro` | 11.553s | 12.952s | 11.610s | 13.522s |
 
 每格关闭 framework retry 与 model retry。三个真实 upstream request 都必须由模型选择
 `Bash /usr/bin/true`；代理解析并确认 tool call 后，才向 production Runtime 投影两次 `Read`
@@ -51,12 +51,25 @@ Authorization，runner 与失败诊断会对测试使用的 credential 做脱敏
 决策后才投影确定性的 Goal 工具轨迹。该调整没有改变产品 lineage 语义，也没有用文本回答
 替代真实模型工具选择。
 
-## 已完成的局部门禁
+## 最终门禁
 
-- 当前源码 `bun run build`：passed；只有既有 Browserslist 数据过期提示；
+- `bun run build && bun run type-check && bun run lint`：passed；CLI lint 检查 1,423 个
+  文件，Web lint 检查 208 个文件，只有既有 Browserslist 数据过期提示；
+- `bun run test:all`：passed；非 performance 阶段 500 files passed、102 skipped，5,874
+  tests passed、90 skipped；performance 阶段 4 files passed、1 skipped，9 tests passed、
+  1 skipped；总耗时 568.71s；
+- `bun run test:web`：passed；69 files、668 tests；
+- `bun run test:coverage` 精确复跑：passed；500 files / 5,874 tests passed，102 files /
+  90 tests skipped；statements 73.93%、branches 67.32%、functions 75.78%、lines 75.30%；
 - 最终确定性四端 fixture 三轮：`12/12` passed；
 - qualification、surface harness 与 raw-PTY source contract：`126/126` passed；
-- CLI `bun run type-check`、受影响文件 Biome check 与 `git diff --check`：passed；
-- 真实 API DeepSeek Flash/Pro 四端矩阵：`8/8` release cells passed。
+- Chromium preflight 与真实 API DeepSeek Flash/Pro 四端矩阵：passed，后者为 `8/8`
+  release cells。
 
-全仓 release gate 的最终计数在版本提交前重新执行，并以该次命令输出为准。
+第一次 coverage 运行没有报告断言失败，但 Node 进程被 `SIGSEGV` 终止。macOS crash report
+把 fault 定位在 Vitest worker teardown 的 V8 weak callback/GC，进程同时加载了原生
+`rolldown-binding.darwin-arm64.node`。当时机器还存在两个运行超过 18 小时、各占满一核的
+Blade Web `bun test` 残留，以及一个已失去 owner 的 Goal fixture Blade server；清理这三个
+Blade 测试残留后，未修改产品代码或测试配置，原命令精确复跑完整通过，且没有产生新的
+crash report。现有证据只能确认这是原生 worker teardown 的间歇崩溃，不能把相关性表述为
+已证明的单一根因。
