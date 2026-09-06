@@ -282,6 +282,48 @@ describe('production qualification contract', () => {
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
   });
 
+  it('registers the durable Goal turn lineage release matrix', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectoryPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/goal-turn-lineage-trajectory.test.ts'
+    );
+    const fixturePath = path.resolve(
+      __dirname,
+      '../../support/goalTurnLineageFixture.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      __dirname,
+      '../../support/goalTurnLineagePtyRunner.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      __dirname,
+      '../../support/goalTurnLineageAcpRunner.ts'
+    );
+    const trajectory = fs.readFileSync(trajectoryPath, 'utf8');
+    const fixture = fs.readFileSync(fixturePath, 'utf8');
+    const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+    const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/goal-turn-lineage-trajectory.test.ts'"
+    );
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain("['headless', 'acp', 'pty', 'web']");
+    expect(trajectory).toContain('matrix.length !== 8');
+    expect(trajectory).toContain('frameworkRetryBudget(context)');
+    expect(trajectory).toContain('configured?.overrides?.maxRetries ?? 0');
+    expect(trajectory).toContain('await chromium.launch({ headless: true })');
+    expect(trajectory).toContain('requestCount()).toBe(6)');
+    expect(fixture).toContain('upstreamBaseUrl');
+    expect(fixture).toContain('requiredToolCallCount');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+  });
+
   it('registers the production Chromium durable task unread trajectory', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),

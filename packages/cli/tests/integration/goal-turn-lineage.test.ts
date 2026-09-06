@@ -114,10 +114,10 @@ async function assertDurableLineage(
     const goal = await new GoalStore(test.workspace, test.sessionId).get();
     expect(goal).toMatchObject({
       status: 'blocked',
-      continuationCount: 2,
+      continuationCount: 4,
       turnLineage: {
         rootTurnId: test.expectedBeforeResume.rootTurnId,
-        parentTurnId: test.expectedBeforeResume.currentTurnId,
+        parentTurnId: expect.any(String),
         currentTurnId: expect.any(String),
       },
     });
@@ -132,7 +132,7 @@ async function assertDurableLineage(
         ? [event.data.goalLineage]
         : []
     );
-    expect(boundStarts).toHaveLength(3);
+    expect(boundStarts).toHaveLength(5);
     expect(boundStarts[0]).toEqual({
       goalId: goal?.goalId,
       rootTurnId: test.expectedBeforeResume.rootTurnId,
@@ -145,9 +145,17 @@ async function assertDurableLineage(
       currentTurnId: test.expectedBeforeResume.currentTurnId,
       parentTurnId: test.expectedBeforeResume.parentTurnId,
     });
-    expect(boundStarts[2]).toEqual({ goalId: goal?.goalId, ...lineage });
+    for (let index = 2; index < boundStarts.length; index++) {
+      expect(boundStarts[index]).toEqual({
+        goalId: goal?.goalId,
+        rootTurnId: test.expectedBeforeResume.rootTurnId,
+        currentTurnId: expect.any(String),
+        parentTurnId: boundStarts[index - 1]?.currentTurnId,
+      });
+    }
+    expect(boundStarts.at(-1)).toEqual({ goalId: goal?.goalId, ...lineage });
     expect(JSON.stringify({ goal, boundStarts })).not.toContain(test.secret);
-    expect(test.provider.requestCount()).toBe(2);
+    expect(test.provider.requestCount()).toBe(6);
     return lineage;
   } finally {
     resetProjectionDbCache();
@@ -216,7 +224,7 @@ describe
             '--max-turns',
             '3',
             '--allowed-tools',
-            'UpdateGoal',
+            'Bash,Read,UpdateGoal',
             '--no-verification-agent',
           ],
           {
@@ -398,16 +406,15 @@ describe
           '[data-blade-goal-status="blocked"]' +
           '[data-blade-goal-root-turn="' +
           test.expectedBeforeResume.rootTurnId +
-          '"]' +
-          '[data-blade-goal-parent-turn="' +
-          test.expectedBeforeResume.currentTurnId +
           '"]';
         const section = page.locator(selector);
         await section.waitFor({ state: 'visible', timeout: 60_000 });
         const currentTurnId = await section.getAttribute(
           'data-blade-goal-current-turn'
         );
+        const parentTurnId = await section.getAttribute('data-blade-goal-parent-turn');
         expect(currentTurnId).toBeTruthy();
+        expect(parentTurnId).toBeTruthy();
 
         refreshing = true;
         await page.reload({ waitUntil: 'domcontentloaded' });
@@ -419,6 +426,7 @@ describe
         );
         const lineage = await assertDurableLineage(test);
         expect(currentTurnId).toBe(lineage.currentTurnId);
+        expect(parentTurnId).toBe(lineage.parentTurnId);
         expect(await page.locator('body').textContent()).not.toContain(test.secret);
         expect(output).not.toContain(test.secret);
         expect(faults).toEqual([]);

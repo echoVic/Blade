@@ -27,7 +27,7 @@ function loadInput(): RunnerInput {
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
-  timeoutMs = 60_000
+  timeoutMs = 220_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
       '--resume',
       input.sessionId,
       '--allowed-tools',
-      'UpdateGoal',
+      'Bash,Read,UpdateGoal',
       '--no-verification-agent',
     ],
     {

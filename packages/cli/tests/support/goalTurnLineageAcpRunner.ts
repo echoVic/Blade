@@ -22,7 +22,7 @@ function loadInput(): RunnerInput {
 async function waitFor(
   predicate: () => boolean,
   message: string,
-  timeoutMs = 60_000
+  timeoutMs = 220_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -118,11 +118,26 @@ async function main(): Promise<void> {
       mcpServers: [],
     });
     await waitFor(
-      () => metadata(client, 'blade/goal').some((goal) => goal.status === 'blocked'),
-      'ACP did not observe the blocked Goal lineage'
+      () =>
+        metadata(client, 'blade/goal').some(
+          (goal) => goal.status !== 'active' && goal.status !== 'verifying'
+        ) ||
+        child.exitCode !== null ||
+        child.signalCode !== null,
+      'ACP did not observe a terminal Goal lineage'
     );
     const continuations = metadata(client, 'blade/goalContinuation');
     const goals = metadata(client, 'blade/goal');
+    if (!goals.some((goal) => goal.status === 'blocked')) {
+      throw new Error(
+        `ACP Goal ended without the expected blocked state: ${JSON.stringify({
+          statuses: goals.map((goal) => goal.status),
+          continuations: continuations.map((goal) => goal.continuation),
+          exitCode: child.exitCode,
+          signalCode: child.signalCode,
+        })}`
+      );
+    }
     const serialized = JSON.stringify(client.sessionUpdates);
     if (serialized.includes(input.secret)) {
       throw new Error('ACP Goal turn lineage projection leaked a credential');
