@@ -188,4 +188,25 @@ describe('ChatStatusBar', () => {
     ).toBe('exec-host:spawn:2');
     expect(formatGoalExecutionHostFailureStatus(undefined)).toBe('');
   });
+
+  it('格式化有界 Goal turn lineage 且缺失 root 时显示问号', async () => {
+    const { formatGoalTurnLineageStatus } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    expect(
+      formatGoalTurnLineageStatus({
+        rootTurnId: 'root-turn-123456',
+        currentTurnId: 'current-turn-987654',
+        parentTurnId: 'parent-turn-abcdef',
+      })
+    ).toBe('lineage:root-tur:current-');
+    expect(
+      formatGoalTurnLineageStatus({
+        currentTurnId: 'current-turn-987654',
+        parentTurnId: 'parent-turn-abcdef',
+      })
+    ).toBe('lineage:?:current-');
+    expect(formatGoalTurnLineageStatus(undefined)).toBe('');
+  });
 });

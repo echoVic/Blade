@@ -185,6 +185,9 @@ export function GoalControlBar() {
           data-blade-goal-execution-host-failure-count={
             goal.executionHostFailure?.consecutiveCount
           }
+          data-blade-goal-root-turn={goal.turnLineage?.rootTurnId}
+          data-blade-goal-current-turn={goal.turnLineage?.currentTurnId}
+          data-blade-goal-parent-turn={goal.turnLineage?.parentTurnId}
         >
           {/* Compact strip */}
           <div
@@ -353,6 +356,20 @@ export function GoalControlBar() {
                           })}
                     </span>
                   </div>
+                  {goal.turnLineage && (
+                    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-[hsl(var(--deck-border))]/50 bg-[hsl(var(--deck-canvas))]/45 px-2.5 py-2 font-mono text-[10px] text-[hsl(var(--deck-ink-muted))]">
+                      <span>{t('goal.lineage.origin')}</span>
+                      <span className="truncate">
+                        {goal.turnLineage.rootTurnId ?? '?'}
+                      </span>
+                      <span>{t('goal.lineage.current')}</span>
+                      <span className="truncate">{goal.turnLineage.currentTurnId}</span>
+                      <span>{t('goal.lineage.parent')}</span>
+                      <span className="truncate">
+                        {goal.turnLineage.parentTurnId ?? '?'}
+                      </span>
+                    </div>
+                  )}
                   {goal.prematureStop && (
                     <div className="mt-2 inline-flex items-center gap-1.5 font-mono text-[10px] text-amber-700 dark:text-amber-300">
                       <RotateCcw className="h-3 w-3" />

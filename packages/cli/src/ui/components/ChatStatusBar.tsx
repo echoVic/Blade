@@ -37,6 +37,13 @@ export function formatGoalExecutionHostFailureStatus(
   return failure ? `exec-host:${failure.category}:${failure.consecutiveCount}` : '';
 }
 
+export function formatGoalTurnLineageStatus(
+  lineage: GoalSnapshot['turnLineage']
+): string {
+  if (!lineage) return '';
+  return `lineage:${lineage.rootTurnId?.slice(0, 8) ?? '?'}:${lineage.currentTurnId.slice(0, 8)}`;
+}
+
 /**
  * 聊天状态栏组件
  * 显示权限模式、快捷键提示、API状态和处理状态
@@ -204,6 +211,9 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                   ? ` ${formatGoalExecutionHostFailureStatus(
                       goal.executionHostFailure
                     )}`
+                  : ''}
+                {goal.turnLineage
+                  ? ` ${formatGoalTurnLineageStatus(goal.turnLineage)}`
                   : ''}
               </Text>
               <Text color="gray">·</Text>

@@ -105,11 +105,17 @@ export function formatGoalSummary(goal: GoalSnapshot): string {
         ? `\nVerification feedback: ${goal.completionVerification.summary}`
         : '')
     : '';
+  const lineage = goal.turnLineage
+    ? `\nOrigin turn: ${goal.turnLineage.rootTurnId ?? '?'}\n` +
+      `Current turn: ${goal.turnLineage.currentTurnId}\n` +
+      `Parent turn: ${goal.turnLineage.parentTurnId ?? '?'}`
+    : '';
   return [
     `Goal ${goal.status}: ${goal.objective}`,
     `Usage: ${budget}, ${goal.timeUsedSeconds}s, ${goal.continuationCount} continuations`,
     reason,
     verification,
+    lineage,
   ]
     .filter(Boolean)
     .join('\n');

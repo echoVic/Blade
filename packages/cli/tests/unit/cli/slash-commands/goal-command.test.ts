@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import goalCommand from '../../../../src/slash-commands/goal.js';
 import type { SlashCommandContext } from '../../../../src/slash-commands/types.js';
 
@@ -69,6 +70,26 @@ describe('/goal', () => {
       success: true,
       data: { action: 'goal_cleared', goal: null },
     });
+  });
+
+  it('shows the complete root, current, and parent turn lineage in status', async () => {
+    const store = new GoalStore(
+      context.workspaceRoot ?? context.cwd,
+      'goal-command-session'
+    );
+    await store.create(
+      { objective: 'inspect the exact turn lineage' },
+      { turnId: 'root-user-turn-complete' }
+    );
+    const claim = await store.prepareTurnBinding('current-goal-turn-complete', true);
+    if (!claim) throw new Error('Expected Goal turn binding');
+    await store.commitTurnBinding(claim);
+
+    const result = await goalCommand.handler(['status'], context);
+
+    expect(result.content).toContain('Origin turn: root-user-turn-complete');
+    expect(result.content).toContain('Current turn: current-goal-turn-complete');
+    expect(result.content).toContain('Parent turn: root-user-turn-complete');
   });
 
   it('rejects invalid budgets without creating a goal', async () => {

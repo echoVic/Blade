@@ -3,6 +3,7 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setLocale } from '../../../src/i18n';
 
 const sessionState = vi.hoisted(() => ({
   goal: {
@@ -84,6 +85,13 @@ const sessionState = vi.hoisted(() => ({
           consecutiveCount: number;
           detectedAt: string;
         },
+    turnLineage: undefined as
+      | undefined
+      | {
+          rootTurnId?: string;
+          currentTurnId: string;
+          parentTurnId?: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -111,6 +119,7 @@ describe('GoalControlBar', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setLocale('en');
     sessionState.historySurfaceSelection = null;
     (sessionState.goal as { status: string }).status = 'paused';
     sessionState.goal.statusReason = 'paused by user';
@@ -120,6 +129,7 @@ describe('GoalControlBar', () => {
     sessionState.goal.executionFrontier = undefined;
     sessionState.goal.frontierStall = undefined;
     sessionState.goal.executionHostFailure = undefined;
+    sessionState.goal.turnLineage = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -321,6 +331,65 @@ describe('GoalControlBar', () => {
     });
     expect(container.textContent).toContain('Execution host recovery');
     expect(container.textContent).toContain('Spawn · 2/3');
+  });
+
+  it('projects and renders durable Goal turn lineage without stale root text', async () => {
+    sessionState.goal.turnLineage = {
+      rootTurnId: 'root-turn-123456',
+      currentTurnId: 'current-turn-987654',
+      parentTurnId: 'parent-turn-abcdef',
+    };
+    act(() => root.render(<GoalControlBar />));
+
+    let section = container.querySelector('[data-blade-goal-status="paused"]');
+    expect(section).toMatchObject({
+      dataset: {
+        bladeGoalRootTurn: 'root-turn-123456',
+        bladeGoalCurrentTurn: 'current-turn-987654',
+        bladeGoalParentTurn: 'parent-turn-abcdef',
+      },
+    });
+    await act(async () => {
+      container
+        .querySelector('[aria-label="Expand goal details"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Origin');
+    expect(container.textContent).toContain('root-turn-123456');
+    expect(container.textContent).toContain('Current');
+    expect(container.textContent).toContain('current-turn-987654');
+    expect(container.textContent).toContain('Parent');
+    expect(container.textContent).toContain('parent-turn-abcdef');
+
+    sessionState.goal.turnLineage = { currentTurnId: 'edited-turn' };
+    act(() => root.render(<GoalControlBar />));
+    section = container.querySelector('[data-blade-goal-status="paused"]');
+
+    expect(container.textContent).not.toContain('root-turn-123456');
+    expect(section?.getAttribute('data-blade-goal-root-turn')).toBeNull();
+    expect(section?.getAttribute('data-blade-goal-current-turn')).toBe('edited-turn');
+    expect(section?.getAttribute('data-blade-goal-parent-turn')).toBeNull();
+  });
+
+  it('localizes the Goal turn lineage labels in Chinese', async () => {
+    setLocale('zh');
+    sessionState.goal.turnLineage = {
+      currentTurnId: 'current-turn',
+      parentTurnId: 'parent-turn',
+    };
+    act(() => root.render(<GoalControlBar />));
+
+    await act(async () => {
+      container
+        .querySelector('[aria-label="展开目标详情"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('起点');
+    expect(container.textContent).toContain('当前');
+    expect(container.textContent).toContain('上一步');
   });
 
   it('edits without resuming and exposes resume as a separate action', async () => {
