@@ -1,7 +1,8 @@
 # Durable Goal Turn Lineage Qualification Evidence
 
 - Date: 2026-09-06
-- Target version: `blade-code@0.10.142`
+- Feature version: `blade-code@0.10.142`
+- Release-fix version: `blade-code@0.10.143`
 - Implementation and real-API qualification baseline: `228292f8`
 - Deterministic surface command: `bunx vitest run --config vitest.config.ts tests/integration/goal-turn-lineage.test.ts --project integration`
 - Real-API command: `REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/goal-turn-lineage-trajectory.test.ts`
@@ -16,13 +17,13 @@ continuation count of four, and performs exactly six Provider requests. Web pres
 and parent across reload, while the PTY verifies complete lineage through real terminal output.
 
 The real-API release matrix uses `deepseek-v4-flash` and `deepseek-v4-pro` across the same four
-production entrypoints. All eight final release cells passed; Vitest reported
-`8 passed | 1 skipped` in 97.25 seconds:
+production entrypoints. All eight release cells passed after the isolation fix; Vitest
+reported `8 passed | 1 skipped` in 94.39 seconds:
 
 | Model | Headless | ACP stdio | raw PTY TUI | Chromium Web |
 | --- | ---: | ---: | ---: | ---: |
-| `deepseek-v4-flash` | 8.800s | 12.712s | 10.967s | 12.655s |
-| `deepseek-v4-pro` | 11.553s | 12.952s | 11.610s | 13.522s |
+| `deepseek-v4-flash` | 9.810s | 8.635s | 10.215s | 11.164s |
+| `deepseek-v4-pro` | 12.087s | 14.464s | 12.352s | 13.087s |
 
 Framework retry and model retry are disabled in every cell. Each of three real upstream
 requests requires the model to choose `Bash /usr/bin/true`. Only after parsing and confirming
@@ -90,3 +91,21 @@ After version metadata and the evidence above were committed as `86c97008`,
 `bun run build && bun run test:all` was executed at that exact HEAD. Build, 500
 non-performance files with 5,874 tests, and 4 performance files with 9 tests all passed in
 559.59 seconds, with no new native crash.
+
+The `v0.10.142` tag workflow exposed a fixture-isolation gap on the Linux coverage runner,
+which has no personal Blade configuration. The parent Vitest process created the seed Runtime
+without using the model configuration already written into the temporary home, so all four
+production-surface cases failed closed before any Provider request. Focused coverage under an
+empty `HOME` reproduced the same `4/4` configuration failure locally. After the fix, the
+fixture passes the same model resources explicitly to the parent Runtime and restores the
+previous store/catalog in `finally`. Empty-`HOME` four-surface coverage passed `4/4`; ordinary
+four-surface tests passed `4/4`, qualification contracts passed `47/47`, type-check and Biome
+passed, and the real-API matrix passed `8/8` again in 94.39 seconds. The failed workflow
+published neither npm nor a GitHub Release. The pushed `v0.10.142` tag remains in place, and
+the correction ships as an independent `0.10.143` patch.
+
+The complete `bun run test:coverage` was then executed with an empty temporary `HOME`, using
+only a separate `PLAYWRIGHT_BROWSERS_PATH` to reuse the installed Chromium binary. It passed
+500 files and 5,874 tests with 102 files and 90 tests skipped. Coverage was 73.90% statements,
+67.27% branches, 75.76% functions, and 75.27% lines; total time was 552.54 seconds. This
+matches the failed Linux coverage gate's condition of having no personal Blade configuration.

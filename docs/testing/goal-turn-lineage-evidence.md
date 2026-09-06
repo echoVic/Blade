@@ -1,7 +1,8 @@
 # Durable Goal 回合链资格验证证据
 
 - 日期：2026-09-06
-- 目标版本：`blade-code@0.10.142`
+- 功能版本：`blade-code@0.10.142`
+- 发布修复版本：`blade-code@0.10.143`
 - 实现与真实 API 资格基线：`228292f8`
 - 确定性表面命令：`bunx vitest run --config vitest.config.ts tests/integration/goal-turn-lineage.test.ts --project integration`
 - 真实 API 命令：`REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/goal-turn-lineage-trajectory.test.ts`
@@ -15,12 +16,13 @@ production Chromium Web。最终 fixture 连续运行三轮，每轮 `4/4` passe
 请求。Web reload 后 current/parent 不变，PTY 从真实终端输出确认完整 lineage。
 
 真实 API release matrix 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 覆盖相同四个生产
-入口，最终八个 release cell 全部通过；Vitest 报告 `8 passed | 1 skipped`，耗时 97.25s：
+入口，隔离修复后的八个 release cell 全部通过；Vitest 报告 `8 passed | 1 skipped`，耗时
+94.39s：
 
 | 模型 | Headless | ACP stdio | raw PTY TUI | Chromium Web |
 | --- | ---: | ---: | ---: | ---: |
-| `deepseek-v4-flash` | 8.800s | 12.712s | 10.967s | 12.655s |
-| `deepseek-v4-pro` | 11.553s | 12.952s | 11.610s | 13.522s |
+| `deepseek-v4-flash` | 9.810s | 8.635s | 10.215s | 11.164s |
+| `deepseek-v4-pro` | 12.087s | 14.464s | 12.352s | 13.087s |
 
 每格关闭 framework retry 与 model retry。三个真实 upstream request 都必须由模型选择
 `Bash /usr/bin/true`；代理解析并确认 tool call 后，才向 production Runtime 投影两次 `Read`
@@ -77,3 +79,17 @@ crash report。现有证据只能确认这是原生 worker teardown 的间歇崩
 版本元数据与上述证据提交为 `86c97008` 后，又在该精确 HEAD 执行
 `bun run build && bun run test:all`。build、非 performance 500 files / 5,874 tests、
 performance 4 files / 9 tests 全部通过，总耗时 559.59s；本次没有出现新的原生崩溃。
+
+`v0.10.142` 的 tag workflow 在无个人 Blade 配置的 Linux coverage runner 上暴露出 fixture
+隔离缺口：父 Vitest 进程创建 seed Runtime 时没有使用已经写入临时 home 的模型配置，因此
+四个 production surface case 都在发起 Provider 请求前 fail closed。使用空 `HOME` 的 focused
+coverage 在本地稳定复现同样的 `4/4` 配置失败。修复后，fixture 向父 Runtime 显式传入同一
+份 model resources，并在 `finally` 恢复原 store/catalog；空 `HOME` 四端 coverage `4/4`
+passed，普通四端 `4/4`、资格契约 `47/47`、type-check 与 Biome 均通过，真实 API 矩阵再次
+`8/8` passed（94.39s）。失败 workflow 没有发布 npm 包或创建 GitHub Release；已推送的
+`v0.10.142` tag 保持原位，修复作为独立 `0.10.143` patch 发布。
+
+随后使用空临时 `HOME` 并只通过独立 `PLAYWRIGHT_BROWSERS_PATH` 复用已安装 Chromium，
+执行完整 `bun run test:coverage`：500 files / 5,874 tests passed，102 files / 90 tests
+skipped；statements 73.90%、branches 67.27%、functions 75.76%、lines 75.27%，总耗时
+552.54s。该命令与失败的 Linux coverage gate 具有相同的无个人 Blade 配置条件。

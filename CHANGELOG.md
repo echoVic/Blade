@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.143] - 2026-09-06
+
+### Fixed
+- Made the durable Goal turn-lineage production fixture inject its complete model snapshot into the parent Runtime and restore the previous process store/catalog afterward, removing any dependency on a developer's personal Blade configuration.
+- Preserved isolated temporary-home configuration for Headless, ACP, raw PTY TUI, and Chromium Web child processes while failing closed when a real-API qualification config has no model.
+
+### Tests
+- Reproduced the release failure under an empty `HOME`, then passed the same focused coverage trajectory across all four production surfaces with the Playwright cache supplied independently.
+- Requalified `deepseek-v4-flash` and `deepseek-v4-pro` through the `8/8` Headless/ACP/raw-PTY/Web real-API matrix after the isolation fix.
+
 ## [0.10.142] - 2026-09-06
 
 ### Added

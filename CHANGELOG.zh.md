@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.143] - 2026-09-06
+
+### 修复
+- Durable Goal 回合链 production fixture 现在向父进程 Runtime 显式注入完整模型快照，并在结束后恢复原进程 store/catalog，不再依赖开发者个人 Blade 配置。
+- Headless、ACP、raw PTY TUI 与 Chromium Web 子进程继续只使用隔离的临时 home 配置；真实 API 资格配置缺少模型时明确 fail closed。
+
+### 测试
+- 在空 `HOME` 下复现 release failure，并在独立提供 Playwright cache 后通过同一条四端 focused coverage 轨迹。
+- 隔离修复后重新使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成 Headless/ACP/raw-PTY/Web `8/8` 真实 API 矩阵。
+
 ## [0.10.142] - 2026-09-06
 
 ### 新增
