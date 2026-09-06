@@ -18,6 +18,7 @@ const runnerInventory = [
   'foregroundProviderRecoveryPtyRunner.ts',
   'goalExecutionHostFailurePtyRunner.ts',
   'goalFinalizationPtyRunner.ts',
+  'goalTurnLineagePtyRunner.ts',
   'gracefulShutdownPtyRunner.ts',
   'memoryConsolidationPtyRunner.ts',
   'promptCacheStatusPtyRunner.ts',
@@ -39,6 +40,7 @@ const promptInputRunners = [
   'foregroundProviderRecoveryPtyRunner.ts',
   'followUpQueuePtyRunner.ts',
   'goalFinalizationPtyRunner.ts',
+  'goalTurnLineagePtyRunner.ts',
   'gracefulShutdownPtyRunner.ts',
   'memoryConsolidationPtyRunner.ts',
   'sessionRuntimeResidencyPtyRunner.ts',
@@ -97,6 +99,10 @@ describe('raw PTY marker latching source contract', () => {
     [
       'goalFinalizationPtyRunner.ts',
       'await waitFor(\n      () => sawInitial && sawCompleteGoal && output.includes(handshake.marker),',
+    ],
+    [
+      'goalTurnLineagePtyRunner.ts',
+      'await waitFor(\n      () => output.includes(handshake.marker),',
     ],
     [
       'gracefulShutdownPtyRunner.ts',
@@ -194,6 +200,7 @@ describe('raw PTY marker latching source contract', () => {
       'finalMarkerSeen ||= scan.includes(input.expectedOutput)',
     ],
     ['goalFinalizationPtyRunner.ts', 'latchPtyMarker'],
+    ['goalTurnLineagePtyRunner.ts', 'latchPtyMarker'],
     ['promptCacheStatusPtyRunner.ts', 'latchPtyMarker'],
     ['rootTurnAutoResumePtyRunner.ts', 'latchPtyMarker'],
     ['subagentResultAdoptionPtyRunner.ts', 'latchPtyMarker'],

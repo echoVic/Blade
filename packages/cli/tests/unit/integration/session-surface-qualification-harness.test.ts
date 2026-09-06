@@ -177,6 +177,39 @@ describe('session surface qualification harness', () => {
     expect(ptyRunner).toContain('goal:blocked');
   });
 
+  it('keeps durable Goal turn lineage qualification on every production surface', async () => {
+    const integrationPath = path.resolve(
+      import.meta.dirname,
+      '../../integration/goal-turn-lineage.test.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/goalTurnLineageAcpRunner.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/goalTurnLineagePtyRunner.ts'
+    );
+    const [integration, acpRunner, ptyRunner] = await Promise.all([
+      readFile(integrationPath, 'utf8'),
+      readFile(acpRunnerPath, 'utf8'),
+      readFile(ptyRunnerPath, 'utf8'),
+    ]);
+
+    expect(integration).toContain("import { chromium } from 'playwright'");
+    expect(integration).toContain('../../dist/blade.js');
+    expect(integration).toContain('root_turn_id');
+    expect(integration).toContain('data-blade-goal-root-turn');
+    expect(integration).toContain('page.reload');
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('blade/goalContinuation');
+    expect(acpRunner).toContain('turnLineage');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(ptyRunner).toContain('createTuiPtyComposerReadyHandshake');
+    expect(ptyRunner).toContain('Origin turn:');
+    expect(ptyRunner).toContain('Parent turn:');
+  });
+
   it('creates a disconnected production ACP fixture with redacted evidence and temporary session refs', async () => {
     const fixtureRoot = await createFixtureRoot();
     cleanupRoots.push(fixtureRoot);
