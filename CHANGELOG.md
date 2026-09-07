@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.145] - 2026-09-08
+
+### Fixed
+- Reconcile orphaned running tasks through identity-bound Session leases instead of PID liveness alone, including local/ACP remote catalogs and GUI/TUI Surface reads; keep ownership details private and validate the exact workspace before recovery writes.
+- Serialize lease-record acquisition, reclamation, and release across processes, and preserve ownership when identity sampling or lease reads fail instead of treating unknown state as an exited owner.
+- Remove archived local tasks from the Web Surface sidebar immediately and prevent older catalog responses from resurrecting them, without removing same-ID remote sessions.
+
+### Tests
+- Added failing-first regressions for reused PIDs, competing lease reclaimers, unavailable probes, unreadable records, exact-workspace fencing, one-time recovery, remote state isolation, and archive catalog races.
+- Verified Chromium dev-server archive actions and production raw-PTY status presentation, plus DeepSeek Flash/Pro across Headless, ACP, PTY, and Web using the existing eight-cell real-API regression matrix.
+
 ## [0.10.144] - 2026-09-06
 
 ### Fixed
