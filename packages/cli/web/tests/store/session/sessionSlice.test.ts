@@ -3985,8 +3985,18 @@ describe('sessionSlice multimodal sendMessage', () => {
       archivedAt: archivedRoot.archivedAt,
       archivedBySessionId: root.sessionId,
     };
+    const surfaceCatalog = [root, child, unrelated].map(
+      (session) =>
+        createSurfaceOpenResult({
+          version: 2,
+          sessionId: session.sessionId,
+          workspace: { kind: 'local', projectPath: session.projectPath },
+        }).session
+    );
+    const unrelatedSurface = surfaceCatalog[2]!;
     const unsubscribe = vi.fn();
     useSessionStore.setState({
+      surfaceCatalog,
       sessions: [root, child, unrelated],
       currentSessionId: child.sessionId,
       currentSessionRef: createRef(child.sessionId, child.projectPath),
@@ -4016,11 +4026,46 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(useSessionStore.getState()).toMatchObject({
       sessions: [unrelated],
+      surfaceCatalog: [unrelatedSurface],
       archivedSessions: [archivedRoot, archivedChild],
       currentSessionId: null,
       currentSessionRef: null,
       messages: [],
     });
+  });
+
+  it('does not resurrect an archived local surface when an older catalog finishes', async () => {
+    const session = createSession({
+      sessionId: 'archived-during-surface-load',
+      projectPath: '/tmp/archive',
+    });
+    const local = createSurfaceOpenResult({
+      version: 2,
+      sessionId: session.sessionId,
+      workspace: { kind: 'local', projectPath: session.projectPath },
+    }).session;
+    const remote = createSurfaceOpenResult(
+      createRemoteLocator(session.sessionId)
+    ).session;
+    const pending = deferred<{ sessions: (typeof local)[] }>();
+    vi.mocked(sessionService.listSurfaceCatalog).mockReturnValueOnce(pending.promise);
+    useSessionStore.setState({ sessions: [session], surfaceCatalog: [local, remote] });
+    const loading = useSessionStore.getState().loadSurfaceCatalog();
+    vi.mocked(sessionService.archiveSession).mockResolvedValue({
+      session: { ...session, archivedAt: '2026-09-07T00:00:00.000Z' },
+      archivedSessionIds: [session.sessionId],
+    });
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({ sessions: [] });
+    await useSessionStore
+      .getState()
+      .archiveSession(createRef(session.sessionId, session.projectPath));
+    await useSessionStore.getState().loadSessions();
+    vi.mocked(sessionService.listSurfaceCatalog).mockResolvedValue({
+      sessions: [remote],
+    });
+    pending.resolve({ sessions: [local, remote] });
+    await loading;
+    expect(useSessionStore.getState().surfaceCatalog).toEqual([remote]);
   });
 
   it('archives exact session refs by pruning their attention state and writing tombstones', async () => {

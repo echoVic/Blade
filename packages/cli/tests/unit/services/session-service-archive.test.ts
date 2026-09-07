@@ -220,10 +220,15 @@ describe('SessionService durable archive lifecycle', () => {
     const rootFile = getSessionFilePath(projectPath, 'root');
     const linesBefore = await lineCount(rootFile);
 
-    await expect(
-      SessionService.archiveSession('root', projectPath)
-    ).rejects.toBeInstanceOf(SessionArchiveConflictError);
-    expect(await lineCount(rootFile)).toBe(linesBefore);
+    const runningLease = await SessionLease.acquire('running-child', projectPath);
+    try {
+      await expect(
+        SessionService.archiveSession('root', projectPath)
+      ).rejects.toBeInstanceOf(SessionArchiveConflictError);
+      expect(await lineCount(rootFile)).toBe(linesBefore);
+    } finally {
+      await runningLease.release();
+    }
 
     await SessionService.updateSessionMetadata('running-child', projectPath, {
       taskStatus: 'completed',
@@ -238,6 +243,29 @@ describe('SessionService durable archive lifecycle', () => {
     } finally {
       await lease.release();
     }
+  });
+
+  it('archives a tree after recovering a live-PID child with no lease', async () => {
+    await writeSession(projectPath, 'root');
+    await writeSession(projectPath, 'orphan-child', {
+      rootId: 'root',
+      parentId: 'root',
+      relationType: 'fork',
+      taskStatus: 'running',
+      taskOwnerPid: process.pid,
+    });
+    await expect(
+      SessionService.archiveSession('root', projectPath)
+    ).resolves.toMatchObject({
+      archivedBySessionId: 'root',
+    });
+    await expect(
+      SessionService.findSessionMetadata('orphan-child', projectPath)
+    ).resolves.toMatchObject({
+      taskStatus: 'interrupted',
+      archivedBySessionId: 'root',
+    });
+    expect(await lineCount(getSessionFilePath(projectPath, 'orphan-child'))).toBe(2);
   });
 
   it('binds pagination cursors to the active or archived catalog scope', async () => {

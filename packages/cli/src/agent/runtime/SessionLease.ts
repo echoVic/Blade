@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import lockfile from 'proper-lockfile';
 import {
   type AcpRemoteStateScope,
   assertAcpRemoteStateFile,
@@ -18,7 +19,6 @@ import {
   captureProcessIdentity,
   isProcessIdentity,
   type ProcessIdentity,
-  processIdentityMatches,
 } from '../../utils/process/ProcessIdentity.js';
 
 const SESSION_LEASE_VERSION = 1;
@@ -63,8 +63,9 @@ async function readLease(filePath: string): Promise<SessionLeaseRecord | undefin
       return undefined;
     }
     return value as SessionLeaseRecord;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isNodeError(error, 'ENOENT') || error instanceof SyntaxError) return undefined;
+    throw error;
   }
 }
 
@@ -82,7 +83,7 @@ function isProcessRunning(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return isNodeError(error, 'EPERM');
+    return !isNodeError(error, 'ESRCH');
   }
 }
 
@@ -116,6 +117,38 @@ export class SessionInUseError extends Error {
         : 'Session is already active in another Blade process. Stop that process or choose a different session.'
     );
     this.name = 'SessionInUseError';
+  }
+}
+
+async function withLeaseRecordLock<T>(
+  filePath: string,
+  operation: (assertHeld: () => void) => Promise<T>,
+  wait = false
+): Promise<T> {
+  let compromised: Error | undefined;
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(filePath, {
+      realpath: false,
+      retries: wait ? { retries: 50, minTimeout: 10, maxTimeout: 100, factor: 1.2 } : 0,
+      onCompromised: (error) => {
+        compromised = error;
+      },
+    });
+  } catch (error) {
+    if (isNodeError(error, 'ELOCKED')) throw new SessionInUseError();
+    throw error;
+  }
+  const assertHeld = () => {
+    if (compromised) throw compromised;
+  };
+  try {
+    assertHeld();
+    const result = await operation(assertHeld);
+    assertHeld();
+    return result;
+  } finally {
+    await release();
   }
 }
 
@@ -175,49 +208,63 @@ export class SessionLease {
     sessionId: string,
     filePath: string
   ): Promise<SessionLease> {
-    const record: SessionLeaseRecord = {
-      version: SESSION_LEASE_VERSION,
-      sessionId,
-      ownerId: randomUUID(),
-      pid: process.pid,
-      processIdentity: captureProcessIdentity(process.pid),
-      acquiredAt: new Date().toISOString(),
-    };
-
     await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    if (await tryCreateExclusive(filePath, record)) {
-      return new SessionLease(filePath, record);
-    }
+    return withLeaseRecordLock(filePath, async (assertHeld) => {
+      const record: SessionLeaseRecord = {
+        version: SESSION_LEASE_VERSION,
+        sessionId,
+        ownerId: randomUUID(),
+        pid: process.pid,
+        processIdentity: captureProcessIdentity(process.pid),
+        acquiredAt: new Date().toISOString(),
+      };
+      assertHeld();
+      if (await tryCreateExclusive(filePath, record)) {
+        return new SessionLease(filePath, record);
+      }
 
-    const existing = await readLeaseAfterCreate(filePath);
-    if (
-      existing &&
-      isProcessRunning(existing.pid) &&
-      (!existing.processIdentity ||
-        processIdentityMatches(existing.pid, existing.processIdentity))
-    ) {
-      throw new SessionInUseError(existing.pid);
-    }
+      const existing = await readLeaseAfterCreate(filePath);
+      if (!existing || existing.sessionId !== sessionId) throw new SessionInUseError();
+      if (isProcessRunning(existing.pid)) {
+        const identity = existing.processIdentity
+          ? captureProcessIdentity(existing.pid, existing.processIdentity.platform)
+          : undefined;
+        if (
+          !identity ||
+          identity.fingerprint === existing.processIdentity?.fingerprint
+        ) {
+          throw new SessionInUseError(existing.pid);
+        }
+      }
 
-    await fs.unlink(filePath).catch((error) => {
-      if (!isNodeError(error, 'ENOENT')) throw error;
+      assertHeld();
+      await fs.unlink(filePath).catch((error) => {
+        if (!isNodeError(error, 'ENOENT')) throw error;
+      });
+      assertHeld();
+      if (await tryCreateExclusive(filePath, record)) {
+        return new SessionLease(filePath, record);
+      }
+
+      throw new SessionInUseError((await readLeaseAfterCreate(filePath))?.pid);
     });
-    if (await tryCreateExclusive(filePath, record)) {
-      return new SessionLease(filePath, record);
-    }
-
-    throw new SessionInUseError((await readLeaseAfterCreate(filePath))?.pid);
   }
 
   async release(): Promise<void> {
     if (this.released) return;
-    const release = async () => {
-      const current = await readLease(this.filePath);
-      if (current?.ownerId !== this.record.ownerId) return;
-      await fs.unlink(this.filePath).catch((error) => {
-        if (!isNodeError(error, 'ENOENT')) throw error;
-      });
-    };
+    const release = () =>
+      withLeaseRecordLock(
+        this.filePath,
+        async (assertHeld) => {
+          const current = await readLease(this.filePath);
+          if (current?.ownerId !== this.record.ownerId) return;
+          assertHeld();
+          await fs.unlink(this.filePath).catch((error) => {
+            if (!isNodeError(error, 'ENOENT')) throw error;
+          });
+        },
+        true
+      );
     if (this.stateStorage?.kind === 'acp-remote') {
       await withSessionStateRoot(this.stateStorage, release);
     } else {

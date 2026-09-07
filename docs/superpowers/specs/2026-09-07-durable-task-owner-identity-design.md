@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07
 **Target:** `blade-code@0.10.145`
-**Status:** Written specification ready for user review
+**Status:** Locally qualified; remote release gate pending
 **Capability:** PID-reuse-safe reconciliation of durable running tasks
 
 ## Decision summary
@@ -223,6 +223,20 @@ is an identity.
 authoritative transcript because the active owner may have completed the task
 between the initial projection and the failed acquisition.
 
+### Lease-record critical section
+
+Acquisition and release now serialize their short record read/modify operation
+with `proper-lockfile`. Contended acquisition returns `SessionInUseError`;
+release retries within a bounded budget. The guard is not a second task lease
+and is not held for the Runtime lifetime. A concrete identity mismatch or an
+`ESRCH` liveness result permits reclamation; unavailable identity sampling,
+unexpected liveness errors, malformed records and unreadable records do not.
+Read permission errors are propagated without deleting the record. The existing
+PID-only compatibility rule remains for valid legacy live records.
+
+This closes a demonstrated stale-reader race where two callers could both
+return a SessionLease after one deleted the other's replacement record.
+
 ### Concurrent reconcilers
 
 Only one process can acquire the Session lease. Other readers either observe the
@@ -253,7 +267,14 @@ fail-closed.
 ## Surface behavior
 
 No surface receives a new process-ownership field. All surfaces consume the
-corrected `SessionMetadata` projection.
+corrected `SessionMetadata` projection. V2 Surface candidate enumeration also
+reconciles tasks before SQLite synchronization or JSONL fallback. Direct opens
+reconcile before loading their projected summary.
+
+Web archive removes exact local locator rows from the V2 Surface catalog as
+well as the legacy catalog. A catalog revision change during a Surface load
+forces a fresh read, even if another catalog load already pruned tombstones;
+same-ID remote rows remain untouched.
 
 ### CLI/TUI
 

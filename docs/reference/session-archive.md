@@ -43,6 +43,13 @@ fork 和 subagent 后代通过 `parentId` 继承最近归档祖先的状态。�
 - transcript 在临界区内改变归档状态；
 - committed workspace 与请求 workspace 不一致。
 
+从 0.10.145 起，目录读取会先以绑定进程身份的 Session lease 检查 `running` 任务。
+原 owner 退出或 PID 被复用后，若成功获得恢复 lease，Blade 会在再次检查任务状态和
+owner 后追加一次 `interrupted`，解除错误的运行态和归档限制。真正持有 lease 的
+Runtime 不会被目录读取中断；PID、进程 fingerprint 和 lease token 不会公开。
+身份采样不可用、锁文件损坏或读取失败时不会贸然接管。旧版没有 fingerprint 的合法
+lease 在 PID 仍存活时继续保守阻止接管，因此不能对这种旧记录保证 PID 重用恢复。
+
 Web 会先拒绝 active run，再释放本进程的 idle Runtime，随后获取整棵子树 lease。
 TUI 无参 `/archive` 会释放当前 idle Runtime、归档当前会话并退出；处理中的回合仍由
 现有 slash-command turn gate 拒绝。带 ID 的命令只操作未被其他 owner 占用的会话。

@@ -35,6 +35,8 @@ Before archiving, Blade resolves the complete descendant set and acquires each S
 - transcript changes archive status within the critical section;
 - committed workspace does not match requested workspace.
 
+Starting in 0.10.145, catalog reads validate running tasks against the process-identity-bound Session lease. If the owner exited or its PID was reused, a reader that acquires the recovery lease rechecks task status and owner before appending one `interrupted` event. This removes false running and archive restrictions without interrupting a Runtime that still holds its lease. PIDs, fingerprints, and lease tokens remain private. Unavailable identity probes, malformed records, and read failures do not authorize takeover. Valid legacy leases without fingerprints conservatively block takeover while their PID is live, so PID-reuse recovery is not guaranteed for those records.
+
 Web first rejects active runs, then releases this process's idle Runtime, then acquires the entire subtree lease. TUI argument-free `/archive` releases the current idle Runtime, archives the current session, and exits; in-flight turns are still rejected by the existing slash-command turn gate. ID-bearing commands only operate on sessions not occupied by other owners.
 
 Archive state blocks continuation at three levels:

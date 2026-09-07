@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionSchema } from '../../src/api/schemas.js';
+import { stopForegroundGuiLauncher } from '../support/foregroundBoundedOutputWebDriver.js';
 
 vi.unmock('node:child_process');
 
@@ -415,7 +416,7 @@ describe.skipIf(process.platform === 'win32')(
       } finally {
         await probe?.close().catch(() => undefined);
         await browser?.close().catch(() => undefined);
-        server.kill('SIGTERM');
+        await stopForegroundGuiLauncher(server, undefined);
         await test.provider.close();
       }
     }, 120_000);

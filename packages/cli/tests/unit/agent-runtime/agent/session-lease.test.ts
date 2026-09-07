@@ -1,6 +1,8 @@
+import * as childProcessModule from 'node:child_process';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
+import * as fsModule from 'node:fs';
 import {
   chmodSync,
   existsSync,
@@ -11,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +30,11 @@ import {
   getProjectStoragePath,
 } from '../../../../src/context/storage/pathUtils.js';
 import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 describe('SessionLease', () => {
   let storageRoot: string;
@@ -212,6 +220,189 @@ describe('SessionLease', () => {
     await expect(lease.release()).resolves.toBeUndefined();
   });
 
+  it('grants only one lease when stale-owner reclamations race', async () => {
+    const sessionId = 'concurrent-stale-owner';
+    const lockPath = getLeasePath(sessionId);
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sessionId,
+        ownerId: 'stale-owner',
+        pid: 2_147_483_647,
+        acquiredAt: '2026-01-01T00:00:00.000Z',
+      })}\n`
+    );
+
+    const read =
+      await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const observed = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let paused = false;
+    const probe = vi
+      .spyOn(fsPromises, 'readFile')
+      .mockImplementation(async (file, options) => {
+        const content = await read.readFile(file, options);
+        if (file === lockPath && !paused) {
+          paused = true;
+          observed.resolve();
+          await resume.promise;
+        }
+        return content;
+      });
+    const first = Promise.allSettled([SessionLease.acquire(sessionId, projectPath)]);
+    const acquired: SessionLease[] = [];
+    try {
+      await observed.promise;
+      const second = await Promise.allSettled([
+        SessionLease.acquire(sessionId, projectPath),
+      ]);
+      resume.resolve();
+      const results = [...(await first), ...second];
+      for (const result of results) {
+        if (result.status === 'fulfilled') acquired.push(result.value);
+        else expect(result.reason).toMatchObject({ code: 'BLADE_SESSION_IN_USE' });
+      }
+      expect(acquired).toHaveLength(1);
+    } finally {
+      resume.resolve();
+      probe.mockRestore();
+      await Promise.all(acquired.map((lease) => lease.release()));
+    }
+  });
+
+  it('does not reclaim a live lease when process identity sampling fails', async () => {
+    const sessionId = 'unavailable-identity';
+    const lockPath = getLeasePath(sessionId);
+    const original = await SessionLease.acquire(sessionId, projectPath);
+    const before = readFileSync(lockPath, 'utf8');
+    expect(JSON.parse(before)).toHaveProperty('processIdentity.fingerprint');
+    const failedProbe = () => {
+      throw new Error('identity probe unavailable');
+    };
+    const probe =
+      process.platform === 'linux'
+        ? vi.spyOn(fsModule, 'readFileSync').mockImplementation(failedProbe)
+        : vi.spyOn(childProcessModule, 'execFileSync').mockImplementation(failedProbe);
+    let contender: SessionLease | undefined;
+    try {
+      await expect(
+        SessionLease.acquire(sessionId, projectPath).then((lease) => {
+          contender = lease;
+          return lease;
+        })
+      ).rejects.toMatchObject({ code: 'BLADE_SESSION_IN_USE' });
+    } finally {
+      probe.mockRestore();
+      await contender?.release();
+      await original.release();
+    }
+  });
+
+  it('propagates unreadable lease state instead of deleting it', async () => {
+    const sessionId = 'unreadable-lease';
+    const lockPath = getLeasePath(sessionId);
+    const original = await SessionLease.acquire(sessionId, projectPath);
+    const read =
+      await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const denied = Object.assign(new Error('lease read denied'), { code: 'EACCES' });
+    const probe = vi
+      .spyOn(fsPromises, 'readFile')
+      .mockImplementation((file, options) => {
+        if (file === lockPath) return Promise.reject(denied);
+        return read.readFile(file, options);
+      });
+    let contender: SessionLease | undefined;
+    try {
+      await expect(
+        SessionLease.acquire(sessionId, projectPath).then((lease) => {
+          contender = lease;
+          return lease;
+        })
+      ).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      probe.mockRestore();
+      await contender?.release();
+      await original.release();
+    }
+  });
+
+  it('fails closed on a malformed lease record', async () => {
+    const sessionId = 'malformed-lease';
+    const lockPath = getLeasePath(sessionId);
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, '{partial');
+    let contender: SessionLease | undefined;
+    try {
+      await expect(
+        SessionLease.acquire(sessionId, projectPath).then((lease) => {
+          contender = lease;
+          return lease;
+        })
+      ).rejects.toMatchObject({ code: 'BLADE_SESSION_IN_USE' });
+      expect(readFileSync(lockPath, 'utf8')).toBe('{partial');
+    } finally {
+      await contender?.release();
+    }
+  });
+
+  it('does not treat unexpected liveness errors as an exited owner', async () => {
+    const sessionId = 'unknown-liveness';
+    const original = await SessionLease.acquire(sessionId, projectPath);
+    const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('liveness unavailable'), { code: 'EIO' });
+    });
+    let contender: SessionLease | undefined;
+    try {
+      await expect(
+        SessionLease.acquire(sessionId, projectPath).then((lease) => {
+          contender = lease;
+          return lease;
+        })
+      ).rejects.toMatchObject({ code: 'BLADE_SESSION_IN_USE' });
+    } finally {
+      probe.mockRestore();
+      await contender?.release();
+      await original.release();
+    }
+  });
+
+  it('excludes acquisition while a release is reading its owner record', async () => {
+    const sessionId = 'release-record-lock';
+    const original = await SessionLease.acquire(sessionId, projectPath);
+    const read =
+      await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const observed = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let reads = 0;
+    const probe = vi
+      .spyOn(fsPromises, 'readFile')
+      .mockImplementation(async (file, options) => {
+        const content = await read.readFile(file, options);
+        if (file === getLeasePath(sessionId)) {
+          reads++;
+          if (reads === 1) {
+            observed.resolve();
+            await resume.promise;
+          }
+        }
+        return content;
+      });
+    const releasing = original.release();
+    try {
+      await observed.promise;
+      await expect(SessionLease.acquire(sessionId, projectPath)).rejects.toMatchObject({
+        code: 'BLADE_SESSION_IN_USE',
+      });
+      expect(reads).toBe(1);
+    } finally {
+      resume.resolve();
+      await releasing;
+      probe.mockRestore();
+    }
+  });
+
   it('does not remove a replacement lease owned by another runtime', async () => {
     const sessionId = 'replacement-session';
     const lockPath = getLeasePath(sessionId);
@@ -232,6 +423,51 @@ describe('SessionLease', () => {
 
     expect(existsSync(lockPath)).toBe(true);
     expect(readFileSync(lockPath, 'utf8')).toContain(replacementOwner);
+  });
+
+  it('grants a stale session to only one of four independent processes', async () => {
+    const sessionId = 'cross-process-reclamation';
+    const lockPath = getLeasePath(sessionId);
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: 1,
+        sessionId,
+        ownerId: 'exited-owner',
+        pid: 2_147_483_647,
+        acquiredAt: '2026-01-01T00:00:00.000Z',
+      })
+    );
+    const attempts = Array.from({ length: 4 }, (_, index) => {
+      const readyPath = path.join(storageRoot, `contender-${index}.ready`);
+      const child = spawn(
+        process.env.BUN_EXEC_PATH ?? 'bun',
+        [
+          path.resolve(import.meta.dirname, '../../../fixtures/hold-session-lease.ts'),
+          sessionId,
+          projectPath,
+          readyPath,
+        ],
+        {
+          env: { ...process.env, BLADE_STORAGE_ROOT: storageRoot },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }
+      );
+      children.add(child);
+      let output = '';
+      child.stderr?.on('data', (data) => {
+        output += data.toString();
+      });
+      return waitForFile(readyPath, child).then(
+        () => true,
+        () => {
+          expect(output).toContain('SessionInUseError');
+          return false;
+        }
+      );
+    });
+    expect((await Promise.all(attempts)).filter(Boolean)).toHaveLength(1);
   });
 
   it('enforces session ownership across processes and releases on child exit', async () => {

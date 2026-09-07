@@ -145,6 +145,7 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
 
     loadSurfaceCatalog: async (options = {}) => {
       const generation = ++catalogGeneration;
+      const overlayRevision = get().catalogOverlayRevision ?? 0;
       set({ surfaceCatalogLoadState: 'loading', surfaceCatalogError: null });
       try {
         const catalog: SessionSurfaceSummary[] = [];
@@ -166,6 +167,10 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
           cursor = page.nextCursor;
         } while (cursor);
         if (generation !== catalogGeneration) return;
+        if ((get().catalogOverlayRevision ?? 0) !== overlayRevision) {
+          await get().loadSurfaceCatalog(options);
+          return;
+        }
         set({
           surfaceCatalog: catalog,
           surfaceCatalogLoadState: 'ready',

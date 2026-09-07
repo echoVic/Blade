@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,9 +11,11 @@ import {
 } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
+  getProjectStoragePath,
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
+import * as projectionModule from '../../../src/context/storage/sqlite/projection.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { Logger } from '../../../src/logging/Logger.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -320,6 +323,176 @@ describe('SessionService strict session catalog', () => {
     });
   });
 
+  it.each(['lookup', 'projection', 'jsonl'] as const)(
+    'reconciles a reused live PID through %s using lease identity',
+    async (reader) => {
+      const sessionId = 'reused-owner';
+      await writeTranscript(workspaceA, sessionId, [
+        makeCreatedEvent(sessionId, workspaceA, '2024-01-01T00:00:00.000Z', {
+          taskStatus: 'running',
+          taskOwnerPid: process.pid,
+          taskStartedAt: '2024-01-01T00:00:00.000Z',
+        }),
+      ]);
+      const digest = createHash('sha256').update(sessionId).digest('hex');
+      const lockPath = path.join(
+        getProjectStoragePath(workspaceA),
+        '.locks',
+        `${digest}.lock`
+      );
+      await mkdir(path.dirname(lockPath), { recursive: true });
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          version: 1,
+          sessionId,
+          ownerId: 'private-previous-owner',
+          pid: process.pid,
+          processIdentity: { platform: process.platform, fingerprint: '0'.repeat(64) },
+          acquiredAt: '2024-01-01T00:00:00.000Z',
+        }),
+        { mode: 0o600 }
+      );
+      const projection =
+        reader === 'jsonl'
+          ? vi.spyOn(projectionModule, 'getProjectionDb').mockResolvedValue(null)
+          : undefined;
+      try {
+        if (reader === 'projection') {
+          expect(await projectionModule.getProjectionDb()).not.toBeNull();
+        }
+        const session =
+          reader === 'lookup'
+            ? await SessionService.findSessionMetadata(sessionId, workspaceA)
+            : (await SessionService.listSessionPage({ cwd: workspaceA })).sessions[0];
+        expect(session).toMatchObject({
+          sessionId,
+          taskStatus: 'interrupted',
+          taskStatusReason: 'Task owner process exited before completion',
+          taskCompletedAt: expect.any(String),
+        });
+        expect(session).not.toHaveProperty('taskOwnerPid');
+        expect(JSON.stringify(session)).not.toMatch(
+          /fingerprint|private-previous-owner/
+        );
+        await SessionService.listSessions({ cwd: workspaceA });
+        const entries = parseSessionJSONL(
+          await readFile(getSessionFilePath(workspaceA, sessionId), 'utf8')
+        );
+        expect(
+          entries.filter((entry) => entry.type === 'session_updated')
+        ).toHaveLength(1);
+        expect(entries.at(-1)).toMatchObject({
+          type: 'session_updated',
+          data: { taskStatus: 'interrupted', taskOwnerPid: null },
+        });
+      } finally {
+        projection?.mockRestore();
+      }
+    }
+  );
+
+  it('keeps a running task only while a real session lease is held', async () => {
+    const sessionId = 'live-lease-owner';
+    await writeTranscript(workspaceA, sessionId, [
+      makeCreatedEvent(sessionId, workspaceA, '2024-01-01T00:00:00.000Z', {
+        taskStatus: 'running',
+        taskOwnerPid: process.pid,
+      }),
+    ]);
+    const lease = await SessionLease.acquire(sessionId, workspaceA);
+    try {
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceA)
+      ).resolves.toMatchObject({ taskStatus: 'running' });
+      expect(
+        parseSessionJSONL(
+          await readFile(getSessionFilePath(workspaceA, sessionId), 'utf8')
+        )
+      ).toHaveLength(1);
+    } finally {
+      await lease.release();
+    }
+    await expect(
+      SessionService.findSessionMetadata(sessionId, workspaceA)
+    ).resolves.toMatchObject({ taskStatus: 'interrupted' });
+  });
+
+  it('appends one interruption when exact catalog readers race', async () => {
+    const sessionId = 'concurrent-catalog-recovery';
+    await writeTranscript(workspaceA, sessionId, [
+      makeCreatedEvent(sessionId, workspaceA, '2024-01-01T00:00:00.000Z', {
+        taskStatus: 'running',
+        taskOwnerPid: process.pid,
+      }),
+    ]);
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        SessionService.findSessionMetadata(sessionId, workspaceA)
+      )
+    );
+    await expect(
+      SessionService.findSessionMetadata(sessionId, workspaceA)
+    ).resolves.toMatchObject({
+      taskStatus: 'interrupted',
+    });
+    expect(
+      parseSessionJSONL(
+        await readFile(getSessionFilePath(workspaceA, sessionId), 'utf8')
+      ).filter((entry) => entry.type === 'session_updated')
+    ).toHaveLength(1);
+  });
+
+  it.each(['status', 'owner'] as const)(
+    'does not overwrite a changed %s while acquiring recovery ownership',
+    async (field) => {
+      const sessionId = 'recovery-fence';
+      await writeTranscript(workspaceA, sessionId, [
+        makeCreatedEvent(sessionId, workspaceA, '2024-01-01T00:00:00.000Z', {
+          taskStatus: 'running',
+          taskOwnerPid: process.pid,
+        }),
+      ]);
+      const acquired = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const acquire = SessionLease.acquire.bind(SessionLease);
+      const probe = vi
+        .spyOn(SessionLease, 'acquire')
+        .mockImplementationOnce(async (...args) => {
+          const lease = await acquire(...args);
+          acquired.resolve();
+          await resume.promise;
+          return lease;
+        });
+      const recovery = SessionService.findSessionMetadata(sessionId, workspaceA);
+      try {
+        await acquired.promise;
+        await SessionService.updateSessionMetadata(
+          sessionId,
+          workspaceA,
+          field === 'status'
+            ? { taskStatus: 'completed', taskOwnerPid: null }
+            : { taskOwnerPid: 2_147_483_647 }
+        );
+        resume.resolve();
+        await expect(recovery).resolves.toMatchObject({
+          taskStatus: field === 'status' ? 'completed' : 'running',
+        });
+        const entries = parseSessionJSONL(
+          await readFile(getSessionFilePath(workspaceA, sessionId), 'utf8')
+        );
+        expect(
+          entries.filter((entry) => entry.type === 'session_updated')
+        ).toHaveLength(1);
+        expect(entries.at(-1)?.data).not.toMatchObject({ taskStatus: 'interrupted' });
+      } finally {
+        resume.resolve();
+        await recovery;
+        probe.mockRestore();
+      }
+    }
+  );
+
   it('collects only stale empty session shells', async () => {
     const stale = 'stale-empty';
     const recent = 'recent-empty';
@@ -569,12 +742,25 @@ describe('SessionService strict session catalog', () => {
       mkdir(nestedWorkspace, { recursive: true }),
     ]);
     await writeTranscript(nestedWorkspace, 'foreign-metadata', [
-      makeCreatedEvent('foreign-metadata', nestedWorkspace, '2024-01-01T00:00:00.000Z'),
+      makeCreatedEvent(
+        'foreign-metadata',
+        nestedWorkspace,
+        '2024-01-01T00:00:00.000Z',
+        {
+          taskStatus: 'running',
+          taskOwnerPid: process.pid,
+        }
+      ),
     ]);
 
     await expect(
       SessionService.findSessionMetadata('foreign-metadata', dashedWorkspace)
     ).resolves.toBeUndefined();
+    expect(
+      parseSessionJSONL(
+        await readFile(getSessionFilePath(nestedWorkspace, 'foreign-metadata'), 'utf8')
+      )
+    ).toHaveLength(1);
     await expect(
       SessionService.findSessionMetadata('foreign-metadata', nestedWorkspace)
     ).resolves.toMatchObject({ projectPath: nestedWorkspace });
@@ -1337,12 +1523,17 @@ describe('SessionService strict session catalog', () => {
       }),
     ]);
 
-    await expect(
-      SessionService.findSessionMetadata(sessionId, workspaceA)
-    ).resolves.toMatchObject({
-      projectPath: workspaceA,
-      taskStatus: 'running',
-    });
+    const activeLease = await SessionLease.acquire(sessionId, workspaceA);
+    try {
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceA)
+      ).resolves.toMatchObject({
+        projectPath: workspaceA,
+        taskStatus: 'running',
+      });
+    } finally {
+      await activeLease.release();
+    }
     const recoveryLease = await SessionLease.acquire(sessionId, workspaceB);
     try {
       await expect(

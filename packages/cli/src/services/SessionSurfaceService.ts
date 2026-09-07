@@ -497,6 +497,11 @@ export class SessionSurfaceService {
   ) {
     signal?.throwIfAborted();
     if (locator.workspace.kind === 'local') {
+      await SessionService.findSessionMetadata(
+        locator.sessionId,
+        locator.workspace.projectPath
+      );
+      signal?.throwIfAborted();
       await syncSession(
         database,
         locator.sessionId,
@@ -508,6 +513,7 @@ export class SessionSurfaceService {
       );
       return;
     }
+    await SessionService.listValidatedRemoteSurfaceCandidates(signal);
     await syncAllAcpRemoteScopes(
       database,
       SessionService.projectionDeriverForSearch(),
@@ -554,6 +560,7 @@ export class SessionSurfaceService {
         signal
       );
     }
+    await SessionService.listValidatedRemoteSurfaceCandidates(signal);
     await syncAllAcpRemoteScopes(database, derive, signal);
   }
 

@@ -19,12 +19,14 @@ import {
   ensureAcpRemoteHostStateRoot,
   withValidatedAcpRemoteStateScope,
 } from '../../../src/acp/AcpRemoteWorkspace.js';
+import { SessionLease } from '../../../src/agent/runtime/SessionLease.js';
 import {
   JSONLStore,
   parseSessionJSONL,
 } from '../../../src/context/storage/JSONLStore.js';
 import {
   getAcpRemoteSessionFilePath,
+  getAcpRemoteSessionLeaseFilePath,
   getProjectStoragePath,
   getSessionFilePath,
 } from '../../../src/context/storage/pathUtils.js';
@@ -1644,6 +1646,106 @@ describe('SessionService remote durable sessions', () => {
     } finally {
       await rm(localWorkspace, { recursive: true, force: true });
     }
+  });
+
+  it.each(['projection', 'jsonl'] as const)(
+    'reconciles a reused remote PID through %s inside its exact scope',
+    async (reader) => {
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('C:\\Repo')
+      );
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      const sessionId = 'remote-reused-owner';
+      await writeRemoteTranscript(hostStateRoot, sessionId, [
+        makeRemoteCreatedEvent(
+          sessionId,
+          hostStateRoot,
+          '2024-01-01T00:00:00.000Z',
+          descriptor,
+          {
+            taskStatus: 'running',
+            taskOwnerPid: process.pid,
+          }
+        ),
+      ]);
+      await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+        await writeFile(
+          getAcpRemoteSessionLeaseFilePath(scope, sessionId),
+          JSON.stringify({
+            version: 1,
+            sessionId,
+            ownerId: 'private-remote-owner',
+            pid: process.pid,
+            processIdentity: {
+              platform: process.platform,
+              fingerprint: '0'.repeat(64),
+            },
+            acquiredAt: '2024-01-01T00:00:00.000Z',
+          }),
+          { mode: 0o600 }
+        );
+      });
+      const projection =
+        reader === 'jsonl'
+          ? vi.spyOn(projectionModule, 'getProjectionDb').mockResolvedValue(null)
+          : undefined;
+      try {
+        const page = await SessionService.listRemoteSessionPage({ descriptor });
+        expect(page.sessions).toMatchObject([{ sessionId, taskStatus: 'interrupted' }]);
+        expect(JSON.stringify(page)).not.toMatch(
+          /taskOwnerPid|fingerprint|private-remote-owner/
+        );
+        await SessionService.listRemoteSessionPage({ descriptor });
+        const entries = await readRemoteTranscript(hostStateRoot, sessionId);
+        expect(
+          entries.filter((entry) => entry.type === 'session_updated')
+        ).toHaveLength(1);
+        expect(entries.at(-1)).not.toHaveProperty('gitBranch');
+        await expect(
+          access(getProjectStoragePath(hostStateRoot))
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        projection?.mockRestore();
+      }
+    }
+  );
+
+  it('preserves running state while a remote identity-bound lease is held', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Active')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-active-owner';
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor,
+        {
+          taskStatus: 'running',
+          taskOwnerPid: process.pid,
+        }
+      ),
+    ]);
+    const lease = await withValidatedAcpRemoteStateScope(hostStateRoot, (scope) =>
+      SessionLease.acquireRemote(sessionId, scope)
+    );
+    try {
+      await expect(
+        SessionService.listRemoteSessionPage({ descriptor })
+      ).resolves.toMatchObject({
+        sessions: [{ sessionId, taskStatus: 'running' }],
+      });
+      expect(await readRemoteTranscript(hostStateRoot, sessionId)).toHaveLength(1);
+    } finally {
+      await withValidatedAcpRemoteStateScope(hostStateRoot, () => lease.release());
+    }
+    await expect(
+      SessionService.listRemoteSessionPage({ descriptor })
+    ).resolves.toMatchObject({
+      sessions: [{ sessionId, taskStatus: 'interrupted' }],
+    });
   });
 
   it('reconciles a dead remote owner with a lease inside the protected scope and never creates a local project bucket', async () => {

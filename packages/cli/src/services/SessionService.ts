@@ -239,19 +239,6 @@ export const STALE_EMPTY_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
 class SessionTaskReconciliationSkipped extends Error {}
 
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (
-      error instanceof Error &&
-      'code' in error &&
-      (error as NodeJS.ErrnoException).code === 'EPERM'
-    );
-  }
-}
-
 function parseTaskWorktree(value: unknown): SessionTaskWorktree | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const worktree = value as Record<string, unknown>;
@@ -1576,6 +1563,7 @@ export class SessionService {
               filePath
             )
           );
+          await this.reconcileInterruptedTask(metadata, 'acp-remote', validatedScope);
           const workspaceRef = await getOrCreateAcpRemoteWorkspaceReferenceInScope(
             validatedScope,
             metadata.remoteWorkspace
@@ -1635,6 +1623,9 @@ export class SessionService {
             continue;
           }
           if (getSessionFilePath(projectPath, sessionId) !== filePath) continue;
+          await this.reconcileInterruptedTask(
+            this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath)
+          );
           candidates.set(`${projectPath}\0${sessionId}`, {
             projectPath,
             sessionId,
@@ -4378,6 +4369,8 @@ export class SessionService {
     );
     if (sourceKind === 'acp-remote') {
       validateProjectedRemoteMetadata(metadata);
+    } else if (metadata.projectPath !== projectPath || metadata.remoteWorkspace) {
+      return metadata;
     }
     return this.reconcileInterruptedTask(metadata, sourceKind, validatedRemoteScope);
   }
@@ -4449,11 +4442,7 @@ export class SessionService {
     validatedRemoteScope?: AcpRemoteStateScope
   ): Promise<StoredSessionMetadata> {
     const ownerPid = session.taskOwnerPid;
-    if (
-      session.taskStatus !== 'running' ||
-      ownerPid === undefined ||
-      isProcessRunning(ownerPid)
-    ) {
+    if (session.taskStatus !== 'running' || ownerPid === undefined) {
       return session;
     }
 
@@ -4528,11 +4517,7 @@ export class SessionService {
           if (expectedDescriptor) {
             validateProjectedRemoteMetadata(current, expectedDescriptor);
           }
-          if (
-            current.taskStatus !== 'running' ||
-            current.taskOwnerPid !== ownerPid ||
-            isProcessRunning(ownerPid)
-          ) {
+          if (current.taskStatus !== 'running' || current.taskOwnerPid !== ownerPid) {
             throw new SessionTaskReconciliationSkipped();
           }
 

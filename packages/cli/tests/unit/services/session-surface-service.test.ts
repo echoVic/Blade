@@ -124,6 +124,104 @@ describe('SessionSurfaceService', () => {
     await rm(storageRoot, { recursive: true, force: true });
   });
 
+  it.each([
+    ['local', 'projection'],
+    ['local', 'jsonl'],
+    ['acp-remote', 'projection'],
+    ['acp-remote', 'jsonl'],
+  ] as const)(
+    'recovers an unowned running %s task in the %s surface catalog',
+    async (kind, reader) => {
+      const sessionId = 'surface-orphan-owner';
+      if (reader === 'jsonl') {
+        await service.close();
+        service = new SessionSurfaceService({ database: null });
+      }
+      if (kind === 'local') {
+        await SessionService.createSessionMetadata(sessionId, localWorkspace);
+        await SessionService.updateSessionMetadata(sessionId, localWorkspace, {
+          taskStatus: 'running',
+          taskOwnerPid: process.pid,
+        });
+      } else {
+        const descriptor = createAcpRemoteWorkspaceDescriptor(
+          createAcpRemotePathProfile('C:\\Orphan')
+        );
+        const hostStateRoot = deriveAcpRemoteHostStateRoot(
+          descriptor.collisionIdentity
+        );
+        await SessionService.createRemoteSessionMetadata(
+          sessionId,
+          hostStateRoot,
+          descriptor
+        );
+        await SessionService.updateRemoteSessionMetadata(
+          sessionId,
+          hostStateRoot,
+          descriptor,
+          {
+            taskStatus: 'running',
+            taskOwnerPid: process.pid,
+          }
+        );
+      }
+      const page = await service.listPage({ archived: false });
+      expect(page.sessions).toMatchObject([
+        { taskStatus: 'interrupted', taskCompletedAt: expect.any(String) },
+      ]);
+      expect(JSON.stringify(page)).not.toMatch(/taskOwnerPid|fingerprint|ownerId/);
+      const opened = await service.open(page.sessions[0]!.locator);
+      expect(opened.session.taskStatus).toBe('interrupted');
+    }
+  );
+
+  it.each(['projection', 'jsonl'] as const)(
+    'recovers a local task opened directly through %s without listing first',
+    async (reader) => {
+      const sessionId = 'direct-open-orphan';
+      if (reader === 'jsonl') {
+        await service.close();
+        service = new SessionSurfaceService({ database: null });
+      }
+      await SessionService.createSessionMetadata(sessionId, localWorkspace);
+      await SessionService.updateSessionMetadata(sessionId, localWorkspace, {
+        taskStatus: 'running',
+        taskOwnerPid: process.pid,
+      });
+      const opened = await service.open({
+        version: 2,
+        sessionId,
+        workspace: { kind: 'local', projectPath: localWorkspace },
+      });
+      expect(opened.session.taskStatus).toBe('interrupted');
+    }
+  );
+
+  it('recovers a remote task opened with an existing locator before projection sync', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Direct')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'direct-remote-open';
+    await SessionService.createRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor
+    );
+    const page = await service.listPage();
+    await SessionService.updateRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor,
+      {
+        taskStatus: 'running',
+        taskOwnerPid: process.pid,
+      }
+    );
+    const opened = await service.open(page.sessions[0]!.locator);
+    expect(opened.session.taskStatus).toBe('interrupted');
+  });
+
   it('lists local and remote rows with opaque compound locators and lifecycle isolation', async () => {
     const sessionId = 'shared-surface-session';
     const descriptor = createAcpRemoteWorkspaceDescriptor(

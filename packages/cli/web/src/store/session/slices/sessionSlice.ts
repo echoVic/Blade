@@ -726,6 +726,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           }
           return {
             sessions,
+            surfaceCatalog: currentState.surfaceCatalog.filter(
+              (summary) =>
+                summary.locator.workspace.kind !== 'local' ||
+                summary.locator.workspace.projectPath !== ref.projectPath ||
+                !archivedIds.has(summary.locator.sessionId)
+            ),
             archivedSessions: upsertSessionByRef(
               currentState.archivedSessions,
               result.session
