@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.149] - 2026-09-09
+
+### Fixed
+- Reconcile Web task and Surface catalogs after the first global event-stream handshake as well as reconnects, recovering tasks created between initial catalog loading and subscription readiness without a page reload.
+- Keep repeated connection notifications idempotent and ignore late connection callbacks after the subscriber unmounts, preserving the current session and offline state.
+
+### Tests
+- Reproduced the initial handshake gap in real Chromium before the fix, then verified recovery alongside cross-page lifecycle operations and raw-PTY owner-state checks.
+- Added first-handshake, repeated-notification, and late-unmount regressions; extended the DeepSeek Flash/Pro real-API trajectory with a delayed real SSE handshake and a separate continuously connected observer.
+
 ## [0.10.148] - 2026-09-09
 
 ### Fixed
