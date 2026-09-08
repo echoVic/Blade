@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.146] - 2026-09-08
+
+### Fixed
+- Key SQLite synchronization by the actual transcript source file rather than a lossy decoded workspace directory, preventing sessions in hyphenated or underscored workspaces from disappearing from catalogs, search, or archive operations.
+- Associate Surface history with its selected source, clear old workspace content after source identity changes, and re-evaluate surviving copies when the selected transcript is deleted, invalidated, or rewound.
+- Rebuild the derived SQLite cache with schema v8 without modifying JSONL transcripts; retain unchanged-file read skipping and add an index for source-file lookups.
+
+### Tests
+- Added failing-first regressions for cold/warm cache identity, v6/v7 cache rebuilding, duplicate-source recovery, rewind, search cleanup, unchanged-file read counts, and source lookup indexing.
+- Verified Chromium archive actions and production raw-PTY session lists in a workspace containing both hyphens and underscores, and passed the existing DeepSeek Flash/Pro eight-cell Headless/ACP/PTY/Web real-API regression matrix.
+
 ## [0.10.145] - 2026-09-08
 
 ### Fixed
