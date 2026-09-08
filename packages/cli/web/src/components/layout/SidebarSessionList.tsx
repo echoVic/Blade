@@ -103,7 +103,9 @@ function normalizeProjectPath(value: string): string {
   return value.length > 1 ? value.replace(/\/+$/, '') : value;
 }
 
-function catalogActivityTime(summary: SessionSurfaceSummary): number {
+function catalogActivityTime(
+  summary: Pick<SessionSurfaceSummary, 'lastMessageTime' | 'firstMessageTime'>
+): number {
   const raw = summary.lastMessageTime || summary.firstMessageTime;
   if (!raw) return 0;
   const value = new Date(raw).getTime();
@@ -116,6 +118,13 @@ function localSessionFromSummary(
 ): Session {
   if (summary.locator.workspace.kind !== 'local') {
     throw new Error('Expected a local Session surface summary');
+  }
+
+  if (
+    legacySession &&
+    catalogActivityTime(legacySession) >= catalogActivityTime(summary)
+  ) {
+    return legacySession;
   }
 
   const base: Session = legacySession ?? {
@@ -235,7 +244,7 @@ export function SidebarSessionList({
           path: legacySession
             ? projectPathOf(session, activeProjectPath)
             : summary.locator.workspace.projectPath,
-          activityTime: catalogActivityTime(summary),
+          activityTime: catalogActivityTime(session),
           session,
         });
         continue;

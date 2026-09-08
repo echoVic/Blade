@@ -7,6 +7,32 @@
 - Framework retry: 0
 - Provider model retry: 0
 
+## 0.10.147 Live Sidebar Qualification
+
+This patch prevents an older Surface summary from overwriting live local task state.
+V2 still determines catalog membership. Local records are matched by exact
+`projectPath + sessionId`, with newer activity taking precedence and equal timestamps
+retaining the local event state. Newer Surface summaries still replace older local
+snapshots; remote rows are not merged.
+
+Component tests retain the same Surface array while driving the real store's
+`handleTaskEvent` through running, completed, failed, interrupted, cancelled, and
+queued. Both sidebar views, Stop/Retry/Archive, equivalent timestamps, ordering, and
+same-ID workspace isolation pass: 34/34.
+
+The existing real-API trajectory now adds an independent Chromium context that keeps
+the foreground session open while a background task completes. It verifies completed
+status, Stop removal, enabled Archive, unchanged foreground selection, unchanged
+`performance.timeOrigin`, and no additional Surface catalog requests. The original
+offline page separately retains unread recovery and reload-persistence checks.
+Flash and Pro each used one real upstream request, no injected responses, and no
+retries; both the new and existing assertions passed.
+
+The first run compared a normalized post-bootstrap URL with the original input string.
+The test was corrected to verify explicit foreground session/workspace parameters
+after initialization, without relaxing the no-reload assertions. This was a test
+assertion correction, not a product navigation fix.
+
 ## Result
 
 Blade Web now persists a versioned acknowledged-terminal signature for every exact compound SessionRef. After reload or a global task-feed disconnect, the complete Session catalog reconciles against that ledger. A previously known running task that became completed, failed, or interrupted while the browser was absent becomes unread instead of losing its live task.status edge.

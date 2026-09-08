@@ -37,6 +37,12 @@ export interface DurableTaskUnreadWebEvidence {
   selectedBefore: SessionRefEvidence;
   backgroundTask: SessionRefEvidence;
   statusSequence: string[];
+  liveSidebar: {
+    completedWithoutReload: true;
+    stopRemoved: true;
+    archiveEnabled: true;
+    selectionPreserved: true;
+  };
   unreadAfterMissedCompletion: UnreadCheckpoint;
   unreadAfterReload: UnreadCheckpoint;
   titleCountAfterReload: number;
@@ -446,6 +452,35 @@ export async function runDurableTaskUnreadWebDriver(input: {
       throw new Error('Sibling fixture did not preserve the shared session ID');
     }
     const siblingKey = sessionRefKey(siblingRef);
+    const liveContext = await browser.newContext({ locale: 'en-US' });
+    const livePage = await createPage(liveContext, faults, requestState);
+    const liveUrl = selectedUrl.href;
+    let liveCatalogRequests = 0;
+    livePage.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/sessions/v2/catalog')
+        liveCatalogRequests++;
+    });
+    await livePage.goto(liveUrl, { waitUntil: 'domcontentloaded' });
+    const liveTask = livePage.getByRole('button', {
+      name: `Select Unread background ${input.model}`,
+      exact: true,
+    });
+    await liveTask
+      .locator('[title="running"]')
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    await waitForCatalogBaseline(livePage, backgroundKey);
+    await livePage.locator('textarea[data-blade-composer]').waitFor({
+      state: 'visible',
+      timeout: 30_000,
+    });
+    const liveSelectionBefore = new URL(livePage.url());
+    if (
+      liveSelectionBefore.searchParams.get('session') !== selectedBefore.sessionId ||
+      liveSelectionBefore.searchParams.get('project') !== selectedBefore.projectPath
+    )
+      throw new Error('Live observer did not select the foreground session');
+    const catalogRequestsBeforeCompletion = liveCatalogRequests;
+    const liveDocument = await livePage.evaluate(() => performance.timeOrigin);
 
     requestState.refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -486,6 +521,51 @@ export async function runDurableTaskUnreadWebDriver(input: {
     if (terminal.taskStatus !== 'completed') {
       throw new Error(`Real background task ended ${terminal.taskStatus}`);
     }
+    await liveTask
+      .locator('[title="completed"]')
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    if (
+      await livePage
+        .getByRole('button', {
+          name: `Stop Unread background ${input.model}`,
+          exact: true,
+        })
+        .count()
+    ) {
+      throw new Error('Completed task still exposes Stop in the live sidebar');
+    }
+    await livePage
+      .getByRole('button', {
+        name: `More actions for Unread background ${input.model}`,
+        exact: true,
+      })
+      .click();
+    const liveArchive = livePage.getByRole('menuitem', {
+      name: `Archive Unread background ${input.model}`,
+      exact: true,
+    });
+    await liveArchive.waitFor({ state: 'visible' });
+    if (!(await liveArchive.isEnabled()))
+      throw new Error('Completed task archive is still disabled');
+    await livePage.keyboard.press('Escape');
+    if (
+      liveCatalogRequests !== catalogRequestsBeforeCompletion ||
+      (await livePage.evaluate(() => performance.timeOrigin)) !== liveDocument
+    ) {
+      throw new Error(
+        'Live sidebar verification required a document or catalog reload'
+      );
+    }
+    const liveSelectionAfter = new URL(livePage.url());
+    if (
+      liveSelectionAfter.searchParams.get('session') !== selectedBefore.sessionId ||
+      liveSelectionAfter.searchParams.get('project') !== selectedBefore.projectPath
+    )
+      throw new Error('Background completion changed the live page selection');
+    const liveBody = (await livePage.locator('body').textContent()) ?? '';
+    requestState.closing = true;
+    await liveContext.close();
+    requestState.closing = false;
     await waitForCatalogSessions(
       origin,
       new Map([
@@ -603,6 +683,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
     const serverFaults = inspectServerFaults(serverOutput);
     const leakSources = [
       serverOutput,
+      liveBody,
       ...faults,
       JSON.stringify(finalStorage),
       (await page.locator('body').textContent()) ?? '',
@@ -614,6 +695,12 @@ export async function runDurableTaskUnreadWebDriver(input: {
       selectedBefore: evidenceRef(selectedBefore, input.workspace),
       backgroundTask: evidenceRef(backgroundTask, input.workspace),
       statusSequence,
+      liveSidebar: {
+        completedWithoutReload: true,
+        stopRemoved: true,
+        archiveEnabled: true,
+        selectionPreserved: true,
+      },
       unreadAfterMissedCompletion,
       unreadAfterReload,
       titleCountAfterReload,

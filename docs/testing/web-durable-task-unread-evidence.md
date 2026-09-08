@@ -7,6 +7,25 @@
 - Framework retry：0
 - Provider model retry：0
 
+## 0.10.147 实时侧栏补充验证
+
+本轮修复侧栏以旧 Surface 摘要覆盖实时本地任务状态的问题。目录成员仍由 V2
+决定；按精确 `projectPath + sessionId` 匹配本地记录后，采用较新的活动时间，
+时间相同时保留本地事件状态。较新的 Surface 摘要仍可替换旧本地快照，远程行不合并。
+
+组件测试在保留同一 Surface 数组的情况下通过真实 store 的 `handleTaskEvent`
+驱动 running、completed、failed、interrupted、cancelled 和 queued，检查两种视图的
+状态、Stop/Retry/Archive、等价时间戳、排序以及同 ID 工作区隔离：34/34 通过。
+
+现有真实 API 轨迹新增独立 Chromium context，保持前台会话打开，等待后台任务完成。
+断言完成状态可见、Stop 消失、Archive 启用、前台会话不变，并确认 `performance.timeOrigin`
+及 Surface catalog 请求数没有变化；原离线页面仍单独验证未读恢复和重载持久化。
+Flash/Pro 各一次真实上游请求、零注入响应、零重试，新增与原有断言均通过。
+
+首次运行因测试将初始化后的规范化 URL 与原始输入字符串比较而失败；改为在初始化
+完成后验证明确的前台会话及工作区参数，不改变无刷新断言。此项是测试断言修正，
+不是产品导航修复。
+
 ## 结果
 
 Blade Web 现在为每个 exact compound SessionRef 持久化版本化的“已读终态指纹”。当浏览器 reload 或全局任务事件流断开时，完整 Session catalog 会与该指纹对账：已知 running 任务若在离线窗口进入 completed、failed 或 interrupted，Web 会恢复 unread，而不是因为错过 live task.status 就静默丢失提醒。

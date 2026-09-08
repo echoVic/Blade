@@ -142,6 +142,12 @@ describeDurableUnread('Durable task unread Web trajectory (real API)', () => {
           frameworkRetries: 0,
           modelMaxRetries: 0,
           statusSequence: ['running', 'completed'],
+          liveSidebar: {
+            completedWithoutReload: true,
+            stopRemoved: true,
+            archiveEnabled: true,
+            selectionPreserved: true,
+          },
           unreadAfterMissedCompletion: {
             browserUnread: true,
             siblingUnread: true,

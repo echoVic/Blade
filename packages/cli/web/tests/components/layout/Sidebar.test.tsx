@@ -367,6 +367,209 @@ describe('Sidebar', () => {
     expect(sessionActionMocks.openHistorySurface).toHaveBeenCalledWith(remote.locator);
   });
 
+  test.each(['project', 'status'] as const)(
+    'updates a local task from live events without refreshing its %s catalog',
+    async (view) => {
+      useAppStore.setState({ sidebarView: view });
+      const local = createSession({
+        sessionId: 'shared-live',
+        title: 'Live task',
+        taskStatus: 'running',
+        taskRetryAvailable: true,
+        lastMessageTime: '2026-09-08T00:00:00.000Z',
+      });
+      const sibling = createSession({
+        ...local,
+        projectPath: '/workspace/b',
+        title: 'Other workspace',
+      });
+      const remote = createRemoteSurfaceSummary(local.sessionId, {
+        title: 'Remote task',
+        taskStatus: 'running',
+      });
+      const catalog = [
+        createLocalSurfaceSummary(local),
+        createLocalSurfaceSummary(sibling),
+        remote,
+      ];
+      useSessionStore.setState({
+        sessions: [local, sibling],
+        surfaceCatalog: catalog,
+        surfaceCatalogLoadState: 'ready',
+        currentSessionRef: createRef(local.sessionId, local.projectPath),
+      });
+      await act(async () => root.render(<Sidebar />));
+      expect(
+        findSessionRow(container, local.title!)?.querySelector('[title="running"]')
+      ).not.toBeNull();
+
+      for (const [index, taskStatus] of [
+        'completed',
+        'running',
+        'failed',
+        'interrupted',
+        'cancelled',
+        'queued',
+      ].entries()) {
+        await act(async () => {
+          useSessionStore.getState().handleTaskEvent({
+            type: 'task.status',
+            properties: {
+              sessionId: local.sessionId,
+              projectPath: local.projectPath,
+              taskStatus,
+              updatedAt: `2026-09-08T00:00:0${index + 1}.000Z`,
+              taskCompletedAt: `2026-09-08T00:00:0${index + 1}.000Z`,
+            },
+          });
+          root.render(<Sidebar />);
+        });
+        const row = findSessionRow(container, local.title!);
+        expect(row).toBeDefined();
+        expect(row?.querySelector(`[title="${taskStatus}"]`)).not.toBeNull();
+        const active = taskStatus === 'running' || taskStatus === 'queued';
+        expect(
+          Boolean(container.querySelector('button[aria-label="Stop Live task"]'))
+        ).toBe(active);
+        expect(
+          Boolean(container.querySelector('button[aria-label="Retry Live task"]'))
+        ).toBe(['failed', 'interrupted', 'cancelled'].includes(taskStatus));
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>(
+              'button[aria-label="More actions for Live task"]'
+            )
+            ?.click()
+        );
+        expect(
+          document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Archive Live task"]'
+          )?.disabled
+        ).toBe(active);
+        await userEvent.setup().keyboard('{Escape}');
+        expect(
+          findSessionRow(container, sibling.title!)?.querySelector('[title="running"]')
+        ).not.toBeNull();
+        expect(useSessionStore.getState().surfaceCatalog).toBe(catalog);
+      }
+      expect(findSessionRow(container, 'Remote task')).toBeDefined();
+      expect(
+        container.querySelector('button[aria-label="Stop Remote task"]')
+      ).toBeNull();
+      expect(sessionActionMocks.loadSurfaceCatalog).not.toHaveBeenCalled();
+    }
+  );
+
+  test('keeps live state when the catalog timestamp denotes the same instant', async () => {
+    const local = createSession({
+      title: 'Same instant task',
+      taskStatus: 'running',
+      lastMessageTime: '2026-09-08T00:00:00.000Z',
+    });
+    const summary = createLocalSurfaceSummary(local, {
+      lastMessageTime: '2026-09-08T08:00:00+08:00',
+    });
+    useSessionStore.setState({
+      sessions: [local],
+      surfaceCatalog: [summary],
+      surfaceCatalogLoadState: 'ready',
+      currentSessionRef: createRef(local.sessionId, local.projectPath),
+    });
+    await act(async () => {
+      useSessionStore.getState().handleTaskEvent({
+        type: 'task.status',
+        properties: {
+          sessionId: local.sessionId,
+          projectPath: local.projectPath,
+          taskStatus: 'completed',
+          updatedAt: local.lastMessageTime,
+          taskCompletedAt: local.lastMessageTime,
+        },
+      });
+      root.render(<Sidebar />);
+    });
+    const row = findSessionRow(container, 'Same instant task');
+    expect(row).toBeDefined();
+    expect(row?.querySelector('[title="completed"]')).not.toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Stop Same instant task"]')
+    ).toBeNull();
+  });
+
+  test.each(['project', 'status'] as const)(
+    'orders the %s catalog by the displayed live task activity',
+    async (view) => {
+      useAppStore.setState({ sidebarView: view });
+      const first = createSession({
+        sessionId: 'first-task',
+        title: 'First task',
+        lastMessageTime: '2026-09-08T00:00:01.000Z',
+      });
+      const second = createSession({
+        sessionId: 'second-task',
+        title: 'Second task',
+        lastMessageTime: '2026-09-08T00:00:00.000Z',
+      });
+      useSessionStore.setState({
+        sessions: [first, second],
+        surfaceCatalog: [
+          createLocalSurfaceSummary(first),
+          createLocalSurfaceSummary(second),
+        ],
+        surfaceCatalogLoadState: 'ready',
+        currentSessionRef: createRef(second.sessionId, second.projectPath),
+      });
+      await act(async () => root.render(<Sidebar />));
+      expect(container.textContent?.indexOf('First task')).toBeLessThan(
+        container.textContent?.indexOf('Second task') ?? -1
+      );
+      await act(async () => {
+        useSessionStore.getState().handleTaskEvent({
+          type: 'task.status',
+          properties: {
+            sessionId: second.sessionId,
+            projectPath: second.projectPath,
+            taskStatus: 'completed',
+            updatedAt: '2026-09-08T00:00:02.000Z',
+          },
+        });
+        root.render(<Sidebar />);
+      });
+      expect(container.textContent?.indexOf('Second task')).toBeLessThan(
+        container.textContent?.indexOf('First task') ?? -1
+      );
+    }
+  );
+
+  test('prefers a newer V2 task summary over an older local snapshot', async () => {
+    const local = createSession({
+      title: 'Old local title',
+      taskStatus: 'running',
+      lastMessageTime: '2026-09-08T00:00:00.000Z',
+    });
+    useSessionStore.setState({
+      sessions: [local],
+      surfaceCatalog: [
+        createLocalSurfaceSummary(local, {
+          title: 'New summary title',
+          taskStatus: 'completed',
+          lastMessageTime: '2026-09-08T00:00:01.000Z',
+        }),
+      ],
+      surfaceCatalogLoadState: 'ready',
+    });
+    await act(async () => root.render(<Sidebar />));
+    expect(
+      findSessionRow(container, 'New summary title')?.querySelector(
+        '[title="completed"]'
+      )
+    ).not.toBeNull();
+    expect(findSessionRow(container, 'Old local title')).toBeUndefined();
+    expect(
+      container.querySelector('button[aria-label="Stop New summary title"]')
+    ).toBeNull();
+  });
+
   test('treats a ready empty V2 catalog as authoritative over stale legacy sessions', async () => {
     useAppStore.setState({ sidebarView: 'status' });
     useSessionStore.setState({
