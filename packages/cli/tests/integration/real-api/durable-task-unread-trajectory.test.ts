@@ -143,6 +143,7 @@ describeDurableUnread('Durable task unread Web trajectory (real API)', () => {
           modelMaxRetries: 0,
           statusSequence: ['running', 'completed'],
           liveSidebar: {
+            initialHandshakeReconciled: true,
             createdWithoutReload: true,
             completedWithoutReload: true,
             stopRemoved: true,

@@ -95,7 +95,8 @@ archive 响应包含 `archivedSessionIds`；unarchive 响应包含本次恢复�
 `restoredSessionIds`。Bus 对每个受影响 Session 发布 `session.archived` 或
 `session.unarchived`；全局 `/events` 流仅转发 `sessionId` 和 `projectPath`，
 不暴露归档操作的私有字段。已连接的其他 Web tab 无需刷新即可同步目录，且不会
-切换当前会话；事件流重连时重新读取 Surface 目录，补回断线期间的成员变化。
+切换当前会话；事件流首次连接成功或重连时重新读取 Surface 目录，补回首次握手
+或断线期间的成员变化。
 
 ## 交互面
 

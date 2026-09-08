@@ -1492,6 +1492,43 @@ describe('taskListSlice', () => {
     expect(useSessionStore.getState().taskEventConnectionState).toBe('offline');
   });
 
+  it('reconciles the first task feed handshake once without changing selection', async () => {
+    const ready = deferred<() => void>();
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const loadSessions = vi.fn().mockResolvedValue(undefined);
+    let connected: (() => void) | undefined;
+    serviceMocks.openTaskEventSubscription.mockImplementation(
+      (
+        _onEvent: unknown,
+        options: {
+          onConnectionStateChange: (state: 'connected') => void;
+        }
+      ) => {
+        connected = () => options.onConnectionStateChange('connected');
+        return ready.promise;
+      }
+    );
+    useSessionStore.setState({ currentSessionRef: ref, loadSessions });
+    const subscription = useSessionStore.getState().subscribeToTaskEvents();
+    try {
+      expect(loadSessions).not.toHaveBeenCalled();
+      expect(serviceMocks.listSurfaceCatalog).not.toHaveBeenCalled();
+      connected?.();
+      await vi.waitFor(() => {
+        expect(loadSessions).toHaveBeenCalledOnce();
+        expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalledOnce();
+      });
+      connected?.();
+      expect(loadSessions).toHaveBeenCalledOnce();
+      expect(serviceMocks.getWorkspaceInfo).toHaveBeenCalledOnce();
+      expect(serviceMocks.listProjects).toHaveBeenCalledOnce();
+      expect(useSessionStore.getState().currentSessionRef).toEqual(ref);
+    } finally {
+      ready.resolve(() => undefined);
+      await subscription;
+    }
+  });
+
   it('resynchronizes catalog and capacity after the global task feed reconnects', async () => {
     const unsubscribe = vi.fn();
     const loadSessions = vi.fn().mockResolvedValue(undefined);
@@ -1532,8 +1569,13 @@ describe('taskListSlice', () => {
     useConfigStore.setState({ loadModels });
 
     await useSessionStore.getState().subscribeToTaskEvents();
-    expect(loadSessions).not.toHaveBeenCalled();
-    expect(serviceMocks.getWorkspaceInfo).not.toHaveBeenCalled();
+    expect(loadSessions).toHaveBeenCalledOnce();
+    expect(serviceMocks.getWorkspaceInfo).toHaveBeenCalledOnce();
+    loadSessions.mockClear();
+    serviceMocks.listSurfaceCatalog.mockClear();
+    serviceMocks.getWorkspaceInfo.mockClear();
+    serviceMocks.listProjects.mockClear();
+    loadModels.mockClear();
 
     onConnectionStateChange?.('reconnecting');
     expect(useSessionStore.getState().taskEventConnectionState).toBe('reconnecting');
@@ -2064,21 +2106,39 @@ describe('taskListSlice', () => {
     expect(useSessionStore.getState().sessions[0]?.taskStatus).toBe('running');
   });
 
-  it('closes a subscription that becomes ready after its consumer unmounts', async () => {
+  it('closes a late handshake without reconciling after its consumer unmounts', async () => {
     const unsubscribe = vi.fn();
-    let resolveSubscription: ((unsubscribe: () => void) => void) | undefined;
-    serviceMocks.openTaskEventSubscription.mockReturnValue(
-      new Promise<() => void>((resolve) => {
-        resolveSubscription = resolve;
-      })
+    const ready = deferred<() => void>();
+    let connected: (() => void) | undefined;
+    serviceMocks.openTaskEventSubscription.mockImplementation(
+      (
+        _onEvent: unknown,
+        options: {
+          onConnectionChange: (connected: boolean) => void;
+          onConnectionStateChange: (state: 'connected') => void;
+        }
+      ) => {
+        connected = () => {
+          options.onConnectionChange(true);
+          options.onConnectionStateChange('connected');
+        };
+        return ready.promise;
+      }
     );
 
     const pending = useSessionStore.getState().subscribeToTaskEvents();
     useSessionStore.getState().unsubscribeFromTaskEvents();
-    resolveSubscription?.(unsubscribe);
+    connected?.();
+    ready.resolve(unsubscribe);
     await pending;
 
     expect(unsubscribe).toHaveBeenCalledOnce();
-    expect(useSessionStore.getState().taskEventUnsubscribe).toBeNull();
+    expect(useSessionStore.getState()).toMatchObject({
+      taskEventUnsubscribe: null,
+      taskEventsConnected: false,
+      taskEventConnectionState: 'offline',
+    });
+    expect(useSessionStore.getState().loadSessions).not.toHaveBeenCalled();
+    expect(serviceMocks.listSurfaceCatalog).not.toHaveBeenCalled();
   });
 });

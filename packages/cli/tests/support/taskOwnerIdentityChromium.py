@@ -19,6 +19,8 @@ with sync_playwright() as p:
         assert foreground_response.ok, foreground_response.text()
         foreground = foreground_response.json()
         selected_url = f'{origin}/?{urlencode({"session": foreground["sessionId"], "project": foreground["projectPath"]})}'
+        held_global_events = []
+        page.route(f'{origin}/events', lambda route: held_global_events.append(route))
         with page.expect_response(lambda response: urlparse(response.url).path == '/sessions/v2/catalog') as initial_catalog:
             page.goto(selected_url, wait_until='domcontentloaded')
         assert initial_catalog.value.ok, initial_catalog.value.text()
@@ -34,6 +36,19 @@ with sync_playwright() as p:
         assert observer_catalog.value.ok, observer_catalog.value.text()
         observer.locator('textarea[data-blade-composer]').wait_for(timeout=30000)
         observer_document = observer.evaluate('performance.timeOrigin')
+        assert len(held_global_events) == 1, held_global_events
+        gap_response = observer.request.post(f'{origin}/sessions', data={
+            'projectPath': foreground['projectPath'],
+            'title': 'SURFACE HANDSHAKE GAP',
+        })
+        assert gap_response.ok, gap_response.text()
+        expect(observer.get_by_role('button', name='选择「SURFACE HANDSHAKE GAP」', exact=True)).to_be_visible(timeout=30000)
+        gap = page.get_by_role('button', name='选择「SURFACE HANDSHAKE GAP」', exact=True)
+        expect(gap).to_have_count(0)
+        held_global_events[0].continue_()
+        page.unroute(f'{origin}/events')
+        expect(gap).to_be_visible(timeout=10000)
+        page.screenshot(path=str(pathlib.Path(root) / 'handshake-gap-recovered.png'), full_page=True)
         orphan = page.get_by_role('button', name='选择「OWNER ORPHAN」')
         active = page.get_by_role('button', name='选择「OWNER ACTIVE」')
         orphan.wait_for(timeout=30000)
@@ -99,6 +114,6 @@ with sync_playwright() as p:
             expect(current.locator('textarea[data-blade-composer]')).to_be_visible()
         observer.screenshot(path=str(pathlib.Path(root) / 'deleted-live-observer.png'), full_page=True)
         assert faults == [], faults
-        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "faults": faults}))
+        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "faults": faults}))
     finally:
         browser.close()

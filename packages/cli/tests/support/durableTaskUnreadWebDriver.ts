@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { type BrowserContext, chromium, type Page } from 'playwright';
+import { type BrowserContext, chromium, type Page, type Route } from 'playwright';
 import {
   CreateTaskResponseSchema,
   SessionCatalogPageSchema,
@@ -38,6 +38,7 @@ export interface DurableTaskUnreadWebEvidence {
   backgroundTask: SessionRefEvidence;
   statusSequence: string[];
   liveSidebar: {
+    initialHandshakeReconciled: true;
     createdWithoutReload: true;
     completedWithoutReload: true;
     stopRemoved: true;
@@ -430,6 +431,11 @@ export async function runDurableTaskUnreadWebDriver(input: {
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext({ locale: 'en-US' });
     page = await createPage(context, faults, requestState);
+    let releaseHandshake!: (route: Route) => void;
+    const heldHandshake = new Promise<Route>((resolve) => {
+      releaseHandshake = resolve;
+    });
+    await page.route(`${origin}/events`, (route) => releaseHandshake(route));
     const selectedUrl = new URL(origin);
     selectedUrl.searchParams.set('session', selectedBefore.sessionId);
     selectedUrl.searchParams.set('project', selectedBefore.projectPath);
@@ -451,6 +457,26 @@ export async function runDurableTaskUnreadWebDriver(input: {
       })
       .waitFor({ state: 'visible', timeout: 30_000 });
     const initialDocument = await page.evaluate(() => performance.timeOrigin);
+    const liveContext = await browser.newContext({ locale: 'en-US' });
+    const livePage = await createPage(liveContext, faults, requestState);
+    const liveUrl = selectedUrl.href;
+    let liveCatalogRequests = 0;
+    livePage.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/sessions/v2/catalog')
+        liveCatalogRequests++;
+    });
+    await livePage.goto(liveUrl, { waitUntil: 'domcontentloaded' });
+    await livePage.getByText('Task feed live', { exact: true }).waitFor({
+      state: 'visible',
+      timeout: 30_000,
+    });
+    await livePage
+      .getByRole('button', {
+        name: `Select Unread foreground ${input.model}`,
+        exact: true,
+      })
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    const liveDocument = await livePage.evaluate(() => performance.timeOrigin);
 
     const backgroundTask = await dispatchBackgroundTask({
       origin,
@@ -460,6 +486,19 @@ export async function runDurableTaskUnreadWebDriver(input: {
       title: `Unread background ${input.model}`,
     });
     await input.waitForProviderHold(30_000);
+    if (
+      await page
+        .getByRole('button', {
+          name: `Select Unread background ${input.model}`,
+          exact: true,
+        })
+        .count()
+    ) {
+      throw new Error('Handshake fixture did not miss the task creation event');
+    }
+    const handshake = await heldHandshake;
+    await handshake.continue();
+    await page.unroute(`${origin}/events`);
     await page
       .getByRole('button', {
         name: `Select Unread background ${input.model}`,
@@ -482,15 +521,6 @@ export async function runDurableTaskUnreadWebDriver(input: {
       throw new Error('Sibling fixture did not preserve the shared session ID');
     }
     const siblingKey = sessionRefKey(siblingRef);
-    const liveContext = await browser.newContext({ locale: 'en-US' });
-    const livePage = await createPage(liveContext, faults, requestState);
-    const liveUrl = selectedUrl.href;
-    let liveCatalogRequests = 0;
-    livePage.on('request', (request) => {
-      if (new URL(request.url()).pathname === '/sessions/v2/catalog')
-        liveCatalogRequests++;
-    });
-    await livePage.goto(liveUrl, { waitUntil: 'domcontentloaded' });
     const liveTask = livePage.getByRole('button', {
       name: `Select Unread background ${input.model}`,
       exact: true,
@@ -510,7 +540,6 @@ export async function runDurableTaskUnreadWebDriver(input: {
     )
       throw new Error('Live observer did not select the foreground session');
     const catalogRequestsBeforeCompletion = liveCatalogRequests;
-    const liveDocument = await livePage.evaluate(() => performance.timeOrigin);
 
     requestState.refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -726,6 +755,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
       backgroundTask: evidenceRef(backgroundTask, input.workspace),
       statusSequence,
       liveSidebar: {
+        initialHandshakeReconciled: true,
         createdWithoutReload: true,
         completedWithoutReload: true,
         stopRemoved: true,

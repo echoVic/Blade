@@ -849,6 +849,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       if (get().taskEventUnsubscribe) return;
       if (subscriptionPromise) return subscriptionPromise;
 
+      taskEventsNeedResync = true;
       set({
         taskEventsConnected: false,
         taskEventConnectionState: 'connecting',
@@ -859,12 +860,14 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
             (event) => get().handleTaskEvent(event),
             {
               onConnectionChange: (connected) => {
+                if (!subscriptionRequested) return;
                 set({ taskEventsConnected: connected });
               },
               onConnectionStateChange: (connectionState) => {
+                if (!subscriptionRequested) return;
                 if (
-                  subscriptionRequested &&
-                  (connectionState === 'reconnecting' || connectionState === 'offline')
+                  connectionState === 'reconnecting' ||
+                  connectionState === 'offline'
                 ) {
                   taskEventsNeedResync = true;
                 }
