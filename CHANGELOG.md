@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.147] - 2026-09-09
+
+### Fixed
+- Keep newer local task state visible in the Web sidebar instead of overwriting it with an older Surface catalog snapshot. Status groups, activity ordering, Stop, Retry, and Archive actions now follow the displayed task state without a reload.
+- Preserve V2 catalog membership and exact workspace isolation; newer Surface summaries still take precedence over older local snapshots, while remote history remains separate.
+
+### Tests
+- Added sidebar regressions for live task transitions in project/status views, equivalent timestamps, activity ordering, and newer catalog snapshots.
+- Extended the real DeepSeek Flash/Pro Chromium trajectory with an independently open page that verifies completion, Stop removal, Archive availability, and unchanged foreground selection without document or Surface catalog reloads, while retaining offline unread recovery coverage.
+
 ## [0.10.146] - 2026-09-08
 
 ### Fixed
