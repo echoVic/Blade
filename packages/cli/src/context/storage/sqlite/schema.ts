@@ -8,7 +8,7 @@
  */
 
 /** schema 版本；不兼容变更时递增，落后版本直接 drop 重建（缓存可弃）。 */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS surface_projection_meta (
@@ -20,17 +20,22 @@ VALUES (1, 0);
 
 CREATE TABLE IF NOT EXISTS projection_state (
   source_kind  TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
-  project_path TEXT NOT NULL,
+  source_file_path TEXT NOT NULL,
+  project_path TEXT,
   session_id   TEXT NOT NULL,
   last_seq     INTEGER NOT NULL DEFAULT 0,
   file_size    INTEGER NOT NULL DEFAULT 0,
   mtime_ms     INTEGER NOT NULL DEFAULT 0,
   stat_fingerprint TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (source_kind, project_path, session_id)
+  PRIMARY KEY (source_kind, source_file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_projection_state_session ON projection_state(
+  source_kind, project_path, session_id
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
   source_kind        TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
+  source_file_path   TEXT NOT NULL,
   project_path       TEXT NOT NULL,
   session_id         TEXT NOT NULL,
   root_id            TEXT,
@@ -57,6 +62,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   metadata_json      TEXT NOT NULL,
   surface_digest     TEXT NOT NULL,
   PRIMARY KEY (source_kind, project_path, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_source_file ON sessions(
+  source_kind, source_file_path
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_catalog ON sessions(
   last_message_time DESC,

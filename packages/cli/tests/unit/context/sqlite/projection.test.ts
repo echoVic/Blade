@@ -208,63 +208,81 @@ describe('SQLite projection sync', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('rebuilds a v6 cache with the v7 session surface schema', () => {
-    db.exec(`
+  it.each([6, 7])(
+    'rebuilds a v%s cache with source-file projection identity',
+    (version) => {
+      db.exec(`
       DROP TABLE surface_messages;
       CREATE TABLE surface_messages (legacy TEXT);
       INSERT INTO surface_messages (legacy) VALUES ('stale');
-      PRAGMA user_version=6;
+      DROP TABLE projection_state;
+      CREATE TABLE projection_state (
+        source_kind TEXT NOT NULL,
+        project_path TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        last_seq INTEGER NOT NULL DEFAULT 0,
+        file_size INTEGER NOT NULL DEFAULT 0,
+        mtime_ms INTEGER NOT NULL DEFAULT 0,
+        stat_fingerprint TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (source_kind, project_path, session_id)
+      );
+      PRAGMA user_version=${version};
     `);
 
-    migrate(db);
+      migrate(db);
 
-    expect(SCHEMA_VERSION).toBe(7);
-    expect(Number(db.pragma('user_version'))).toBe(7);
-    const tables = db
-      .prepare(
-        `SELECT name FROM sqlite_master
+      expect(SCHEMA_VERSION).toBe(8);
+      expect(Number(db.pragma('user_version'))).toBe(8);
+      const stateColumns = db
+        .prepare('PRAGMA table_info(projection_state)')
+        .all<{ name: string }>();
+      expect(stateColumns.map((column) => column.name)).toContain('source_file_path');
+      const tables = db
+        .prepare(
+          `SELECT name FROM sqlite_master
          WHERE type='table' AND name IN ('surface_projection_meta', 'surface_messages')
          ORDER BY name`
-      )
-      .all<{ name: string }>();
-    expect(tables.map((row) => row.name)).toEqual([
-      'surface_messages',
-      'surface_projection_meta',
-    ]);
-
-    const sessionColumns = db
-      .prepare('PRAGMA table_info(sessions)')
-      .all<{ name: string }>();
-    expect(sessionColumns.map((column) => column.name)).toEqual(
-      expect.arrayContaining([
-        'public_workspace_ref',
-        'public_workspace_sort_key',
-        'surface_digest',
-      ])
-    );
-    const messageColumns = db
-      .prepare('PRAGMA table_info(surface_messages)')
-      .all<{ name: string }>();
-    expect(messageColumns.map((column) => column.name)).not.toContain('legacy');
-    expect(messageColumns.map((column) => column.name)).toEqual(
-      expect.arrayContaining([
-        'source_kind',
-        'project_path',
-        'session_id',
-        'message_seq',
-        'message_id',
-        'message_json',
-        'byte_count',
-      ])
-    );
-    expect(
-      db
-        .prepare(
-          'SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1'
         )
-        .get<{ catalog_revision: number }>()?.catalog_revision
-    ).toBe(0);
-  });
+        .all<{ name: string }>();
+      expect(tables.map((row) => row.name)).toEqual([
+        'surface_messages',
+        'surface_projection_meta',
+      ]);
+
+      const sessionColumns = db
+        .prepare('PRAGMA table_info(sessions)')
+        .all<{ name: string }>();
+      expect(sessionColumns.map((column) => column.name)).toEqual(
+        expect.arrayContaining([
+          'public_workspace_ref',
+          'public_workspace_sort_key',
+          'surface_digest',
+        ])
+      );
+      const messageColumns = db
+        .prepare('PRAGMA table_info(surface_messages)')
+        .all<{ name: string }>();
+      expect(messageColumns.map((column) => column.name)).not.toContain('legacy');
+      expect(messageColumns.map((column) => column.name)).toEqual(
+        expect.arrayContaining([
+          'source_kind',
+          'project_path',
+          'session_id',
+          'message_seq',
+          'message_id',
+          'message_json',
+          'byte_count',
+        ])
+      );
+      expect(
+        db
+          .prepare(
+            'SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1'
+          )
+          .get<{ catalog_revision: number }>()?.catalog_revision
+      ).toBe(0);
+    }
+  );
 
   it('projects strict local surface messages and revisions only on semantic changes', async () => {
     const events = [
@@ -810,8 +828,8 @@ describe('SQLite projection sync', () => {
            (source_kind, project_path, session_id, root_id, task_status,
             last_message_time, project_sort_key, public_workspace_ref,
             public_workspace_sort_key, session_sort_key, first_message_time,
-            metadata_json, surface_digest)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            metadata_json, surface_digest, source_file_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         row.sourceKind,
         row.projectPath,
@@ -834,17 +852,19 @@ describe('SQLite projection sync', () => {
               }
             : {}),
         }),
-        'a'.repeat(64)
+        'a'.repeat(64),
+        `/fixtures/${row.sessionId}.jsonl`
       );
       db.prepare(
         `INSERT INTO projection_state
-           (source_kind, project_path, session_id, stat_fingerprint)
-         VALUES (?, ?, ?, ?)`
+           (source_kind, project_path, session_id, stat_fingerprint, source_file_path)
+         VALUES (?, ?, ?, ?, ?)`
       ).run(
         row.sourceKind,
         row.projectPath,
         row.sessionId,
-        `fingerprint-${row.sessionId}`
+        `fingerprint-${row.sessionId}`,
+        `/fixtures/${row.sessionId}.jsonl`
       );
     }
 
@@ -1388,6 +1408,18 @@ describe('SQLite projection sync', () => {
         '2024-03-01T00:00:00.000Z'
       ).join('\n')
     ).toContain('idx_sessions_task_due_at');
+  });
+
+  it('uses an index when locating the projection supplied by one source file', () => {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT project_path, session_id FROM sessions
+         WHERE source_kind=? AND source_file_path=?`
+      )
+      .all<{ detail: string }>('local', sessionFile());
+    expect(plan.map((row) => row.detail).join('\n')).toContain(
+      'idx_sessions_source_file'
+    );
   });
 
   it('leaves task planning columns null when the session has no planning metadata', async () => {

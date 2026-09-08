@@ -1,8 +1,17 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resetProjectionDbCache } from '../../../../src/context/storage/sqlite/projection.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
+import {
+  getProjectionDb,
+  readSessionSurfaceCandidates,
+  resetProjectionDbCache,
+  searchProjectionText,
+  syncAll,
+  syncSession,
+} from '../../../../src/context/storage/sqlite/projection.js';
+import { migrate } from '../../../../src/context/storage/sqlite/schema.js';
 import type {
   SessionEvent,
   SessionTaskPriority,
@@ -160,6 +169,231 @@ describe('SQLite read-model parity + FTS search', () => {
 
     await SessionService.deleteSession('sess-x', projectPath);
     expect((await SessionService.listSessions({ cwd: projectPath })).length).toBe(0);
+  });
+
+  it.each(['team-project', 'team_project'])(
+    'keeps cold and warm projection identities for %s until the transcript is deleted',
+    async (directory) => {
+      projectPath = path.join(root, directory);
+      await mkdir(projectPath, { recursive: true });
+      await writeSession(
+        'ambiguous-path',
+        'identityneedle question',
+        'identityneedle answer',
+        ts(1)
+      );
+      const transcriptPath = getSessionFilePath(projectPath, 'ambiguous-path');
+      const originalTranscript = await readFile(transcriptPath, 'utf8');
+      const db = await getProjectionDb();
+      if (!db) throw new Error('SQLite is unavailable');
+      const derive = SessionService.projectionDeriverForSearch();
+      await syncAll(db, derive);
+      db.exec('PRAGMA user_version=7');
+      migrate(db);
+      await syncAll(db, derive);
+      expect(await readFile(transcriptPath, 'utf8')).toBe(originalTranscript);
+      expect(readSessionSurfaceCandidates(db, 'ambiguous-path')).toMatchObject([
+        { projectPath, sessionId: 'ambiguous-path' },
+      ]);
+      await syncSession(db, 'ambiguous-path', projectPath, derive);
+      await syncAll(db, derive);
+      await syncAll(db, derive);
+      expect(readSessionSurfaceCandidates(db, 'ambiguous-path')).toMatchObject([
+        { projectPath, sessionId: 'ambiguous-path' },
+      ]);
+      expect(await searchTranscripts('identityneedle', { projectPath })).toHaveLength(
+        2
+      );
+      await expect(
+        SessionService.listSessionArchiveMembers('ambiguous-path', projectPath)
+      ).resolves.toMatchObject([{ projectPath, sessionId: 'ambiguous-path' }]);
+      await rm(getSessionFilePath(projectPath, 'ambiguous-path'));
+      await syncAll(db, derive);
+      expect(readSessionSurfaceCandidates(db, 'ambiguous-path')).toEqual([]);
+      expect(await searchTranscripts('identityneedle', { projectPath })).toEqual([]);
+      expect(
+        db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
+      ).toBe(0);
+      expect(
+        db.prepare('SELECT COUNT(*) c FROM projection_state').get<{ c: number }>()?.c
+      ).toBe(0);
+    }
+  );
+
+  it('does not prune a valid direct-sync row using a decoded directory alias', async () => {
+    projectPath = path.join(root, 'team-project');
+    await mkdir(projectPath, { recursive: true });
+    await writeSession('warm-alias', 'warmneedle question', 'warmneedle answer', ts(1));
+    const db = await getProjectionDb();
+    if (!db) throw new Error('SQLite is unavailable');
+    const derive = SessionService.projectionDeriverForSearch();
+    await syncSession(db, 'warm-alias', projectPath, derive);
+    expect(readSessionSurfaceCandidates(db, 'warm-alias')).toHaveLength(1);
+    await syncAll(db, derive);
+    expect(readSessionSurfaceCandidates(db, 'warm-alias')).toHaveLength(1);
+    expect(await searchTranscripts('warmneedle', { projectPath })).toHaveLength(2);
+  });
+
+  it('does not rederive unchanged sources across direct and catalog sync', async () => {
+    projectPath = path.join(root, 'warm-project_with_underscore');
+    await mkdir(projectPath, { recursive: true });
+    await writeSession('warm-gate', 'warmgate', 'warmgate answer', ts(1));
+    const db = await getProjectionDb();
+    if (!db) throw new Error('SQLite is unavailable');
+    const derive = vi.fn(SessionService.projectionDeriverForSearch());
+    await syncAll(db, derive);
+    const calls = derive.mock.calls.length;
+    expect(calls).toBe(1);
+    await syncAll(db, derive);
+    await syncSession(db, 'warm-gate', projectPath, derive);
+    await syncAll(db, derive);
+    expect(derive).toHaveBeenCalledTimes(calls);
+    expect(readSessionSurfaceCandidates(db, 'warm-gate')).toHaveLength(1);
+  });
+
+  it.each(['deleted', 'invalid'] as const)(
+    'restores the surviving source in one sync when a duplicate winner is %s',
+    async (change) => {
+      await writeSession('duplicate-source', 'oldsource', 'oldsource answer', ts(1));
+      const canonical = getSessionFilePath(projectPath, 'duplicate-source');
+      const olderDirectory = path.join(root, 'projects', 'older-copy');
+      const newerDirectory = path.join(root, 'projects', 'newer-copy');
+      await mkdir(olderDirectory, { recursive: true });
+      await mkdir(newerDirectory, { recursive: true });
+      const olderFile = path.join(olderDirectory, 'duplicate-source.jsonl');
+      const newerFile = path.join(newerDirectory, 'duplicate-source.jsonl');
+      await writeFile(olderFile, await readFile(canonical, 'utf8'));
+      await writeSession('duplicate-source', 'newsource', 'newsource answer', ts(2));
+      await writeFile(newerFile, await readFile(canonical, 'utf8'));
+      await rm(canonical);
+      const db = await getProjectionDb();
+      if (!db) throw new Error('SQLite is unavailable');
+      const derive = SessionService.projectionDeriverForSearch();
+      await syncAll(db, derive);
+      expect(await searchTranscripts('newsource', { projectPath })).toHaveLength(2);
+      expect(await searchTranscripts('oldsource', { projectPath })).toHaveLength(0);
+      if (change === 'deleted') await rm(newerFile);
+      else await writeFile(newerFile, '');
+      await syncAll(db, derive);
+      expect(searchProjectionText(db, 'newsource', projectPath, 10)).toHaveLength(0);
+      expect(searchProjectionText(db, 'oldsource', projectPath, 10)).toHaveLength(2);
+      expect(readSessionSurfaceCandidates(db, 'duplicate-source')).toHaveLength(1);
+      await rm(olderFile);
+      await syncAll(db, derive);
+      expect(await searchTranscripts('oldsource', { projectPath })).toHaveLength(0);
+    }
+  );
+
+  it.each(['deleted', 'invalid'] as const)(
+    'selects the newest of several surviving sources after the winner is %s',
+    async (change) => {
+      const db = await getProjectionDb();
+      if (!db) throw new Error('SQLite is unavailable');
+      const derive = SessionService.projectionDeriverForSearch();
+      const sourceFiles: string[] = [];
+      for (const [index, text] of ['oldcopy', 'middlecopy', 'winningcopy'].entries()) {
+        await writeSession('multiple-sources', text, `${text} answer`, ts(index + 1));
+        const directory = path.join(root, 'projects', `copy-${index}`);
+        await mkdir(directory, { recursive: true });
+        const file = path.join(directory, 'multiple-sources.jsonl');
+        await writeFile(
+          file,
+          await readFile(getSessionFilePath(projectPath, 'multiple-sources'), 'utf8')
+        );
+        sourceFiles.push(file);
+      }
+      await rm(getSessionFilePath(projectPath, 'multiple-sources'));
+      await syncAll(db, derive);
+      if (change === 'deleted') await rm(sourceFiles[2]!);
+      else await writeFile(sourceFiles[2]!, '');
+      await syncAll(db, derive);
+      expect(searchProjectionText(db, 'middlecopy', projectPath, 10)).toHaveLength(2);
+      expect(searchProjectionText(db, 'oldcopy', projectPath, 10)).toEqual([]);
+      expect(searchProjectionText(db, 'winningcopy', projectPath, 10)).toEqual([]);
+      expect(readSessionSurfaceCandidates(db, 'multiple-sources')).toHaveLength(1);
+    }
+  );
+
+  it('compares all surviving copies after a direct sync removes the winner', async () => {
+    const db = await getProjectionDb();
+    if (!db) throw new Error('SQLite is unavailable');
+    const derive = SessionService.projectionDeriverForSearch();
+    const sources: string[] = [];
+    for (const [index, text] of ['oldcopy', 'middlecopy', 'winningcopy'].entries()) {
+      await writeSession('direct-recovery', text, `${text} answer`, ts(index + 1));
+      const directory = path.join(root, 'projects', `source-${index}`);
+      await mkdir(directory, { recursive: true });
+      const file = path.join(directory, 'direct-recovery.jsonl');
+      await writeFile(
+        file,
+        await readFile(getSessionFilePath(projectPath, 'direct-recovery'), 'utf8')
+      );
+      sources.push(file);
+      await syncSession(db, 'direct-recovery', projectPath, derive, file);
+    }
+    await rm(getSessionFilePath(projectPath, 'direct-recovery'));
+    await rm(sources[2]!);
+    await syncSession(db, 'direct-recovery', projectPath, derive, sources[2]);
+    await syncSession(db, 'direct-recovery', projectPath, derive, sources[0]);
+    await syncSession(db, 'direct-recovery', projectPath, derive, sources[1]);
+    expect(searchProjectionText(db, 'middlecopy', projectPath, 10)).toHaveLength(2);
+    expect(searchProjectionText(db, 'oldcopy', projectPath, 10)).toEqual([]);
+  });
+
+  it('reselects a newer surviving copy when the winner is rewound', async () => {
+    const db = await getProjectionDb();
+    if (!db) throw new Error('SQLite is unavailable');
+    const derive = SessionService.projectionDeriverForSearch();
+    const sources: string[] = [];
+    for (const [index, text] of ['middlecopy', 'winningcopy'].entries()) {
+      await writeSession('rewound-source', text, `${text} answer`, ts(index + 2));
+      const directory = path.join(root, 'projects', `rewind-${index}`);
+      await mkdir(directory, { recursive: true });
+      const file = path.join(directory, 'rewound-source.jsonl');
+      await writeFile(
+        file,
+        await readFile(getSessionFilePath(projectPath, 'rewound-source'), 'utf8')
+      );
+      sources.push(file);
+    }
+    await rm(getSessionFilePath(projectPath, 'rewound-source'));
+    await syncAll(db, derive);
+    expect(searchProjectionText(db, 'winningcopy', projectPath, 10)).toHaveLength(2);
+    await writeSession('rewound-source', 'rewoundcopy', 'rewoundcopy answer', ts(1));
+    await writeFile(
+      sources[1]!,
+      await readFile(getSessionFilePath(projectPath, 'rewound-source'), 'utf8')
+    );
+    await rm(getSessionFilePath(projectPath, 'rewound-source'));
+    await syncAll(db, derive);
+    expect(searchProjectionText(db, 'middlecopy', projectPath, 10)).toHaveLength(2);
+    expect(searchProjectionText(db, 'winningcopy', projectPath, 10)).toEqual([]);
+    expect(searchProjectionText(db, 'rewoundcopy', projectPath, 10)).toEqual([]);
+  });
+
+  it('removes the previous workspace projection when one source changes identity', async () => {
+    const firstWorkspace = path.join(root, 'team-project');
+    const nextWorkspace = path.join(root, 'team', 'project');
+    await mkdir(firstWorkspace, { recursive: true });
+    await mkdir(nextWorkspace, { recursive: true });
+    projectPath = firstWorkspace;
+    await writeSession('changed-identity', 'oldidentity', 'oldidentity answer', ts(1));
+    const sourceFile = getSessionFilePath(projectPath, 'changed-identity');
+    const db = await getProjectionDb();
+    if (!db) throw new Error('SQLite is unavailable');
+    const derive = SessionService.projectionDeriverForSearch();
+    await syncAll(db, derive);
+    projectPath = nextWorkspace;
+    expect(getSessionFilePath(projectPath, 'changed-identity')).toBe(sourceFile);
+    await writeSession('changed-identity', 'newidentity', 'newidentity answer', ts(2));
+    await syncAll(db, derive);
+    expect(readSessionSurfaceCandidates(db, 'changed-identity')).toMatchObject([
+      { projectPath: nextWorkspace },
+    ]);
+    expect(searchProjectionText(db, 'oldidentity', firstWorkspace, 10)).toEqual([]);
+    expect(
+      db.prepare('SELECT project_path FROM sessions').all<{ project_path: string }>()
+    ).toEqual([{ project_path: nextWorkspace }]);
   });
 
   it('pushes a single taskStatus filter down to the projection', async () => {

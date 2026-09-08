@@ -333,7 +333,8 @@ function upsertSession(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
   projected: ProjectedSession,
-  surfaceDigest: string
+  surfaceDigest: string,
+  filePath: string
 ): void {
   const { metadata: meta, publicWorkspaceRef } = projected;
   const publicWorkspaceSortKey = sessionCatalogSortKey(
@@ -346,9 +347,10 @@ function upsertSession(
         archived_at, last_message_time, project_sort_key,
         public_workspace_ref, public_workspace_sort_key, session_sort_key,
         first_message_time, message_count, has_errors, is_subagent, metadata_json,
-        surface_digest)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        surface_digest, source_file_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_kind, project_path, session_id) DO UPDATE SET
+       source_file_path=excluded.source_file_path,
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
        agent_type=excluded.agent_type, model=excluded.model,
@@ -388,7 +390,8 @@ function upsertSession(
     meta.hasErrors ? 1 : 0,
     meta.relationType === 'subagent' ? 1 : 0,
     JSON.stringify(meta),
-    surfaceDigest
+    surfaceDigest,
+    filePath
   );
 }
 
@@ -578,6 +581,12 @@ function deleteSessionContentRows(
   sessionId: string
 ): boolean {
   const semanticChanged = hasSessionSurfaceRows(db, sourceKind, projectPath, sessionId);
+  if (semanticChanged) {
+    db.prepare(
+      `UPDATE projection_state SET stat_fingerprint=''
+       WHERE source_kind=? AND project_path=? AND session_id=?`
+    ).run(sourceKind, projectPath, sessionId);
+  }
   for (const table of ['surface_messages', 'sessions', 'parts', 'parts_fts']) {
     db.prepare(
       `DELETE FROM ${table} WHERE source_kind=? AND project_path=? AND session_id=?`
@@ -607,16 +616,20 @@ function deleteSessionRows(
 function deleteSessionContentForSourceFile(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
-  filePath: string
+  filePath: string,
+  keep?: { projectPath: string; sessionId: string }
 ): boolean {
   const rows = db
     .prepare(
       `SELECT project_path, session_id FROM sessions
-       WHERE source_kind=? AND json_extract(metadata_json, '$.filePath')=?`
+       WHERE source_kind=? AND source_file_path=?`
     )
     .all<{ project_path: string; session_id: string }>(sourceKind, filePath);
   let semanticChanged = false;
   for (const row of rows) {
+    if (row.project_path === keep?.projectPath && row.session_id === keep.sessionId) {
+      continue;
+    }
     semanticChanged =
       deleteSessionContentRows(db, sourceKind, row.project_path, row.session_id) ||
       semanticChanged;
@@ -624,26 +637,41 @@ function deleteSessionContentForSourceFile(
   return semanticChanged;
 }
 
+function deleteProjectionSource(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  filePath: string
+): boolean {
+  const changed = deleteSessionContentForSourceFile(db, sourceKind, filePath);
+  db.prepare(
+    'DELETE FROM projection_state WHERE source_kind=? AND source_file_path=?'
+  ).run(sourceKind, filePath);
+  return changed;
+}
+
 function upsertProjectionState(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
-  projectPath: string,
+  projectPath: string | null,
   sessionId: string,
   lastSeq: number,
   fileSize: number,
   mtimeMs: number,
-  statFingerprint: string
+  statFingerprint: string,
+  filePath: string
 ): void {
   db.prepare(
     `INSERT INTO projection_state
-       (source_kind, project_path, session_id, last_seq, file_size, mtime_ms,
-        stat_fingerprint)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(source_kind, project_path, session_id) DO UPDATE SET
+       (source_kind, source_file_path, project_path, session_id, last_seq, file_size,
+        mtime_ms, stat_fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_kind, source_file_path) DO UPDATE SET
+       project_path=excluded.project_path, session_id=excluded.session_id,
        last_seq=excluded.last_seq, file_size=excluded.file_size,
        mtime_ms=excluded.mtime_ms, stat_fingerprint=excluded.stat_fingerprint`
   ).run(
     sourceKind,
+    filePath,
     projectPath,
     sessionId,
     lastSeq,
@@ -654,6 +682,8 @@ function upsertProjectionState(
 }
 
 interface StateRow {
+  project_path: string | null;
+  session_id: string;
   last_seq: number;
   file_size: number;
   mtime_ms: number;
@@ -662,8 +692,7 @@ interface StateRow {
 
 interface ProjectionStateRow extends StateRow {
   source_kind: ProjectionSourceKind;
-  project_path: string;
-  session_id: string;
+  source_file_path: string;
 }
 
 interface ProjectionIdentityRow {
@@ -768,12 +797,9 @@ async function syncSessionValidated(
   } catch (error) {
     if (signal?.aborted) throw error;
     const code = (error as NodeJS.ErrnoException).code;
-    if (sourceKind === 'acp-remote' && code !== 'ENOENT') {
-      throw error;
-    }
-    // 文件不存在 → GC 掉可能残留的行。
+    if (code !== 'ENOENT') throw error;
     db.transaction(() => {
-      if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+      if (deleteProjectionSource(db, sourceKind, filePath)) {
         incrementCatalogRevision(db);
       }
     });
@@ -782,15 +808,17 @@ async function syncSessionValidated(
 
   const state = db
     .prepare(
-      `SELECT last_seq, file_size, mtime_ms, stat_fingerprint FROM projection_state
-       WHERE source_kind=? AND project_path=? AND session_id=?`
+      `SELECT project_path, session_id, last_seq, file_size, mtime_ms, stat_fingerprint
+       FROM projection_state WHERE source_kind=? AND source_file_path=?`
     )
-    .get<StateRow>(sourceKind, projectPath, sessionId);
+    .get<StateRow>(sourceKind, filePath);
 
   if (
     sourceKind === 'local' &&
     state &&
-    state.stat_fingerprint === statFingerprint(fileStat)
+    state.stat_fingerprint === statFingerprint(fileStat) &&
+    (state.project_path === null ||
+      hasSessionSurfaceRows(db, sourceKind, state.project_path, state.session_id))
   ) {
     return false; // 未变，廉价跳过（列表加速的关键）。
   }
@@ -834,7 +862,7 @@ async function syncSessionValidated(
       throw error;
     }
     db.transaction(() => {
-      if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+      if (deleteProjectionSource(db, sourceKind, filePath)) {
         incrementCatalogRevision(db);
       }
     });
@@ -923,29 +951,22 @@ async function syncSessionValidated(
   ) {
     signal?.throwIfAborted();
     db.transaction(() => {
-      let semanticChanged: boolean;
-      if (localSourceContainsRemoteDescriptor) {
-        semanticChanged = deleteSessionContentForSourceFile(db, sourceKind, filePath);
-        semanticChanged =
-          deleteSessionRows(db, sourceKind, projectPath, sessionId) || semanticChanged;
-      } else {
-        semanticChanged = deleteSessionContentRows(
-          db,
-          sourceKind,
-          projectPath,
-          sessionId
-        );
-        upsertProjectionState(
-          db,
-          sourceKind,
-          projectPath,
-          sessionId,
-          lastSeq,
-          Number(fileStat.size),
-          Number(fileStat.mtimeMs),
-          statFingerprint(fileStat)
-        );
-      }
+      const semanticChanged = deleteSessionContentForSourceFile(
+        db,
+        sourceKind,
+        filePath
+      );
+      upsertProjectionState(
+        db,
+        sourceKind,
+        null,
+        sessionId,
+        lastSeq,
+        Number(fileStat.size),
+        Number(fileStat.mtimeMs),
+        statFingerprint(fileStat),
+        filePath
+      );
       if (semanticChanged) incrementCatalogRevision(db);
     });
     return true;
@@ -976,10 +997,10 @@ async function syncSessionValidated(
   // 更新的一条（与 JSONL 扫描 + compareSessionCatalogItems 的择新语义一致）。
   const existing = db
     .prepare(
-      `SELECT last_message_time FROM sessions
+      `SELECT last_message_time, source_file_path FROM sessions
        WHERE source_kind=? AND project_path=? AND session_id=?`
     )
-    .get<{ last_message_time: string | null }>(
+    .get<{ last_message_time: string | null; source_file_path: string }>(
       sourceKind,
       meta.projectPath,
       meta.sessionId
@@ -992,22 +1013,27 @@ async function syncSessionValidated(
     path.resolve(filePath) === path.resolve(expectedCanonicalPath);
   if (
     existing &&
+    existing.source_file_path !== filePath &&
     !isCanonicalSource &&
     typeof existing.last_message_time === 'string' &&
     existing.last_message_time > meta.lastMessageTime
   ) {
-    // 已有更新的一条：仅登记同步游标，避免用较旧数据覆盖。
     signal?.throwIfAborted();
-    upsertProjectionState(
-      db,
-      sourceKind,
-      projectPath,
-      sessionId,
-      lastSeq,
-      Number(fileStat.size),
-      Number(fileStat.mtimeMs),
-      statFingerprint(fileStat)
-    );
+    db.transaction(() => {
+      const removed = deleteSessionContentForSourceFile(db, sourceKind, filePath, meta);
+      upsertProjectionState(
+        db,
+        sourceKind,
+        meta.projectPath,
+        meta.sessionId,
+        lastSeq,
+        Number(fileStat.size),
+        Number(fileStat.mtimeMs),
+        statFingerprint(fileStat),
+        filePath
+      );
+      if (removed) incrementCatalogRevision(db);
+    });
     return true;
   }
 
@@ -1019,8 +1045,20 @@ async function syncSessionValidated(
          WHERE source_kind=? AND project_path=? AND session_id=?`
       )
       .get<{ surface_digest: string }>(sourceKind, meta.projectPath, meta.sessionId);
-    const semanticChanged = existingSurface?.surface_digest !== surfaceDigest;
-    upsertSession(db, sourceKind, projected, surfaceDigest);
+    const removed = deleteSessionContentForSourceFile(db, sourceKind, filePath, meta);
+    const semanticChanged =
+      removed || existingSurface?.surface_digest !== surfaceDigest;
+    if (
+      existing?.source_file_path === filePath &&
+      typeof existing.last_message_time === 'string' &&
+      existing.last_message_time > meta.lastMessageTime
+    ) {
+      db.prepare(
+        `UPDATE projection_state SET stat_fingerprint=''
+         WHERE source_kind=? AND project_path=? AND session_id=?`
+      ).run(sourceKind, meta.projectPath, meta.sessionId);
+    }
+    upsertSession(db, sourceKind, projected, surfaceDigest, filePath);
     writeParts(db, sourceKind, meta.projectPath, meta.sessionId, events);
     writeSurfaceMessages(
       db,
@@ -1033,12 +1071,13 @@ async function syncSessionValidated(
     upsertProjectionState(
       db,
       sourceKind,
-      projectPath,
-      sessionId,
+      meta.projectPath,
+      meta.sessionId,
       lastSeq,
       Number(fileStat.size),
       Number(fileStat.mtimeMs),
-      statFingerprint(fileStat)
+      statFingerprint(fileStat),
+      filePath
     );
     if (semanticChanged) incrementCatalogRevision(db);
   });
@@ -1268,23 +1307,26 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
   );
   const candidates: ProjectionCandidate[] = projectFiles.flat();
   for (const candidate of candidates) {
-    seen.add(
-      `${candidate.kind}\u0000${candidate.projectPath}\u0000${candidate.sessionId}`
-    );
+    seen.add(`${candidate.kind}\u0000${candidate.filePath}`);
   }
 
   const knownState = db
     .prepare(
-      `SELECT source_kind, project_path, session_id, last_seq, file_size, mtime_ms,
-              stat_fingerprint
-       FROM projection_state`
+      `SELECT source_kind, source_file_path, project_path, session_id, last_seq,
+              file_size, mtime_ms, stat_fingerprint FROM projection_state`
     )
     .all<ProjectionStateRow>();
-  const stateBySession = new Map(
-    knownState.map((row) => [
-      `${row.source_kind}\u0000${row.project_path}\u0000${row.session_id}`,
-      row,
-    ])
+  db.transaction(() => {
+    for (const row of knownState) {
+      if (!seen.has(`${row.source_kind}\u0000${row.source_file_path}`)) {
+        if (deleteProjectionSource(db, row.source_kind, row.source_file_path)) {
+          incrementCatalogRevision(db);
+        }
+      }
+    }
+  });
+  const stateBySource = new Map(
+    knownState.map((row) => [`${row.source_kind}\u0000${row.source_file_path}`, row])
   );
   const staleCandidates: typeof candidates = [];
   const statConcurrency = Math.min(128, candidates.length);
@@ -1300,10 +1342,20 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
         }
         try {
           const fileStat = await stat(candidate.filePath, { bigint: true });
-          const state = stateBySession.get(
-            `${candidate.kind}\u0000${candidate.projectPath}\u0000${candidate.sessionId}`
+          const state = stateBySource.get(
+            `${candidate.kind}\u0000${candidate.filePath}`
           );
-          if (state && state.stat_fingerprint === statFingerprint(fileStat)) {
+          if (
+            state &&
+            state.stat_fingerprint === statFingerprint(fileStat) &&
+            (state.project_path === null ||
+              hasSessionSurfaceRows(
+                db,
+                candidate.kind,
+                state.project_path,
+                state.session_id
+              ))
+          ) {
             continue;
           }
         } catch (error) {
@@ -1362,30 +1414,52 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
     })
   );
 
-  // GC：projection_state 中 JSONL 已不存在的行。
-  const knownIdentities = db
+  const remainingSources = db
     .prepare(
-      `SELECT source_kind, project_path, session_id FROM projection_state
-       UNION
-       SELECT source_kind, project_path, session_id FROM sessions
-       WHERE source_kind='acp-remote'
-       UNION
-       SELECT source_kind, project_path, session_id FROM parts
-       WHERE source_kind='acp-remote'
-       UNION
-       SELECT source_kind, project_path, session_id FROM parts_fts
-       WHERE source_kind='acp-remote'
-       UNION
-       SELECT source_kind, project_path, session_id FROM surface_messages
-       WHERE source_kind='acp-remote'`
+      `SELECT p.source_file_path, p.project_path, p.session_id
+     FROM projection_state p
+     WHERE p.source_kind='local' AND p.project_path IS NOT NULL
+       AND (p.stat_fingerprint='' OR NOT EXISTS (
+         SELECT 1 FROM sessions s WHERE s.source_kind=p.source_kind
+         AND s.project_path=p.project_path AND s.session_id=p.session_id
+       ))`
+    )
+    .all<{ source_file_path: string; project_path: string; session_id: string }>();
+  db.transaction(() => {
+    for (const source of remainingSources) {
+      db.prepare(
+        `UPDATE projection_state SET stat_fingerprint=''
+         WHERE source_kind='local' AND source_file_path=?`
+      ).run(source.source_file_path);
+    }
+  });
+  for (const source of remainingSources) {
+    await syncSession(
+      db,
+      source.session_id,
+      source.project_path,
+      derive,
+      source.source_file_path
+    );
+  }
+
+  const remoteIdentities = db
+    .prepare(
+      `SELECT source_kind, project_path, session_id FROM sessions WHERE source_kind='acp-remote'
+       UNION SELECT source_kind, project_path, session_id FROM parts WHERE source_kind='acp-remote'
+       UNION SELECT source_kind, project_path, session_id FROM parts_fts WHERE source_kind='acp-remote'
+       UNION SELECT source_kind, project_path, session_id FROM surface_messages WHERE source_kind='acp-remote'`
     )
     .all<ProjectionIdentityRow>();
-  for (const row of knownIdentities) {
-    if (
-      !seen.has(`${row.source_kind}\u0000${row.project_path}\u0000${row.session_id}`)
-    ) {
+  const liveRemoteIdentities = new Set(
+    candidates
+      .filter((candidate) => candidate.kind === 'acp-remote')
+      .map((candidate) => `${candidate.projectPath}\0${candidate.sessionId}`)
+  );
+  for (const row of remoteIdentities) {
+    if (!liveRemoteIdentities.has(`${row.project_path}\0${row.session_id}`)) {
       db.transaction(() => {
-        if (deleteSessionRows(db, row.source_kind, row.project_path, row.session_id)) {
+        if (deleteSessionRows(db, 'acp-remote', row.project_path, row.session_id)) {
           incrementCatalogRevision(db);
         }
       });
@@ -1547,7 +1621,9 @@ export function readSessionSurfaceCandidates(
                 s.session_sort_key, s.surface_digest, p.stat_fingerprint,
                 s.metadata_json
          FROM sessions s
-         JOIN projection_state p USING (source_kind, project_path, session_id)
+         JOIN projection_state p
+           ON p.source_kind=s.source_kind AND p.source_file_path=s.source_file_path
+          AND p.project_path=s.project_path AND p.session_id=s.session_id
          LEFT JOIN ranked_archive a
            ON a.source_kind=s.source_kind AND a.project_path=s.project_path
           AND a.public_workspace_ref IS s.public_workspace_ref
@@ -1624,7 +1700,9 @@ export function readSessionSurfaceCatalogPage(
                 s.session_sort_key, s.surface_digest, p.stat_fingerprint,
                 s.metadata_json
          FROM sessions s
-         JOIN projection_state p USING (source_kind, project_path, session_id)
+         JOIN projection_state p
+           ON p.source_kind=s.source_kind AND p.source_file_path=s.source_file_path
+          AND p.project_path=s.project_path AND p.session_id=s.session_id
          LEFT JOIN ranked_archive a
            ON a.source_kind=s.source_kind AND a.project_path=s.project_path
           AND a.public_workspace_ref IS s.public_workspace_ref
@@ -1681,9 +1759,11 @@ export function readSessionSurfaceHistoryPage(
   return db.transaction(() => {
     const candidate = db
       .prepare(
-        `SELECT surface_digest, stat_fingerprint FROM sessions
-         JOIN projection_state USING (source_kind, project_path, session_id)
-         WHERE source_kind=? AND project_path=? AND session_id=?`
+        `SELECT s.surface_digest, p.stat_fingerprint FROM sessions s
+         JOIN projection_state p
+           ON p.source_kind=s.source_kind AND p.source_file_path=s.source_file_path
+          AND p.project_path=s.project_path AND p.session_id=s.session_id
+         WHERE s.source_kind=? AND s.project_path=? AND s.session_id=?`
       )
       .get<{ surface_digest: string; stat_fingerprint: string }>(
         query.sourceKind,

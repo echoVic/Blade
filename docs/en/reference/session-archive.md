@@ -63,6 +63,8 @@ GET /sessions/catalog?archived=true
 
 Active cursors cannot be used with archived catalogs and vice versa. The SQLite read model uses recursive CTEs to compute inherited archive status before pagination, preventing descendant leakage from page boundaries.
 
+Starting in 0.10.146, SQLite tracks synchronization by the actual JSONL source file and serves catalogs, history, and search using the workspace identity recorded in the transcript. This prevents lossy directory-name decoding from treating paths containing `-` or `_` as deleted. Upgrading automatically rebuilds the v8 cache without changing JSONL history; the first read may take longer, while unchanged files still skip repeated parsing. When several files supply one session and the selected source becomes invalid, the surviving copies are compared again.
+
 ```http
 POST /sessions/:sessionId/archive?projectPath=/absolute/path
 POST /sessions/:sessionId/unarchive?projectPath=/absolute/path

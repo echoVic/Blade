@@ -81,6 +81,11 @@ GET /sessions/catalog?archived=true
 active cursor 不能用于 archived catalog，反之亦然。SQLite read model 使用递归 CTE
 在分页前计算继承归档状态，避免后代从 page boundary 泄漏。
 
+从 0.10.146 起，SQLite 按实际 JSONL 源文件跟踪同步状态，按 transcript 中的工作区
+身份提供目录、历史和搜索，避免含 `-`、`_` 的路径被目录名反解误判为已删除。
+升级时 v8 缓存会自动重建，原始 JSONL 不变；首次读取可能较慢，后续未变化文件仍
+跳过重复解析。多个文件提供同一会话时，选中来源失效后会重新比较仍有效的副本。
+
 ```http
 POST /sessions/:sessionId/archive?projectPath=/absolute/path
 POST /sessions/:sessionId/unarchive?projectPath=/absolute/path

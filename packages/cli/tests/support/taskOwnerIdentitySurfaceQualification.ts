@@ -18,7 +18,7 @@ const root = await realpath(
     path.join(process.platform === 'darwin' ? '/tmp' : os.tmpdir(), 'bladeowner')
   )
 );
-const workspace = path.join(root, 'workspace');
+const workspace = path.join(root, 'team-project_with_underscore');
 const storage = path.join(root, 'storage');
 const home = path.join(root, 'home');
 const repo = path.resolve(import.meta.dirname, '../../../..');
