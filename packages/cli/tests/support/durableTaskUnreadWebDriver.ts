@@ -38,6 +38,7 @@ export interface DurableTaskUnreadWebEvidence {
   backgroundTask: SessionRefEvidence;
   statusSequence: string[];
   liveSidebar: {
+    createdWithoutReload: true;
     completedWithoutReload: true;
     stopRemoved: true;
     archiveEnabled: true;
@@ -432,11 +433,24 @@ export async function runDurableTaskUnreadWebDriver(input: {
     const selectedUrl = new URL(origin);
     selectedUrl.searchParams.set('session', selectedBefore.sessionId);
     selectedUrl.searchParams.set('project', selectedBefore.projectPath);
+    const initialCatalog = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/sessions/v2/catalog'
+    );
     await page.goto(selectedUrl.href, { waitUntil: 'domcontentloaded' });
+    const catalogResponse = await initialCatalog;
+    if (!catalogResponse.ok()) throw new Error('Initial Surface catalog failed');
+    await catalogResponse.finished();
     await page.locator('textarea[data-blade-composer]').waitFor({
       state: 'visible',
       timeout: 30_000,
     });
+    await page
+      .getByRole('button', {
+        name: `Select Unread foreground ${input.model}`,
+        exact: true,
+      })
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    const initialDocument = await page.evaluate(() => performance.timeOrigin);
 
     const backgroundTask = await dispatchBackgroundTask({
       origin,
@@ -446,6 +460,22 @@ export async function runDurableTaskUnreadWebDriver(input: {
       title: `Unread background ${input.model}`,
     });
     await input.waitForProviderHold(30_000);
+    await page
+      .getByRole('button', {
+        name: `Select Unread background ${input.model}`,
+        exact: true,
+      })
+      .locator('[title="running"]')
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    const selectionAfterDispatch = new URL(page.url());
+    if (
+      selectionAfterDispatch.searchParams.get('session') !== selectedBefore.sessionId ||
+      selectionAfterDispatch.searchParams.get('project') !==
+        selectedBefore.projectPath ||
+      (await page.evaluate(() => performance.timeOrigin)) !== initialDocument
+    ) {
+      throw new Error('New background task required reload or changed selection');
+    }
     const backgroundKey = sessionRefKey(backgroundTask);
     const siblingRef = await input.seedSibling(backgroundTask);
     if (siblingRef.sessionId !== backgroundTask.sessionId) {
@@ -696,6 +726,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
       backgroundTask: evidenceRef(backgroundTask, input.workspace),
       statusSequence,
       liveSidebar: {
+        createdWithoutReload: true,
         completedWithoutReload: true,
         stopRemoved: true,
         archiveEnabled: true,

@@ -70,7 +70,7 @@ POST /sessions/:sessionId/archive?projectPath=/absolute/path
 POST /sessions/:sessionId/unarchive?projectPath=/absolute/path
 ```
 
-Archive response includes `archivedSessionIds`; unarchive response includes `restoredSessionIds` restored this time. The Bus publishes `session.archived` or `session.unarchived` for each affected Session, and other Web tabs converge immediately.
+Archive response includes `archivedSessionIds`; unarchive response includes `restoredSessionIds` restored this time. The Bus publishes `session.archived` or `session.unarchived` for each affected Session. The global `/events` stream forwards only `sessionId` and `projectPath`, keeping private archive payloads out of the feed. Other connected Web tabs update their catalog without reloading or changing the selected session; reconnecting the event stream reloads the Surface catalog to recover membership changes missed while offline.
 
 ## Surfaces
 

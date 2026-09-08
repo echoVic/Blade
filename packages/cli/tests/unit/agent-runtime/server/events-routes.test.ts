@@ -46,6 +46,37 @@ async function readUntilDone(
 }
 
 describe('EventRoutes global task feed', () => {
+  it.each(['session.archived', 'session.unarchived'] as const)(
+    'forwards %s with exact workspace identity and no private payload',
+    async (type) => {
+      const controller = new AbortController();
+      const response = await EventRoutes().request('/', {
+        signal: controller.signal,
+      });
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Expected an SSE response body');
+      const decoder = new TextDecoder();
+      try {
+        await readSseEvent(reader, decoder);
+        for (const projectPath of ['/workspace/one', '/workspace/two']) {
+          Bus.publish({ sessionId: 'shared-session', projectPath }, type, {
+            archiveRootId: 'private-root',
+            prompt: 'private prompt',
+            secret: 'private metadata',
+          });
+          const event = await readSseEvent(reader, decoder);
+          expect(JSON.parse(event.replace(/^data:\s*/, '').trim())).toEqual({
+            type,
+            properties: { sessionId: 'shared-session', projectPath },
+          });
+        }
+      } finally {
+        controller.abort();
+        await reader.cancel();
+      }
+    }
+  );
+
   it('forwards task and interaction lifecycle events without private payloads', async () => {
     const controller = new AbortController();
     const response = await EventRoutes().request('/', {

@@ -86,6 +86,8 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
   get
 ) => {
   let catalogGeneration = 0;
+  let catalogRequest: Promise<void> | null = null;
+  let catalogOptions: Parameters<HistorySurfaceSlice['loadSurfaceCatalog']>[0] = {};
   let navigationGeneration = 0;
   let activeController: AbortController | null = null;
 
@@ -143,46 +145,60 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
     historySurfaceRecoveryCode: null,
     historySurfaceTruncated: false,
 
-    loadSurfaceCatalog: async (options = {}) => {
-      const generation = ++catalogGeneration;
-      const overlayRevision = get().catalogOverlayRevision ?? 0;
-      set({ surfaceCatalogLoadState: 'loading', surfaceCatalogError: null });
-      try {
-        const catalog: SessionSurfaceSummary[] = [];
-        let cursor: string | undefined;
-        do {
-          const page = await sessionService.listSurfaceCatalog({
-            ...options,
-            cursor,
-            limit: HISTORY_PAGE_LIMIT,
-          });
-          if (generation !== catalogGeneration) return;
-          for (const summary of page.sessions) {
-            const index = catalog.findIndex((candidate) =>
-              sameSurfaceLocator(candidate.locator, summary.locator)
-            );
-            if (index < 0) catalog.push(summary);
-            else catalog[index] = summary;
-          }
-          cursor = page.nextCursor;
-        } while (cursor);
-        if (generation !== catalogGeneration) return;
-        if ((get().catalogOverlayRevision ?? 0) !== overlayRevision) {
-          await get().loadSurfaceCatalog(options);
-          return;
+    loadSurfaceCatalog: (options = {}) => {
+      catalogGeneration++;
+      catalogOptions = { ...options };
+      if (catalogRequest) return catalogRequest;
+      catalogRequest = Promise.resolve().then(async () => {
+        try {
+          let generation: number;
+          do {
+            generation = catalogGeneration;
+            const requestOptions = catalogOptions;
+            const overlayRevision = get().catalogOverlayRevision ?? 0;
+            set({ surfaceCatalogLoadState: 'loading', surfaceCatalogError: null });
+            try {
+              const catalog: SessionSurfaceSummary[] = [];
+              let cursor: string | undefined;
+              do {
+                const page = await sessionService.listSurfaceCatalog({
+                  ...requestOptions,
+                  cursor,
+                  limit: HISTORY_PAGE_LIMIT,
+                });
+                if (generation !== catalogGeneration) break;
+                for (const summary of page.sessions) {
+                  const index = catalog.findIndex((candidate) =>
+                    sameSurfaceLocator(candidate.locator, summary.locator)
+                  );
+                  if (index < 0) catalog.push(summary);
+                  else catalog[index] = summary;
+                }
+                cursor = page.nextCursor;
+              } while (cursor);
+              if (generation !== catalogGeneration) continue;
+              if ((get().catalogOverlayRevision ?? 0) !== overlayRevision) {
+                catalogGeneration++;
+                continue;
+              }
+              set({
+                surfaceCatalog: catalog,
+                surfaceCatalogLoadState: 'ready',
+                surfaceCatalogError: null,
+              });
+            } catch (error) {
+              if (generation !== catalogGeneration) continue;
+              set({
+                surfaceCatalogLoadState: 'error',
+                surfaceCatalogError: toSurfaceError(error),
+              });
+            }
+          } while (generation !== catalogGeneration);
+        } finally {
+          catalogRequest = null;
         }
-        set({
-          surfaceCatalog: catalog,
-          surfaceCatalogLoadState: 'ready',
-          surfaceCatalogError: null,
-        });
-      } catch (error) {
-        if (generation !== catalogGeneration) return;
-        set({
-          surfaceCatalogLoadState: 'error',
-          surfaceCatalogError: toSurfaceError(error),
-        });
-      }
+      });
+      return catalogRequest;
     },
 
     openHistorySurface: async (locator, limit = HISTORY_PAGE_LIMIT) => {
@@ -348,6 +364,7 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
           throw new Error('Forked Session workspace mismatch');
         }
         commitOpen(result, generation, result.session.locator);
+        void get().loadSurfaceCatalog();
       } catch (error) {
         if (generation !== navigationGeneration || isAbortError(error)) return;
         set({

@@ -299,6 +299,9 @@ function createMessage(
 describe('sessionSlice multimodal sendMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(sessionService.listSurfaceCatalog)
+      .mockReset()
+      .mockResolvedValue({ sessions: [] });
     vi.mocked(sessionService.getGoal).mockResolvedValue(null);
     vi.mocked(sessionService.getFollowUpQueue).mockResolvedValue(
       createFollowUpQueue('0'.repeat(64), '')
@@ -1683,6 +1686,53 @@ describe('sessionSlice multimodal sendMessage', () => {
       [keyA]: { revision: 5, kind: 'remove' },
       [keyB]: { revision: 4, kind: 'upsert', session: sessionB },
     });
+  });
+
+  it('removes a directly deleted Surface row without deleting same-id siblings', async () => {
+    const local = createSession({ sessionId: 'direct-delete' });
+    const summary = createSurfaceOpenResult({
+      version: 2,
+      sessionId: local.sessionId,
+      workspace: { kind: 'local', projectPath: local.projectPath },
+    }).session;
+    const sibling = createSurfaceOpenResult({
+      version: 2,
+      sessionId: local.sessionId,
+      workspace: { kind: 'local', projectPath: '/tmp/other-project' },
+    }).session;
+    const remote = createSurfaceOpenResult(
+      createRemoteLocator(local.sessionId)
+    ).session;
+    useSessionStore.setState({
+      sessions: [local],
+      surfaceCatalog: [summary, sibling, remote],
+    });
+    vi.mocked(sessionService.deleteSession).mockResolvedValue(undefined);
+
+    await useSessionStore
+      .getState()
+      .deleteSession(createRef(local.sessionId, local.projectPath));
+
+    expect(useSessionStore.getState().surfaceCatalog).toEqual([sibling, remote]);
+  });
+
+  it('refreshes the Surface catalog when a locally created session is added', async () => {
+    const local = createSession({ sessionId: 'direct-created' });
+    const summary = createSurfaceOpenResult({
+      version: 2,
+      sessionId: local.sessionId,
+      workspace: { kind: 'local', projectPath: local.projectPath },
+    }).session;
+    vi.mocked(sessionService.listSurfaceCatalog).mockResolvedValue({
+      sessions: [summary],
+    });
+    useSessionStore.setState({ surfaceCatalogLoadState: 'ready' });
+
+    useSessionStore.getState().addSession(local);
+
+    await vi.waitFor(() =>
+      expect(useSessionStore.getState().surfaceCatalog).toEqual([summary])
+    );
   });
 
   it('starts temporary sessions without preserving a durable current session ref and create sets both ref and id', async () => {
@@ -3117,6 +3167,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       historySurfaceLoadState: 'ready',
     });
     expect(sessionService.openEventSubscription).not.toHaveBeenCalled();
+    expect(sessionService.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('rejects a crafted history fork when the selected surface cannot fork', async () => {
@@ -3169,6 +3220,154 @@ describe('sessionSlice multimodal sendMessage', () => {
       surfaceCatalogError: null,
     });
   });
+
+  it('coalesces catalog reloads and discards the superseded page chain', async () => {
+    const first = deferred<SessionSurfaceCatalogPage>();
+    const final = createSurfaceOpenResult(createRemoteLocator('latest')).session;
+    vi.mocked(sessionService.listSurfaceCatalog)
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue({ sessions: [final] });
+    const requests = [useSessionStore.getState().loadSurfaceCatalog()];
+    await flushMicrotasks();
+    for (let index = 0; index < 20; index++) {
+      requests.push(useSessionStore.getState().loadSurfaceCatalog());
+    }
+    try {
+      expect(sessionService.listSurfaceCatalog).toHaveBeenCalledTimes(1);
+    } finally {
+      first.resolve({ sessions: [], nextCursor: 'obsolete-page' });
+      await Promise.all(requests);
+    }
+    expect(sessionService.listSurfaceCatalog).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(sessionService.listSurfaceCatalog).mock.calls[1]?.[0]?.cursor
+    ).toBeUndefined();
+    expect(useSessionStore.getState().surfaceCatalog).toEqual([final]);
+  });
+
+  it('discards an older failed request when a new catalog scope is pending', async () => {
+    const old = deferred<SessionSurfaceCatalogPage>();
+    const remote = createSurfaceOpenResult().session;
+    vi.mocked(sessionService.listSurfaceCatalog)
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce({ sessions: [remote] });
+    const first = useSessionStore
+      .getState()
+      .loadSurfaceCatalog({ workspaceKind: 'local' });
+    await flushMicrotasks();
+    const latest = useSessionStore
+      .getState()
+      .loadSurfaceCatalog({ workspaceKind: 'acp-remote' });
+    old.reject(new Error('obsolete failure'));
+    await Promise.all([first, latest]);
+    expect(sessionService.listSurfaceCatalog).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(sessionService.listSurfaceCatalog).mock.calls[1]?.[0]
+    ).toMatchObject({
+      workspaceKind: 'acp-remote',
+      cursor: undefined,
+    });
+    expect(useSessionStore.getState()).toMatchObject({
+      surfaceCatalog: [remote],
+      surfaceCatalogLoadState: 'ready',
+      surfaceCatalogError: null,
+    });
+  });
+
+  it('retains the previous catalog on failure and releases single-flight for retry', async () => {
+    const previous = createSurfaceOpenResult().session;
+    useSessionStore.setState({
+      surfaceCatalog: [previous],
+      surfaceCatalogLoadState: 'ready',
+    });
+    vi.mocked(sessionService.listSurfaceCatalog).mockRejectedValueOnce(
+      new Error('offline')
+    );
+    await useSessionStore.getState().loadSurfaceCatalog();
+    expect(useSessionStore.getState()).toMatchObject({
+      surfaceCatalog: [previous],
+      surfaceCatalogLoadState: 'error',
+    });
+    vi.mocked(sessionService.listSurfaceCatalog).mockResolvedValue({ sessions: [] });
+    await useSessionStore.getState().loadSurfaceCatalog();
+    expect(useSessionStore.getState()).toMatchObject({
+      surfaceCatalog: [],
+      surfaceCatalogLoadState: 'ready',
+      surfaceCatalogError: null,
+    });
+  });
+
+  it.each(['session.created', 'session.unarchived'] as const)(
+    'refreshes ready Surface membership after %s without changing selection',
+    async (type) => {
+      const local = createSession({ sessionId: 'discovered-task' });
+      const summary = createSurfaceOpenResult({
+        version: 2,
+        sessionId: local.sessionId,
+        workspace: { kind: 'local', projectPath: local.projectPath },
+      }).session;
+      const remote = createSurfaceOpenResult().session;
+      const selected = createRef('foreground-task', local.projectPath);
+      useSessionStore.setState({
+        sessions: [],
+        surfaceCatalog: [remote],
+        surfaceCatalogLoadState: 'ready',
+        currentSessionRef: selected,
+      });
+      vi.mocked(sessionService.getSession).mockResolvedValue(local);
+      vi.mocked(sessionService.listSessionPage).mockResolvedValue({ sessions: [] });
+      vi.mocked(sessionService.listSurfaceCatalog).mockResolvedValue({
+        sessions: [summary, remote],
+      });
+      useSessionStore.getState().handleTaskEvent({
+        type,
+        properties: { sessionId: local.sessionId, projectPath: local.projectPath },
+      });
+      await vi.waitFor(() =>
+        expect(useSessionStore.getState().surfaceCatalog).toEqual([summary, remote])
+      );
+      expect(useSessionStore.getState().currentSessionRef).toEqual(selected);
+      expect(sessionService.openSurface).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['session.deleted', 'session.archived'] as const)(
+    'immediately removes only the exact local Surface row on %s',
+    async (type) => {
+      const local = createSession();
+      const summary = createSurfaceOpenResult({
+        version: 2,
+        sessionId: local.sessionId,
+        workspace: { kind: 'local', projectPath: local.projectPath },
+      }).session;
+      const sibling = createSurfaceOpenResult({
+        version: 2,
+        sessionId: local.sessionId,
+        workspace: { kind: 'local', projectPath: '/tmp/other-workspace' },
+      }).session;
+      const remote = createSurfaceOpenResult(
+        createRemoteLocator(local.sessionId)
+      ).session;
+      const refresh = deferred<SessionSurfaceCatalogPage>();
+      vi.mocked(sessionService.listSurfaceCatalog).mockReturnValueOnce(refresh.promise);
+      vi.mocked(sessionService.listSessionPage).mockResolvedValue({ sessions: [] });
+      useSessionStore.setState({
+        sessions: [local],
+        surfaceCatalog: [summary, sibling, remote],
+        surfaceCatalogLoadState: 'ready',
+      });
+      useSessionStore.getState().handleTaskEvent({
+        type,
+        properties: { sessionId: local.sessionId, projectPath: local.projectPath },
+      });
+      try {
+        expect(useSessionStore.getState().surfaceCatalog).toEqual([sibling, remote]);
+      } finally {
+        refresh.resolve({ sessions: [sibling, remote] });
+        await flushMicrotasks();
+      }
+    }
+  );
 
   it('keeps at most four history reads globally across distinct locators', async () => {
     const inFlight: Array<{
@@ -3332,6 +3531,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().tokenUsage.totalTokens).toBe(0);
     expect(replaceEventSubscription).toHaveBeenCalledWith(replacementUnsubscribe);
     expect(originalUnsubscribe).not.toHaveBeenCalled();
+    expect(sessionService.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('keeps committed child state when replacing the old subscription cleanup throws during fork', async () => {
@@ -4194,6 +4394,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     expect(useSessionStore.getState().sessions).toContainEqual(restored);
     expect(useSessionStore.getState().archivedSessions).toEqual([]);
+    expect(sessionService.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('does not let catalog completion clear an active session navigation', async () => {

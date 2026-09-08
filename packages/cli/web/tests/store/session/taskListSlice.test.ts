@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const serviceMocks = vi.hoisted(() => ({
   openTaskEventSubscription: vi.fn(),
+  listSurfaceCatalog: vi.fn(),
   getSession: vi.fn(),
   getWorkspaceInfo: vi.fn(),
   createTask: vi.fn(),
@@ -114,6 +115,7 @@ describe('taskListSlice', () => {
       removeItem: (key: string) => storage.delete(key),
     });
     serviceMocks.openTaskEventSubscription.mockReset();
+    serviceMocks.listSurfaceCatalog.mockReset().mockResolvedValue({ sessions: [] });
     serviceMocks.getSession.mockReset();
     serviceMocks.getWorkspaceInfo.mockReset();
     serviceMocks.createTask.mockReset();
@@ -143,6 +145,9 @@ describe('taskListSlice', () => {
     useSessionStore.getState().unsubscribeFromTaskEvents();
     useSessionStore.setState({
       sessions: [createSession('/workspace/a'), createSession('/workspace/b')],
+      surfaceCatalog: [],
+      surfaceCatalogLoadState: 'ready',
+      surfaceCatalogError: null,
       historySurfaceSelection: null,
       currentSessionId: null,
       currentSessionRef: null,
@@ -173,7 +178,7 @@ describe('taskListSlice', () => {
     });
   });
 
-  it('updates only the exact compound session and clears stale terminal fields', () => {
+  it('updates only the exact compound session without reloading Surface membership', () => {
     useSessionStore.getState().handleTaskEvent({
       type: 'task.status',
       properties: {
@@ -205,6 +210,7 @@ describe('taskListSlice', () => {
       },
     });
     expect(workspaceA?.taskCompletedAt).toBeUndefined();
+    expect(serviceMocks.listSurfaceCatalog).not.toHaveBeenCalled();
     expect(workspaceB).toMatchObject({
       projectPath: '/workspace/b',
       taskStatus: 'completed',
@@ -1210,6 +1216,7 @@ describe('taskListSlice', () => {
     ).toBe(true);
     expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
     expect(useSessionStore.getState().retryingTaskKeys).toEqual([]);
+    expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('keeps a retried task in the catalog without stealing newer navigation', async () => {
@@ -1415,7 +1422,10 @@ describe('taskListSlice', () => {
     });
   });
 
-  it('loads only the exact session when an event references an unknown task', async () => {
+  it('refreshes Surface membership when an event first discovers an unknown task', async () => {
+    useSessionStore.setState({
+      currentSessionRef: { sessionId: 'shared-session', projectPath: '/workspace/a' },
+    });
     const task = {
       ...createSession('/workspace/new'),
       sessionId: 'new-session',
@@ -1443,6 +1453,11 @@ describe('taskListSlice', () => {
     expect(serviceMocks.getSession).toHaveBeenCalledWith({
       sessionId: 'new-session',
       projectPath: '/workspace/new',
+    });
+    expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalled();
+    expect(useSessionStore.getState().currentSessionRef).toEqual({
+      sessionId: 'shared-session',
+      projectPath: '/workspace/a',
     });
     expect(useSessionStore.getState().loadSessions).not.toHaveBeenCalled();
   });
@@ -1528,6 +1543,7 @@ describe('taskListSlice', () => {
       expect(useSessionStore.getState().selectedProjectPath).toBe('/workspace/a');
     });
     expect(loadSessions).toHaveBeenCalledOnce();
+    expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalledOnce();
     expect(serviceMocks.getWorkspaceInfo).toHaveBeenCalledOnce();
     expect(serviceMocks.listProjects).toHaveBeenCalledOnce();
     expect(loadModels).toHaveBeenCalledOnce();
@@ -1620,6 +1636,7 @@ describe('taskListSlice', () => {
       projectPath: '/workspace/task-worktree',
     });
     expect(useSessionStore.getState().isDispatchingTask).toBe(false);
+    expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('keeps the board focused when dispatch requests no session selection', async () => {
@@ -1738,6 +1755,17 @@ describe('taskListSlice', () => {
 
     expect(selectSession).not.toHaveBeenCalled();
     expect(useSessionStore.getState().historySurfaceSelection).not.toBeNull();
+  });
+
+  it('refreshes Surface membership after starting a code review', async () => {
+    const session = { ...createSession('/workspace/a'), sessionId: 'review-created' };
+    serviceMocks.createSession.mockResolvedValueOnce(session);
+    serviceMocks.startCodeReview.mockResolvedValueOnce(undefined);
+    useSessionStore.setState({ selectSession: vi.fn().mockResolvedValue(undefined) });
+    await useSessionStore
+      .getState()
+      .startCodeReview({ kind: 'uncommitted', projectPath: '/workspace/a' });
+    expect(serviceMocks.listSurfaceCatalog).toHaveBeenCalled();
   });
 
   it('does not start review execution when session creation resolves after history-only selection', async () => {

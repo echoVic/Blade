@@ -19,6 +19,8 @@ const GLOBAL_TASK_EVENT_TYPES = new Set([
   'session.created',
   'session.updated',
   'session.deleted',
+  'session.archived',
+  'session.unarchived',
   'schedule.fired',
   'permission.asked',
   'question.required',
@@ -221,7 +223,12 @@ export const createEventRouteController = (): EventRouteController => {
             return;
           }
 
-          if (event.type === 'session.created' || event.type === 'session.deleted') {
+          if (
+            event.type === 'session.created' ||
+            event.type === 'session.deleted' ||
+            event.type === 'session.archived' ||
+            event.type === 'session.unarchived'
+          ) {
             send(event.type, {
               sessionId: event.sessionId,
               projectPath: event.projectPath,

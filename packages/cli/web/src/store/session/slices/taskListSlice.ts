@@ -333,6 +333,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           return;
         }
         syncExactSession({ sessionId, projectPath });
+        void get().loadSurfaceCatalog();
         return;
       }
       if (event.type === 'session.deleted') {
@@ -368,6 +369,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         }
         const ref = { sessionId, projectPath };
         syncExactSession(ref);
+        void get().loadSurfaceCatalog();
         void get().loadArchivedSessions();
         return;
       }
@@ -838,6 +840,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       }
       if (needsExactSync) {
         syncExactSession(ref);
+        void get().loadSurfaceCatalog();
       }
     },
 
@@ -873,6 +876,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                   taskEventsNeedResync = false;
                   void Promise.all([
                     get().loadSessions(),
+                    get().loadSurfaceCatalog(),
                     get().loadTaskWorkspaceInfo(),
                     get().loadBoundProjects(),
                     useConfigStore.getState().loadModels(),
@@ -1239,6 +1243,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         set((state) => ({
           sessions: upsertSessionByRef(state.sessions, result.session),
         }));
+        void get().loadSurfaceCatalog();
         get().markTaskRead(ref);
         if (ownsNavigation()) {
           await get().selectSession(sessionRefFromSession(result.session));
@@ -1323,6 +1328,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           sessions: upsertSessionByRef(state.sessions, result.session),
           isDispatchingTask: false,
         }));
+        void get().loadSurfaceCatalog();
         if (options?.selectSession !== false && ownsNavigation()) {
           await get().selectSession(sessionRefFromSession(result.session));
         }
@@ -1385,6 +1391,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           sessions: upsertSessionByRef(state.sessions, running),
           isDispatchingTask: false,
         }));
+        void get().loadSurfaceCatalog();
         if (ownsNavigation()) {
           await get().selectSession(ref);
         }

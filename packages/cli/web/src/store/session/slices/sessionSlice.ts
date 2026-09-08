@@ -265,10 +265,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     setSessions: (sessions) => set({ sessions }),
 
-    addSession: (session) =>
+    addSession: (session) => {
       set((state) => ({
         sessions: upsertSessionByRef(state.sessions, session),
-      })),
+      }));
+      void get().loadSurfaceCatalog();
+    },
 
     removeSession: (ref) => {
       const state = get();
@@ -297,6 +299,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         };
         return {
           sessions: removeSessionByRef(currentState.sessions, ref),
+          surfaceCatalog: currentState.surfaceCatalog.filter(
+            (summary) =>
+              summary.locator.workspace.kind !== 'local' ||
+              summary.locator.workspace.projectPath !== ref.projectPath ||
+              summary.locator.sessionId !== ref.sessionId
+          ),
           unreadTaskKeys: nextUnreadTaskKeys,
           taskTerminalReadLedger: nextLedger,
           sessionCatalogOverlays,
@@ -786,7 +794,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           };
         });
         if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
-        await Promise.all([get().loadSessions(), get().loadArchivedSessions()]);
+        await Promise.all([
+          get().loadSessions(),
+          get().loadArchivedSessions(),
+          get().loadSurfaceCatalog(),
+        ]);
       } catch (err) {
         set({
           error: (err as Error).message,
@@ -835,6 +847,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           };
           return {
             sessions: removeSessionByRef(currentState.sessions, ref),
+            surfaceCatalog: currentState.surfaceCatalog.filter(
+              (summary) =>
+                summary.locator.workspace.kind !== 'local' ||
+                summary.locator.workspace.projectPath !== ref.projectPath ||
+                summary.locator.sessionId !== ref.sessionId
+            ),
             unreadTaskKeys: nextUnreadTaskKeys,
             taskTerminalReadLedger: nextLedger,
             catalogOverlayRevision: revision,
@@ -905,6 +923,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         set((state) => ({
           sessions: upsertSessionByRef(state.sessions, forked.session),
         }));
+        void get().loadSurfaceCatalog();
         if (
           !isCurrentNavigation(generation) ||
           viewSelection !== get().getViewSelectionVersion()
