@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.148] - 2026-09-09
+
+### Fixed
+- Refresh Web Surface membership after session creation, task discovery, dispatch, retry, fork, restore, and event-stream reconnection without changing the foreground selection. Remove deleted or archived local rows by exact workspace identity while preserving same-ID remote sessions.
+- Forward archive and restore events through the global task feed using identity-only payloads, so other open pages update without a reload.
+- Coalesce concurrent Surface refreshes into one in-flight request, discard superseded pagination, and retain the previous catalog on failure with retry support.
+
+### Tests
+- Added failing-first coverage for lifecycle entry points, refresh coalescing, query changes, stale responses, exact identity isolation, and archive/restore SSE payload privacy.
+- Verified creation, archive, restore, and deletion across independent Chromium pages without reload or navigation changes, and retained raw-PTY owner-state checks.
+- Extended the real DeepSeek Flash/Pro Chromium trajectory to require newly dispatched tasks to appear before any reload, while preserving live completion and durable unread recovery checks.
+
 ## [0.10.147] - 2026-09-09
 
 ### Fixed
