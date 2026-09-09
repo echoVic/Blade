@@ -1154,10 +1154,12 @@ export class Agent {
           }
           const continuePending =
             result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;
-          const acknowledgeRejectedInput = isTerminalProviderAdmissionRejection(result);
+          const acknowledgeTerminalInput =
+            isTerminalProviderAdmissionRejection(result) ||
+            (!result.success && result.error?.type === 'max_turns_exceeded');
           turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
             continuePending,
-            ...(acknowledgeRejectedInput ? { acknowledgeInput: true } : {}),
+            ...(acknowledgeTerminalInput ? { acknowledgeInput: true } : {}),
             outcome:
               result.success && !currentContext.signal?.aborted
                 ? {

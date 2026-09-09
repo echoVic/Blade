@@ -3048,6 +3048,374 @@ describe('executeLoopGenerator', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
+  describe('turn limits across recovery paths', () => {
+    it.each(
+      [
+        {
+          label: 'incomplete intent',
+          content: 'Let me check the file:',
+          finishReason: 'stop',
+        },
+        {
+          label: 'output length recovery',
+          content: 'Partial response',
+          finishReason: 'length',
+        },
+        {
+          label: 'structured output correction',
+          content: 'Missing structured response',
+          finishReason: 'stop',
+        },
+        {
+          label: 'required verification',
+          content: 'The implementation is ready.',
+          finishReason: 'stop',
+        },
+        {
+          label: 'required delegation',
+          content: 'The answer is ready.',
+          finishReason: 'stop',
+        },
+      ].flatMap((scenario) => [false, true].map((stream) => ({ ...scenario, stream })))
+    )(
+      'stops $label before starting an extra model round (stream=$stream)',
+      async ({ label, content, finishReason, stream }) => {
+        const { deps, saveMessage } = createTypedPersistenceHarness();
+        deps.runtimeOptions.maxTurns = 1;
+        const chat = vi.mocked(deps.chatService.chat);
+        chat
+          .mockResolvedValueOnce({ ...finalResponse(100, content), finishReason })
+          .mockResolvedValue(finalResponse(120, 'Unexpected second response.'));
+        const streamChat = vi.mocked(deps.chatService.streamChat);
+        streamChat
+          .mockImplementationOnce(async function* () {
+            yield { content, finishReason } satisfies StreamChunk;
+          })
+          .mockImplementation(async function* () {
+            yield { content: 'Unexpected second response.', finishReason: 'stop' };
+          });
+        const options: LoopOptions = {
+          stream,
+          ...(label === 'structured output correction'
+            ? {
+                outputSchema: {
+                  type: 'object',
+                  properties: { answer: { type: 'string' } },
+                  required: ['answer'],
+                },
+              }
+            : {}),
+        };
+        const request =
+          label === 'required verification'
+            ? 'Run npm test before finishing.'
+            : label === 'required delegation'
+              ? 'Delegate the implementation inspection to a subagent.'
+              : 'Inspect the file.';
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            request,
+            createMockContext(),
+            options,
+            'ROOT_SYSTEM_PROMPT'
+          )
+        );
+        expect(result).toMatchObject({
+          success: false,
+          error: { type: 'max_turns_exceeded' },
+          metadata: { turnsCount: 1, toolCallsCount: 0 },
+        });
+        expect(chat).toHaveBeenCalledTimes(stream ? 0 : 1);
+        expect(streamChat).toHaveBeenCalledTimes(stream ? 1 : 0);
+        expect(events.filter((event) => event.kind === 'turn_start')).toHaveLength(1);
+        expect(
+          saveMessage.mock.calls.some(
+            (call) => call[1] === 'assistant' && call[2] === content
+          )
+        ).toBe(true);
+        expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+      }
+    );
+
+    it('stops empty-final correction after a tool when the round budget is exhausted', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 2;
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce(finalResponse(120, ''))
+        .mockResolvedValue(finalResponse(140, 'Unexpected third response.'));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file and summarize it.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'max_turns_exceeded' },
+        metadata: { turnsCount: 2, toolCallsCount: 1 },
+      });
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+    });
+
+    it('allows a valid final response on the last permitted round', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(finalResponse(100, 'Final answer.'));
+      const onTurnLimitReached = vi.fn(async () => ({ continue: false }));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Explain the implementation.',
+          createMockContext(),
+          { stream: false, onTurnLimitReached },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Final answer.',
+        metadata: { turnsCount: 1 },
+      });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(onTurnLimitReached).not.toHaveBeenCalled();
+    });
+
+    it('asks for continuation when recovery reaches the limit and honors a stop', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(finalResponse(100, 'Let me check the file:'))
+        .mockResolvedValue(finalResponse(120, 'Unexpected continued response.'));
+      const onTurnLimitReached = vi.fn(async () => ({
+        continue: false,
+        reason: 'User stopped at the limit.',
+      }));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Inspect the file.',
+          createMockContext(),
+          { stream: false, onTurnLimitReached },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(onTurnLimitReached).toHaveBeenCalledExactlyOnceWith({ turnsCount: 1 });
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'User stopped at the limit.',
+      });
+      expect(chat).toHaveBeenCalledOnce();
+    });
+
+    it.each([false, true])(
+      'honors cancellation while awaiting a turn-limit decision (continue=%s)',
+      async (continueAfterLimit) => {
+        const { deps, contextManager } = createTypedPersistenceHarness();
+        deps.runtimeOptions.maxTurns = 1;
+        const controller = new AbortController();
+        const saveCompaction = vi.spyOn(contextManager, 'saveCompaction');
+        vi.mocked(CompactionService.compact).mockRejectedValueOnce(
+          new DOMException('Aborted', 'AbortError')
+        );
+        const chat = vi
+          .mocked(deps.chatService.chat)
+          .mockResolvedValue(finalResponse(100, 'Let me check the file:'));
+        const onTurnLimitReached = vi.fn(async () => {
+          controller.abort();
+          return { continue: continueAfterLimit };
+        });
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Inspect the file.',
+            createMockContext(),
+            { stream: false, signal: controller.signal, onTurnLimitReached },
+            'ROOT_SYSTEM_PROMPT'
+          )
+        );
+        expect(result).toMatchObject({
+          success: false,
+          error: { type: 'aborted' },
+          metadata: { turnsCount: 1, toolCallsCount: 0 },
+        });
+        expect(onTurnLimitReached).toHaveBeenCalledOnce();
+        expect(chat).toHaveBeenCalledOnce();
+        expect(CompactionService.compact).not.toHaveBeenCalled();
+        expect(saveCompaction).not.toHaveBeenCalled();
+        expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+        expect(events.filter((event) => event.kind === 'compaction')).toEqual([]);
+      }
+    );
+
+    it('bounds Stop hook continuation without starting another model round', async () => {
+      const { HookManager } = await import('../../../../src/hooks/HookManager.js');
+      vi.mocked(HookManager.getInstance().executeStopHooks).mockResolvedValueOnce({
+        shouldStop: false,
+        continueReason: 'Keep inspecting the file.',
+      });
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(finalResponse(100, 'Final answer.'));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Inspect the file.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'max_turns_exceeded' },
+        metadata: { turnsCount: 1 },
+      });
+      expect(chat).toHaveBeenCalledOnce();
+    });
+
+    it('leaves input queued after the final tool round for the next turn', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = vi.mocked(deps.chatService.chat);
+      const pending = {
+        id: 'input-after-budget',
+        content: 'Inspect a different file.',
+        queuedAt: Date.now(),
+        recovered: false,
+      };
+      let inputQueued = false;
+      const turnSteering = {
+        drain: vi.fn(async () => (inputQueued ? [pending] : [])),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
+      };
+      chat.mockResolvedValueOnce(toolResponse(100));
+      vi.mocked(deps.toolExecutor.execute).mockImplementationOnce(async () => {
+        inputQueued = true;
+        return { success: true, llmContent: 'File contents' };
+      });
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file.',
+          createMockContext(),
+          { stream: false, turnSteering },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.error?.type).toBe('max_turns_exceeded');
+      expect(inputQueued).toBe(true);
+      expect(chat).toHaveBeenCalledOnce();
+      expect(turnSteering.drain).toHaveBeenCalledOnce();
+      expect(turnSteering.drainOrSeal).not.toHaveBeenCalled();
+      expect(events.some((event) => event.kind === 'steering_applied')).toBe(false);
+      expect(saveMessage.mock.calls.some((call) => call[2] === pending.content)).toBe(
+        false
+      );
+    });
+
+    it('bounds a mid-round steering continuation without consuming later input', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(finalResponse(100, 'Initial answer.'));
+      const turnSteering: NonNullable<LoopOptions['turnSteering']> = {
+        drain: vi
+          .fn<NonNullable<LoopOptions['turnSteering']>['drain']>()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'mid-round-input',
+              content: 'Use the updated requirement.',
+              queuedAt: Date.now(),
+              recovered: false,
+            },
+          ])
+          .mockResolvedValue([]),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
+      };
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Inspect the file.',
+          createMockContext(),
+          { stream: false, turnSteering },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.error?.type).toBe('max_turns_exceeded');
+      expect(chat).toHaveBeenCalledOnce();
+      expect(turnSteering.drain).toHaveBeenCalledTimes(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'steering_applied',
+          messageIds: ['mid-round-input'],
+        })
+      );
+    });
+
+    it('compacts a recovery continuation only after explicit consent', async () => {
+      const { deps, contextManager } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const saveCompaction = vi
+        .spyOn(contextManager, 'saveCompaction')
+        .mockResolvedValue('round-limit-checkpoint');
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(finalResponse(100, 'Let me check the file:'))
+        .mockResolvedValue(finalResponse(120, 'Continued final answer.'));
+      vi.mocked(CompactionService.compact).mockResolvedValueOnce({
+        success: true,
+        summary: 'Continue inspecting the file',
+        preTokens: 100,
+        postTokens: 20,
+        filesIncluded: [],
+        compactedMessages: [{ role: 'user', content: 'Inspect the file.' }],
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: 'Continue inspecting the file' },
+      } satisfies CompactionResult);
+      const onTurnLimitReached = vi.fn(async () => ({ continue: true }));
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Inspect the file.',
+          createMockContext(),
+          { stream: false, onTurnLimitReached },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(onTurnLimitReached).toHaveBeenCalledExactlyOnceWith({ turnsCount: 1 });
+      expect(saveCompaction).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Continued final answer.',
+      });
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'turn_limit',
+          outcome: 'completed',
+        })
+      );
+    });
+  });
+
   it('turn-limit continuation 原样持久化 CompactionService boundary 的无 marker replacement', async () => {
     const { deps, contextManager } = createTypedPersistenceHarness();
     const saveCompaction = vi

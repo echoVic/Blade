@@ -200,7 +200,7 @@ and cannot inherit authorization for the previous origin.
 
 ## Turn Limit
 
-When a long-running task reaches the turn threshold, it pauses and asks:
+Set an explicit model-round limit for a task:
 
 ```json
 {
@@ -209,10 +209,12 @@ When a long-running task reaches the turn threshold, it pauses and asks:
 ```
 
 - `0` - Disable the conversation
-- `-1` - Use the default value (100)
-- `N > 0` - Limit to N turns
+- `-1` - Unlimited rounds
+- `N > 0` - Limit to N model rounds; YOLO mode also respects an explicit limit
 
-The user can choose "Continue" to reset the counter, or "Stop" to terminate the task.
+Output-length recovery, incomplete-intent correction, structured-output correction, verification/delegation requirements, empty-final recovery, Stop hooks, and mid-turn input cannot bypass this limit. A valid final response can still complete on the last permitted round. Context-limit replay before crossing the output boundary still counts as the same round.
+
+The interactive TUI asks whether to continue at the limit. Choosing "Continue" compacts the conversation and commits its checkpoint before resetting the round counter; choosing "Stop" ends the task. Cancellation while awaiting this choice ends the task without starting compaction. Non-interactive callers without a continuation callback receive `max_turns_exceeded` without another model request. The exhausted turn's consumed input is acknowledged so Web reload or process recovery cannot automatically replay it; unconsumed follow-up input remains queued.
 
 ## CLI Arguments
 

@@ -1195,6 +1195,65 @@ describe('Agent runLoop system prompt injection', () => {
     );
   });
 
+  it('acknowledges exhausted turn-budget input without completing or replaying it', async () => {
+    const turnHandle = { id: 'turn-budget-exhausted' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'turn-budget-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const failure: LoopResult = {
+      success: false,
+      error: { type: 'max_turns_exceeded', message: 'Turn limit reached.' },
+      metadata: { turnsCount: 1, toolCallsCount: 0, duration: 1 },
+    };
+    const runLoop = vi.fn(async function* () {
+      yield { kind: 'turn_start' as const, turn: 1, maxTurns: 1 };
+      return failure;
+    });
+    Object.assign(agent, {
+      isInitialized: true,
+      processAtMentionsForContent: vi.fn(async () => 'hello'),
+      runLoop,
+    });
+    const { result } = await drainAgentStream(
+      agent.chatStream('hello', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+    );
+    expect(result).toEqual(failure);
+    expect(runLoop).toHaveBeenCalledOnce();
+    expect(runtime.finishTurn).toHaveBeenCalledExactlyOnceWith(turnHandle, {
+      continuePending: false,
+      acknowledgeInput: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'failed', failure.error);
+  });
+
   it('acknowledges terminal Provider queue rejection instead of replaying it', async () => {
     const turnHandle = { id: 'provider-rejected-turn' };
     const runtime = {

@@ -7,6 +7,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { spawn as spawnPty } from 'bun-pty';
 import { chromium } from 'playwright';
 import { SessionSchema } from '../../src/api/schemas.js';
+import { HeadlessJsonlEventSchema } from '../../src/commands/headlessEvents.js';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   captureForegroundGuiLauncherIdentity,
@@ -16,6 +17,7 @@ import {
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface Input {
+  scenario: 'textual-tool' | 'turn-limit';
   surface: 'headless' | 'acp' | 'pty' | 'web';
   workspace: string;
   sessionId: string;
@@ -33,6 +35,8 @@ const childEnv = {
   BLADE_TELEMETRY_DISABLED: '1',
 };
 const controls = 'native tool-call interface';
+const turnLimit = input.scenario === 'turn-limit';
+const maxTurns = turnLimit ? '1' : '4';
 let output = '';
 let sessionId = input.sessionId;
 const faults: string[] = [];
@@ -117,13 +121,32 @@ async function run() {
       '--permission-mode',
       'yolo',
       '--max-turns',
-      '4',
+      maxTurns,
       '--no-verification-agent',
       input.prompt,
     ]);
     try {
-      assert.equal(await waitExit(process.child), 0, output.slice(-2000));
-      assert(output.includes(input.marker));
+      assert.equal(
+        await waitExit(process.child),
+        turnLimit ? 1 : 0,
+        output.slice(-2000)
+      );
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      if (turnLimit) {
+        assert(
+          events.some(
+            (event) => event.type === 'error' && event.message.includes('轮次上限')
+          )
+        );
+      }
+      const content = events
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+      assert(content.includes(input.marker), content);
       assert(!output.includes(controls));
     } finally {
       await process.stop();
@@ -158,11 +181,19 @@ async function run() {
       });
       sessionId = session.sessionId;
       await connection.setSessionMode({ sessionId, modeId: 'yolo' });
-      const response = await connection.prompt({
+      const response = connection.prompt({
         sessionId,
         prompt: [{ type: 'text', text: input.prompt }],
       });
-      assert.equal(response.stopReason, 'end_turn');
+      if (turnLimit) {
+        await assert.rejects(response, (error: unknown) => {
+          assert(error instanceof Error);
+          assert(error.message.includes('max_turns_exceeded'), error.message);
+          return true;
+        });
+      } else {
+        assert.equal((await response).stopReason, 'end_turn');
+      }
       const text = notifications
         .flatMap(({ update }) =>
           update.sessionUpdate === 'agent_message_chunk' &&
@@ -189,7 +220,7 @@ async function run() {
         '--permission-mode',
         'yolo',
         '--max-turns',
-        '4',
+        maxTurns,
         '--no-verification-agent',
       ],
       {
@@ -220,10 +251,17 @@ async function run() {
       await waitFor(() => output.includes(handshake.marker), 'TUI composer not ready');
       await writeBracketedPaste(terminal, input.prompt);
       await waitFor(
-        () => output.includes('Call Read'),
+        () => output.includes(input.prompt.slice(0, 20)),
         'Prompt did not reach composer'
       );
       terminal.write('\r');
+      if (turnLimit) {
+        await waitFor(
+          () => output.includes('是否继续'),
+          'TUI omitted turn-limit choice'
+        );
+        terminal.write('n');
+      }
       await waitFor(finalized, 'TUI turn did not complete');
       await waitFor(() => output.includes(input.marker), 'TUI omitted final result');
       assert(!output.includes(controls));
@@ -295,19 +333,19 @@ async function run() {
       await composer.waitFor({ state: 'visible', timeout: 30000 });
       await composer.fill(input.prompt);
       await composer.press('Enter');
-      await waitFor(finalized, 'Web turn did not complete');
-      const final = page
-        .locator('[data-chat-role="assistant"]')
-        .filter({ hasText: input.marker })
-        .last();
-      const assertCompletedView = async () => {
-        await final.waitFor({ state: 'visible', timeout: 30000 });
+      if (turnLimit) {
+        const error = page.locator('[data-blade-session-error]');
+        await error.waitFor({ state: 'visible', timeout: 30000 });
+        const errorText = await error.innerText();
+        assert(/Agent 运行失败。|Agent execution failed\./.test(errorText), errorText);
         await page
           .getByRole('button', {
             name: /^(?:选择「Textual tool recovery」|Select Textual tool recovery)$/,
           })
-          .locator('[title="completed"]')
+          .locator('[title="failed"]')
           .waitFor({ state: 'visible', timeout: 30000 });
+        assert((await page.locator('body').innerText()).includes(input.marker));
+        assert.equal(await page.locator('[data-tool-name]').count(), 0);
         assert.equal(
           await page
             .getByRole('button', {
@@ -316,32 +354,96 @@ async function run() {
             .count(),
           0
         );
-        const groups = page.locator('[data-agent-tool-group] > button');
-        for (const group of await groups.all()) {
-          if ((await group.getAttribute('aria-expanded')) !== 'true')
-            await group.click();
+        await page.screenshot({
+          path: path.join(input.workspace, 'turn-limit.png'),
+          fullPage: true,
+        });
+        requestState.refreshing = true;
+        await page.reload();
+        requestState.refreshing = false;
+        await composer.waitFor({ state: 'visible', timeout: 30000 });
+        await page
+          .locator('[data-chat-role="assistant"]')
+          .filter({ hasText: input.marker })
+          .last()
+          .waitFor({ state: 'visible', timeout: 30000 });
+        const row = page.getByRole('button', {
+          name: /^(?:选择「Textual tool recovery」|Select Textual tool recovery)$/,
+        });
+        try {
+          await row
+            .locator('[title="failed"]')
+            .waitFor({ state: 'visible', timeout: 30000 });
+        } catch (error) {
+          const session = await fetch(
+            `${origin}/sessions/${sessionId}?${new URLSearchParams({ projectPath: input.workspace })}`
+          );
+          const record = SessionSchema.parse(await session.json());
+          console.error(
+            JSON.stringify({
+              reloadedRow: await row.innerText(),
+              statuses: await row
+                .locator('[title]')
+                .evaluateAll((nodes) =>
+                  nodes.map((node) => node.getAttribute('title'))
+                ),
+              taskStatus: record.taskStatus,
+              taskFailure: record.taskFailure,
+              taskStatusReason: record.taskStatusReason,
+            })
+          );
+          throw error;
         }
-        await page.waitForFunction(
-          () =>
-            document.querySelectorAll(
-              '[data-tool-name="Read"][data-tool-status="success"]'
-            ).length === 1 &&
-            document.querySelectorAll('[data-tool-status="running"]').length === 0,
-          undefined,
-          { timeout: 30000 }
-        );
-        assert.equal(await page.locator('[data-tool-name]').count(), 1);
-        assert(!(await page.locator('body').innerText()).includes(controls));
-      };
-      await assertCompletedView();
-      await page.screenshot({
-        path: path.join(input.workspace, 'textual-tool-recovered.png'),
-        fullPage: true,
-      });
-      requestState.refreshing = true;
-      await page.reload();
-      requestState.refreshing = false;
-      await assertCompletedView();
+        assert.equal(await page.locator('[data-tool-name]').count(), 0);
+      } else {
+        await waitFor(finalized, 'Web turn did not complete');
+        const final = page
+          .locator('[data-chat-role="assistant"]')
+          .filter({ hasText: input.marker })
+          .last();
+        const assertCompletedView = async () => {
+          await final.waitFor({ state: 'visible', timeout: 30000 });
+          await page
+            .getByRole('button', {
+              name: /^(?:选择「Textual tool recovery」|Select Textual tool recovery)$/,
+            })
+            .locator('[title="completed"]')
+            .waitFor({ state: 'visible', timeout: 30000 });
+          assert.equal(
+            await page
+              .getByRole('button', {
+                name: /^(?:停止「Textual tool recovery」|Stop Textual tool recovery)$/,
+              })
+              .count(),
+            0
+          );
+          const groups = page.locator('[data-agent-tool-group] > button');
+          for (const group of await groups.all()) {
+            if ((await group.getAttribute('aria-expanded')) !== 'true')
+              await group.click();
+          }
+          await page.waitForFunction(
+            () =>
+              document.querySelectorAll(
+                '[data-tool-name="Read"][data-tool-status="success"]'
+              ).length === 1 &&
+              document.querySelectorAll('[data-tool-status="running"]').length === 0,
+            undefined,
+            { timeout: 30000 }
+          );
+          assert.equal(await page.locator('[data-tool-name]').count(), 1);
+          assert(!(await page.locator('body').innerText()).includes(controls));
+        };
+        await assertCompletedView();
+        await page.screenshot({
+          path: path.join(input.workspace, 'textual-tool-recovered.png'),
+          fullPage: true,
+        });
+        requestState.refreshing = true;
+        await page.reload();
+        requestState.refreshing = false;
+        await assertCompletedView();
+      }
     } finally {
       try {
         await stopBrowser?.();
@@ -356,7 +458,7 @@ async function run() {
       surface: input.surface,
       sessionId,
       markerVisible: true,
-      internalControlHidden: true,
+      ...(turnLimit ? { turnLimitReached: true } : { internalControlHidden: true }),
       faults,
     })
   );

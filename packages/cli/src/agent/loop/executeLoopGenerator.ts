@@ -1792,6 +1792,226 @@ validates the object and may return a bounded corrective error.`;
             options.signal
           );
         }
+        const reachedTurnLimit =
+          turnsCount >= maxTurns && (hasExplicitTurnLimit || isSubagent);
+        if (reachedTurnLimit) {
+          logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
+
+          if (options?.onTurnLimitReached) {
+            const response = await options.onTurnLimitReached({ turnsCount });
+            if (options.signal?.aborted) {
+              return makeInterruptedResult(
+                turnsCount,
+                allToolResults.length,
+                options.signal
+              );
+            }
+
+            if (response?.continue) {
+              state.writeback();
+              let compactionOutcome: 'completed' | 'fallback' | 'failed' = 'failed';
+              let compactionStrategy: 'llm' | 'fallback' | undefined;
+              let compactionPreTokens: number | undefined;
+              let compactionPreTokenSource: ContextTokenSource | undefined;
+              let compactionEstimatedPendingTokens: number | undefined;
+              let compactionPostTokens: number | undefined;
+              let compactionSampleAttempts: number | undefined;
+              let compactionInputReductions: number | undefined;
+              let compactionMessagesOmitted: number | undefined;
+              let compactionFilesOmitted: number | undefined;
+              let compactionImagesOmitted: number | undefined;
+              let compactionFallbackTargetTokens: number | undefined;
+              let compactionFallbackMessagesOmitted: number | undefined;
+              let compactionFallbackMessagesTruncated: number | undefined;
+              let compactionFailureReason: CompactionFailureReason | undefined;
+              let compactionMemory: MemoryConsolidationProjection | undefined;
+              yield {
+                kind: 'compaction',
+                phase: 'start',
+                reason: 'turn_limit',
+              };
+              try {
+                const chatConfig = deps.chatService.getConfig();
+                const availableTools = resolveTools();
+                const availableTurnLimitTools =
+                  singleTaskDelegationClaimed &&
+                  resolveSingleTaskDelegationRequirement(delegationPolicySources)
+                    ? availableTools.filter((tool) => tool.name !== 'Task')
+                    : availableTools;
+                const turnLimitTools = requiredToolName
+                  ? availableTurnLimitTools.filter(
+                      (tool) => tool.name === requiredToolName
+                    )
+                  : availableTurnLimitTools;
+                const turnLimitRequestProfile = createContextTokenRequestProfile(
+                  state.systemMessages,
+                  turnLimitTools,
+                  chatConfig.model
+                );
+                const turnLimitProjection = contextTokenTracker.project({
+                  history: state.getHistory(),
+                  contextRevision: state.contextRevision,
+                  modelName: chatConfig.model,
+                  requestProfile: turnLimitRequestProfile,
+                });
+                compactionPreTokenSource = turnLimitProjection.source;
+                compactionEstimatedPendingTokens =
+                  turnLimitProjection.estimatedPendingTokens;
+                const compactResult = await CompactionService.compact(
+                  context.messages,
+                  {
+                    trigger: 'auto',
+                    modelName: chatConfig.model,
+                    modelProvider: chatConfig.provider,
+                    maxContextTokens: chatConfig.maxContextTokens ?? 0,
+                    apiKey: chatConfig.apiKey,
+                    baseURL: chatConfig.baseUrl,
+                    actualPreTokens: turnLimitProjection.contextTokens,
+                    signal: options?.signal,
+                    activeTask: activeUserRequest,
+                    workspaceRoot: context.workspaceRoot || getCwd(),
+                    workspaceAccess:
+                      context.workspaceKind === 'acp-remote' ? 'none' : 'full',
+                    sessionId: context.sessionId,
+                  }
+                );
+                if (compactResult.usage) {
+                  yield {
+                    kind: 'token_usage',
+                    usage: toTokenUsageInfo(
+                      compactResult.usage,
+                      chatConfig.maxContextTokens ?? 0
+                    ),
+                  };
+                }
+
+                const continueMessage: Message = {
+                  role: 'user',
+                  content:
+                    'This session is being continued from a previous conversation. ' +
+                    'The conversation is summarized above.\n\n' +
+                    'Please continue the conversation from where we left it off without asking the user any further questions. ' +
+                    'Continue with the last task that you were asked to work on.',
+                };
+                const replacementMessages = [
+                  ...compactResult.compactedMessages,
+                  continueMessage,
+                ];
+                compactionStrategy = compactResult.success ? 'llm' : 'fallback';
+                compactionPreTokens = compactResult.preTokens;
+                compactionPostTokens = compactResult.postTokens;
+                compactionSampleAttempts = compactResult.sampleAttempts;
+                compactionInputReductions = compactResult.inputReductions;
+                compactionMessagesOmitted = compactResult.messagesOmitted;
+                compactionFilesOmitted = compactResult.filesOmitted;
+                compactionImagesOmitted = compactResult.imagesOmitted;
+                compactionFallbackTargetTokens = compactResult.fallbackTargetTokens;
+                compactionFallbackMessagesOmitted =
+                  compactResult.fallbackMessagesOmitted;
+                compactionFallbackMessagesTruncated =
+                  compactResult.fallbackMessagesTruncated;
+                compactionFailureReason = compactResult.failureReason;
+
+                const checkpointId = await persistCompaction(
+                  deps,
+                  context,
+                  compactResult.summary,
+                  {
+                    trigger: 'auto',
+                    reason: 'turn_limit',
+                    strategy: compactionStrategy,
+                    preTokens: compactResult.preTokens,
+                    preTokenSource: turnLimitProjection.source,
+                    ...(turnLimitProjection.estimatedPendingTokens !== undefined
+                      ? {
+                          estimatedPendingTokens:
+                            turnLimitProjection.estimatedPendingTokens,
+                        }
+                      : {}),
+                    postTokens: compactResult.postTokens,
+                    sampleAttempts: compactResult.sampleAttempts,
+                    inputReductions: compactResult.inputReductions,
+                    messagesOmitted: compactResult.messagesOmitted,
+                    filesOmitted: compactResult.filesOmitted,
+                    imagesOmitted: compactResult.imagesOmitted,
+                    fallbackTargetTokens: compactResult.fallbackTargetTokens,
+                    fallbackMessagesOmitted: compactResult.fallbackMessagesOmitted,
+                    fallbackMessagesTruncated: compactResult.fallbackMessagesTruncated,
+                    failureReason: compactResult.failureReason,
+                    filesIncluded: compactResult.filesIncluded,
+                    replacementMessages,
+                  },
+                  { required: deps.executionEngine !== undefined }
+                );
+                compactionMemory = await commitCompactionMemory(
+                  compactResult.memoryPlan,
+                  context,
+                  checkpointId
+                );
+                context.messages = replacementMessages;
+                state.replaceHistory(context.messages);
+                contextTokenTracker.reset();
+                compactionOutcome = compactResult.success ? 'completed' : 'fallback';
+              } catch (compactError) {
+                logger.error('[Loop] 轮次上限压缩失败，停止继续执行:', compactError);
+                throw compactError;
+              } finally {
+                yield {
+                  kind: 'compaction',
+                  phase: 'end',
+                  reason: 'turn_limit',
+                  outcome: compactionOutcome,
+                  strategy: compactionStrategy,
+                  preTokens: compactionPreTokens,
+                  preTokenSource: compactionPreTokenSource,
+                  estimatedPendingTokens: compactionEstimatedPendingTokens,
+                  postTokens: compactionPostTokens,
+                  sampleAttempts: compactionSampleAttempts,
+                  inputReductions: compactionInputReductions,
+                  messagesOmitted: compactionMessagesOmitted,
+                  filesOmitted: compactionFilesOmitted,
+                  imagesOmitted: compactionImagesOmitted,
+                  fallbackTargetTokens: compactionFallbackTargetTokens,
+                  fallbackMessagesOmitted: compactionFallbackMessagesOmitted,
+                  fallbackMessagesTruncated: compactionFallbackMessagesTruncated,
+                  failureReason: compactionFailureReason,
+                  memory: compactionMemory,
+                };
+              }
+
+              turnsCount = 0;
+              continue;
+            }
+
+            return {
+              success: true,
+              finalMessage: response?.reason || '已达到对话轮次上限，用户选择停止',
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+
+          return {
+            success: false,
+            error: {
+              type: 'max_turns_exceeded',
+              message: isSubagent
+                ? `子代理已达到轮次上限 (${maxTurns} 轮)。`
+                : `已达到轮次上限 (${maxTurns} 轮)。`,
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+            },
+          };
+        }
+
         await registry.waitForMcpCatalogIdle();
         if (options?.signal?.aborted) {
           return makeInterruptedResult(
@@ -4375,227 +4595,6 @@ validates the object and may return a bounded corrective error.`;
             options.signal
           );
         }
-
-        // 9. 检查轮次上限
-        const reachedTurnLimit =
-          turnsCount >= maxTurns && (hasExplicitTurnLimit || isSubagent);
-        if (reachedTurnLimit) {
-          logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
-
-          if (options?.onTurnLimitReached) {
-            const response = await options.onTurnLimitReached({ turnsCount });
-
-            if (response?.continue) {
-              // 用户选择继续，压缩上下文
-              // 先同步 state 到 context，确保压缩读取到完整历史
-              state.writeback();
-              let compactionOutcome: 'completed' | 'fallback' | 'failed' = 'failed';
-              let compactionStrategy: 'llm' | 'fallback' | undefined;
-              let compactionPreTokens: number | undefined;
-              let compactionPreTokenSource: ContextTokenSource | undefined;
-              let compactionEstimatedPendingTokens: number | undefined;
-              let compactionPostTokens: number | undefined;
-              let compactionSampleAttempts: number | undefined;
-              let compactionInputReductions: number | undefined;
-              let compactionMessagesOmitted: number | undefined;
-              let compactionFilesOmitted: number | undefined;
-              let compactionImagesOmitted: number | undefined;
-              let compactionFallbackTargetTokens: number | undefined;
-              let compactionFallbackMessagesOmitted: number | undefined;
-              let compactionFallbackMessagesTruncated: number | undefined;
-              let compactionFailureReason: CompactionFailureReason | undefined;
-              let compactionMemory: MemoryConsolidationProjection | undefined;
-              yield {
-                kind: 'compaction',
-                phase: 'start',
-                reason: 'turn_limit',
-              };
-              try {
-                const chatConfig = deps.chatService.getConfig();
-                const availableTools = resolveTools();
-                const availableTurnLimitTools =
-                  singleTaskDelegationClaimed &&
-                  resolveSingleTaskDelegationRequirement(delegationPolicySources)
-                    ? availableTools.filter((tool) => tool.name !== 'Task')
-                    : availableTools;
-                const turnLimitTools = requiredToolName
-                  ? availableTurnLimitTools.filter(
-                      (tool) => tool.name === requiredToolName
-                    )
-                  : availableTurnLimitTools;
-                const turnLimitRequestProfile = createContextTokenRequestProfile(
-                  state.systemMessages,
-                  turnLimitTools,
-                  chatConfig.model
-                );
-                const turnLimitProjection = contextTokenTracker.project({
-                  history: state.getHistory(),
-                  contextRevision: state.contextRevision,
-                  modelName: chatConfig.model,
-                  requestProfile: turnLimitRequestProfile,
-                });
-                compactionPreTokenSource = turnLimitProjection.source;
-                compactionEstimatedPendingTokens =
-                  turnLimitProjection.estimatedPendingTokens;
-                const compactResult = await CompactionService.compact(
-                  context.messages,
-                  {
-                    trigger: 'auto',
-                    modelName: chatConfig.model,
-                    modelProvider: chatConfig.provider,
-                    maxContextTokens: chatConfig.maxContextTokens ?? 0,
-                    apiKey: chatConfig.apiKey,
-                    baseURL: chatConfig.baseUrl,
-                    actualPreTokens: turnLimitProjection.contextTokens,
-                    signal: options?.signal,
-                    activeTask: activeUserRequest,
-                    workspaceRoot: context.workspaceRoot || getCwd(),
-                    workspaceAccess:
-                      context.workspaceKind === 'acp-remote' ? 'none' : 'full',
-                    sessionId: context.sessionId,
-                  }
-                );
-                if (compactResult.usage) {
-                  yield {
-                    kind: 'token_usage',
-                    usage: toTokenUsageInfo(
-                      compactResult.usage,
-                      chatConfig.maxContextTokens ?? 0
-                    ),
-                  };
-                }
-
-                const continueMessage: Message = {
-                  role: 'user',
-                  content:
-                    'This session is being continued from a previous conversation. ' +
-                    'The conversation is summarized above.\n\n' +
-                    'Please continue the conversation from where we left it off without asking the user any further questions. ' +
-                    'Continue with the last task that you were asked to work on.',
-                };
-                const replacementMessages = [
-                  ...compactResult.compactedMessages,
-                  continueMessage,
-                ];
-                compactionStrategy = compactResult.success ? 'llm' : 'fallback';
-                compactionPreTokens = compactResult.preTokens;
-                compactionPostTokens = compactResult.postTokens;
-                compactionSampleAttempts = compactResult.sampleAttempts;
-                compactionInputReductions = compactResult.inputReductions;
-                compactionMessagesOmitted = compactResult.messagesOmitted;
-                compactionFilesOmitted = compactResult.filesOmitted;
-                compactionImagesOmitted = compactResult.imagesOmitted;
-                compactionFallbackTargetTokens = compactResult.fallbackTargetTokens;
-                compactionFallbackMessagesOmitted =
-                  compactResult.fallbackMessagesOmitted;
-                compactionFallbackMessagesTruncated =
-                  compactResult.fallbackMessagesTruncated;
-                compactionFailureReason = compactResult.failureReason;
-
-                // 保存压缩数据到 JSONL
-                const checkpointId = await persistCompaction(
-                  deps,
-                  context,
-                  compactResult.summary,
-                  {
-                    trigger: 'auto',
-                    reason: 'turn_limit',
-                    strategy: compactionStrategy,
-                    preTokens: compactResult.preTokens,
-                    preTokenSource: turnLimitProjection.source,
-                    ...(turnLimitProjection.estimatedPendingTokens !== undefined
-                      ? {
-                          estimatedPendingTokens:
-                            turnLimitProjection.estimatedPendingTokens,
-                        }
-                      : {}),
-                    postTokens: compactResult.postTokens,
-                    sampleAttempts: compactResult.sampleAttempts,
-                    inputReductions: compactResult.inputReductions,
-                    messagesOmitted: compactResult.messagesOmitted,
-                    filesOmitted: compactResult.filesOmitted,
-                    imagesOmitted: compactResult.imagesOmitted,
-                    fallbackTargetTokens: compactResult.fallbackTargetTokens,
-                    fallbackMessagesOmitted: compactResult.fallbackMessagesOmitted,
-                    fallbackMessagesTruncated: compactResult.fallbackMessagesTruncated,
-                    failureReason: compactResult.failureReason,
-                    filesIncluded: compactResult.filesIncluded,
-                    replacementMessages,
-                  },
-                  { required: deps.executionEngine !== undefined }
-                );
-                compactionMemory = await commitCompactionMemory(
-                  compactResult.memoryPlan,
-                  context,
-                  checkpointId
-                );
-                context.messages = replacementMessages;
-                state.replaceHistory(context.messages);
-                contextTokenTracker.reset();
-                compactionOutcome = compactResult.success ? 'completed' : 'fallback';
-              } catch (compactError) {
-                logger.error('[Loop] 轮次上限压缩失败，停止继续执行:', compactError);
-                throw compactError;
-              } finally {
-                yield {
-                  kind: 'compaction',
-                  phase: 'end',
-                  reason: 'turn_limit',
-                  outcome: compactionOutcome,
-                  strategy: compactionStrategy,
-                  preTokens: compactionPreTokens,
-                  preTokenSource: compactionPreTokenSource,
-                  estimatedPendingTokens: compactionEstimatedPendingTokens,
-                  postTokens: compactionPostTokens,
-                  sampleAttempts: compactionSampleAttempts,
-                  inputReductions: compactionInputReductions,
-                  messagesOmitted: compactionMessagesOmitted,
-                  filesOmitted: compactionFilesOmitted,
-                  imagesOmitted: compactionImagesOmitted,
-                  fallbackTargetTokens: compactionFallbackTargetTokens,
-                  fallbackMessagesOmitted: compactionFallbackMessagesOmitted,
-                  fallbackMessagesTruncated: compactionFallbackMessagesTruncated,
-                  failureReason: compactionFailureReason,
-                  memory: compactionMemory,
-                };
-              }
-
-              turnsCount = 0;
-              continue;
-            }
-
-            // 用户选择停止
-            return {
-              success: true,
-              finalMessage: response?.reason || '已达到对话轮次上限，用户选择停止',
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-                tokensUsed: totalTokens,
-              },
-            };
-          }
-
-          // 非交互模式
-          return {
-            success: false,
-            error: {
-              type: 'max_turns_exceeded',
-              message: isSubagent
-                ? `子代理已达到轮次上限 (${maxTurns} 轮)。`
-                : `已达到轮次上限 (${maxTurns} 轮)。`,
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-              tokensUsed: totalTokens,
-            },
-          };
-        }
-
-        // 继续下一轮循环...
       }
     } catch (error) {
       if (error instanceof DurableConversationPersistenceError) {
