@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.151] - 2026-09-09
+
+### Fixed
+- Load bundled and existing local Skills without implicitly downloading defaults during workspace initialization or refresh. Fresh CLI/TUI, Web, and ACP sessions no longer wait for a GitHub clone to access built-in skills; explicit installation remains available.
+- Discover locally installed skill directory links, preserve local overrides, and restore bundled content when an override is uninstalled without deleting the linked source.
+
+### Tests
+- Added failing-first coverage for download-free initialization and refresh, built-in content, local overrides, linked installations, broken links, and source preservation; removed obsolete installer mocks from workspace and trust tests.
+- Verified real Chromium built-in skill display, explicit local installation, uninstall fallback, and fresh-home Node/Bun raw-PTY startup without preinstalled skills or GitHub download requests.
+- Qualified DeepSeek Flash/Pro tool invocation of the bundled skill from empty skill directories and retained real workspace and ACP resource-isolation trajectories.
+
 ## [0.10.150] - 2026-09-09
 
 ### Fixed
