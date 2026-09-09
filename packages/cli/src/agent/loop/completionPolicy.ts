@@ -126,6 +126,117 @@ export function checkIncompleteIntent(
 
 export { MAX_INCOMPLETE_INTENT_RETRIES, RETRY_PROMPT };
 
+export const MAX_TEXTUAL_TOOL_CALL_RETRIES = 2;
+export const TEXTUAL_TOOL_CALL_FAILURE_MESSAGE =
+  'The model returned tool-call JSON as text instead of completing the requested tool workflow.';
+export const TEXTUAL_TOOL_CALL_RETRY_PROMPT =
+  'The previous response contained tool-call JSON as ordinary text. It did not execute a tool. ' +
+  'If the requested operation is still needed, use the native tool-call interface with an available tool. ' +
+  'If it already succeeded, use the recorded result to answer instead of repeating the operation. ' +
+  'Do not return another tool-call JSON envelope as your final answer.';
+
+export function checkTextualToolCall(
+  content: string | undefined,
+  userRequest: string,
+  availableToolNames: readonly string[],
+  retryCount: number
+):
+  | { action: 'none' }
+  | { action: 'retry'; prompt: string }
+  | { action: 'fail'; message: string } {
+  if (!content || content.length > 65_536 || availableToolNames.length === 0) {
+    return { action: 'none' };
+  }
+  const request = userRequest
+    .replace(/```[\s\S]*?(?:```|$)/g, '')
+    .replace(/^\s*>.*$/gm, '');
+  if (
+    /\b(?:example|schema|serialize|serialization|quote|print|illustrate|verbatim)\b|示例|样例|序列化|引用原文/i.test(
+      request
+    ) ||
+    /\b(?:explain|show|return|output)\b[^.!?\n]{0,80}\b(?:json|tool.calls?)\b|(?:解释|展示|输出|返回)[^。！？\n]{0,40}(?:JSON|工具调用格式)/i.test(
+      request
+    ) ||
+    /\b(?:do not|don't|never)\s+(?:use|call|invoke|execute)\s+(?:any\s+)?tools?\b|不要(?:使用|调用|执行)(?:任何)?工具/i.test(
+      request
+    )
+  )
+    return { action: 'none' };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return { action: 'none' };
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).length !== 1 ||
+    !('tool_calls' in parsed) ||
+    !Array.isArray(parsed.tool_calls) ||
+    parsed.tool_calls.length === 0 ||
+    parsed.tool_calls.length > 32
+  )
+    return { action: 'none' };
+
+  for (const call of parsed.tool_calls) {
+    if (!call || typeof call !== 'object' || Array.isArray(call))
+      return { action: 'none' };
+    const nested = 'function' in call;
+    if (
+      Object.keys(call).some(
+        (key) =>
+          !['id', 'type', ...(nested ? ['function'] : ['name', 'arguments'])].includes(
+            key
+          )
+      )
+    ) {
+      return { action: 'none' };
+    }
+    if ('type' in call && call.type !== 'function') return { action: 'none' };
+    const fn: unknown = nested ? call.function : call;
+    if (
+      !fn ||
+      typeof fn !== 'object' ||
+      Array.isArray(fn) ||
+      !('name' in fn) ||
+      typeof fn.name !== 'string' ||
+      !('arguments' in fn)
+    ) {
+      return { action: 'none' };
+    }
+    if (
+      nested &&
+      Object.keys(fn).some((key) => key !== 'name' && key !== 'arguments')
+    ) {
+      return { action: 'none' };
+    }
+    if (!availableToolNames.includes(fn.name)) return { action: 'none' };
+    const args = fn.arguments;
+    if (
+      typeof args !== 'string' &&
+      (!args || typeof args !== 'object' || Array.isArray(args))
+    )
+      return { action: 'none' };
+    const name = fn.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const explicitCall = new RegExp(
+      `(?:^|[.!?。！？;；\\n])\\s*(?:please\\s+)?(?:call|invoke|execute|run|use)\\s+(?:the\\s+)?(?:tool\\s+)?[\x60"']?${name}(?![\\w:-])|(?:^|[。！？；\\n])\\s*(?:请)?(?:调用|使用|执行)\\s*(?:工具\\s*)?[\x60"']?${name}(?![\\w:-])`,
+      'i'
+    );
+    const forbiddenCall = new RegExp(
+      `(?:do not|don't|never)\\s+(?:call|invoke|execute|run|use)\\s+(?:the\\s+)?(?:tool\\s+)?[\x60"']?${name}(?![\\w:-])|(?:不要|禁止)(?:调用|使用|执行)\\s*(?:工具\\s*)?[\x60"']?${name}(?![\\w:-])`,
+      'i'
+    );
+    if (!explicitCall.test(request) || forbiddenCall.test(request))
+      return { action: 'none' };
+  }
+  return retryCount < MAX_TEXTUAL_TOOL_CALL_RETRIES
+    ? { action: 'retry', prompt: TEXTUAL_TOOL_CALL_RETRY_PROMPT }
+    : { action: 'fail', message: TEXTUAL_TOOL_CALL_FAILURE_MESSAGE };
+}
+
 // ===== Explicit Verification Requirement =====
 
 const EXPLICIT_VERIFICATION_PATTERNS = [

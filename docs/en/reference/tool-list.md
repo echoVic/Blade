@@ -2,6 +2,12 @@
 
 This document lists all built-in tools for Blade Code and their parameter descriptions. Tools are categorized by `ToolKind` (ReadOnly / Write / Execute), which affects permission mode determination.
 
+## Textual Tool-call Correction
+
+Tools execute only through the Provider's native tool-call protocol. If the user explicitly requests a currently available tool but the model returns only a JSON envelope such as `{"tool_calls":[...]}` as ordinary text, the Runtime requests a native invocation or a final answer based on existing results. It never converts text directly into an executable call.
+
+Each loop invocation allows at most two corrections without extending an explicit turn limit. Exhaustion returns `intent_fulfillment_failed` rather than success; this counter is not guaranteed across process recovery. Matching is deliberately limited to bare JSON call envelopes, not mixed prose, fenced code, or unknown formats. Ordinary JSON examples, quoted requests, and structured-output contracts retain their existing behavior. Permissions, skill restrictions, and approval still run through the normal execution pipeline. Internal correction messages are persisted for model continuation but hidden from user-input views.
+
 ## File Operations
 
 ACP text-filesystem ownership follows one capability matrix:

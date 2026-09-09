@@ -3,6 +3,7 @@ import {
   checkDelegationRequirement,
   checkIncompleteIntent,
   checkOutputRecovery,
+  checkTextualToolCall,
   checkVerificationRequired,
   checkWorktreeRequirement,
   DELEGATION_FAILURE_MESSAGE,
@@ -123,6 +124,84 @@ describe('completionPolicy', () => {
         'Here is my plan:\n1. First I will read the file\n2. Then modify it\n3. Finally run tests';
       const result = checkIncompleteIntent(content, 0);
       expect(result.action).toBe('retry');
+    });
+  });
+
+  describe('checkTextualToolCall', () => {
+    const envelope = JSON.stringify({
+      tool_calls: [{ name: 'Read', arguments: { path: 'file.txt' } }],
+    });
+
+    it.each([
+      'Call Read with path file.txt.',
+      'Please use the Read tool.',
+      '请调用 Read 工具读取文件。',
+      '使用工具 Read 读取文件。',
+    ])('corrects a bare envelope for explicit request %s', (request) => {
+      expect(checkTextualToolCall(envelope, request, ['Read'], 0).action).toBe('retry');
+    });
+
+    it.each([
+      'Show an example. Call Read with path file.txt.',
+      'Explain the following JSON. Call Read with path file.txt.',
+      'Return this JSON verbatim. Call Read with path file.txt.',
+      'Do not call Read.',
+      'Call Read, but do not use tools.',
+      'Explain Read without executing anything.',
+      '```text\nCall Read with path file.txt.\n```',
+      '> Call Read with path file.txt.',
+      '"Call Read with path file.txt."',
+      '请展示调用 Read 的 JSON 示例。',
+    ])('does not reinterpret an output-only request %s', (request) => {
+      expect(checkTextualToolCall(envelope, request, ['Read'], 0)).toEqual({
+        action: 'none',
+      });
+    });
+
+    it.each([
+      '{"tool_calls":[]}',
+      '{"tool_calls":[{"name":"Read","arguments":{}}],"description":"sample"}',
+      '{"tool_calls":[{"name":"Read","arguments":null}]}',
+      '{"tool_calls":[{"name":"Unknown","arguments":{}}]}',
+      'Example: ' + envelope,
+      '```json\n' + envelope + '\n```',
+      JSON.stringify({
+        tool_calls: [
+          {
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: {},
+              description: 'data not invocation',
+            },
+          },
+        ],
+      }),
+      JSON.stringify({
+        tool_calls: [{ name: 'Read', arguments: { content: 'x'.repeat(65_536) } }],
+      }),
+    ])('ignores non-candidate JSON %#', (content) => {
+      expect(checkTextualToolCall(content, 'Call Read.', ['Read'], 0)).toEqual({
+        action: 'none',
+      });
+    });
+
+    it('does not suggest unavailable or differently named tools', () => {
+      expect(checkTextualToolCall(envelope, 'Call Read.', [], 0)).toEqual({
+        action: 'none',
+      });
+      expect(checkTextualToolCall(envelope, 'Call ReadFile.', ['Read'], 0)).toEqual({
+        action: 'none',
+      });
+    });
+
+    it('fails after the bounded correction budget without copying arguments into the prompt', () => {
+      expect(checkTextualToolCall(envelope, 'Call Read.', ['Read'], 2).action).toBe(
+        'fail'
+      );
+      const action = checkTextualToolCall(envelope, 'Call Read.', ['Read'], 1);
+      expect(action.action).toBe('retry');
+      expect(JSON.stringify(action)).not.toContain('file.txt');
     });
   });
 

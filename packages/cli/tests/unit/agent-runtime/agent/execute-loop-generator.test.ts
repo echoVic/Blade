@@ -3643,6 +3643,401 @@ describe('executeLoopGenerator', () => {
       ).toContain('CONTEXTUAL_TYPESCRIPT_RULE');
     });
 
+    it('corrects textual tool-call JSON without executing it as a tool', async () => {
+      const { deps, saveMessage, saveToolUse } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      const textCall = JSON.stringify({
+        tool_calls: [{ name: 'Read', arguments: { path: 'package.json' } }],
+      });
+      chat
+        .mockResolvedValueOnce(finalResponse(100, textCall))
+        .mockResolvedValueOnce(toolResponse(120))
+        .mockResolvedValueOnce(finalResponse(140, 'The file was read.'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json, then summarize the result.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'The file was read.',
+        metadata: { toolCallsCount: 1 },
+      });
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+      expect(saveToolUse).toHaveBeenCalledOnce();
+      const correction = saveMessage.mock.calls.find(
+        (call) => call[1] === 'user' && String(call[2]).includes('native tool-call')
+      );
+      expect(correction?.[4]).toMatchObject({ clientVisible: false });
+    });
+
+    it('fails instead of accepting repeated textual tool calls as successful completion', async () => {
+      const { deps, saveToolUse, saveMessage } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat.mockResolvedValue(
+        finalResponse(
+          100,
+          JSON.stringify({
+            tool_calls: [
+              {
+                type: 'function',
+                function: { name: 'Read', arguments: '{"path":"package.json"}' },
+              },
+            ],
+          })
+        )
+      );
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+        metadata: { turnsCount: 3, toolCallsCount: 0 },
+      });
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(saveToolUse).not.toHaveBeenCalled();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(
+        saveMessage.mock.calls.filter(
+          (call) => call[1] === 'user' && String(call[2]).includes('native tool-call')
+        )
+      ).toHaveLength(2);
+    });
+
+    it('does not accept textual tool calls when length recovery is exhausted', async () => {
+      const { deps, saveToolUse } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat.mockResolvedValue({
+        ...finalResponse(
+          100,
+          '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+        ),
+        finishReason: 'length',
+      });
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+        metadata: { outputTruncated: true },
+      });
+      expect(chat).toHaveBeenCalledTimes(4);
+      expect(saveToolUse).not.toHaveBeenCalled();
+    });
+
+    it('keeps the textual-call budget spent after real tools run', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      const textCall = finalResponse(
+        100,
+        '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+      );
+      chat
+        .mockResolvedValueOnce(textCall)
+        .mockResolvedValueOnce(toolResponse(120))
+        .mockResolvedValueOnce(textCall)
+        .mockResolvedValueOnce(textCall);
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+        metadata: { toolCallsCount: 1 },
+      });
+      expect(chat).toHaveBeenCalledTimes(4);
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+    });
+
+    it('allows tool-call JSON requested as example output without executing it', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const content =
+        '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}';
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(finalResponse(100, content));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Show the JSON example for this request: Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({ success: true, finalMessage: content });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('does not exceed an explicit turn limit to correct textual tool calls', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        );
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+        metadata: { turnsCount: 1, toolCallsCount: 0 },
+      });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(
+        saveMessage.mock.calls.filter(
+          (call) => call[1] === 'user' && String(call[2]).includes('native tool-call')
+        )
+      ).toHaveLength(0);
+    });
+
+    it('corrects streamed textual tool calls only through native tool execution', async () => {
+      const { deps, saveToolUse } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const stream = vi.mocked(deps.chatService.streamChat);
+      stream
+        .mockImplementationOnce(async function* () {
+          yield { content: '{"tool_calls":[{"name":"Read",' };
+          yield {
+            content: '"arguments":{"path":"package.json"}}]}',
+            finishReason: 'stop',
+            usage: { promptTokens: 100, completionTokens: 30, totalTokens: 130 },
+          };
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-read-correction',
+                type: 'function',
+                function: { name: 'Read', arguments: '{"path":"package.json"}' },
+              },
+            ],
+            finishReason: 'tool_calls',
+            usage: { promptTokens: 150, completionTokens: 30, totalTokens: 180 },
+          };
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            content: 'Streamed result.',
+            finishReason: 'stop',
+            usage: { promptTokens: 200, completionTokens: 10, totalTokens: 210 },
+          };
+        });
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: true },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Streamed result.',
+        metadata: { toolCallsCount: 1 },
+      });
+      expect(stream).toHaveBeenCalledTimes(3);
+      expect(deps.chatService.chat).not.toHaveBeenCalled();
+      expect(saveToolUse).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+    });
+
+    it('does not promote textual calls for tools excluded by the current policy', async () => {
+      const { deps, saveToolUse } = createTypedPersistenceHarness();
+      const content =
+        '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}';
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      deps.applySkillToolRestrictions = () => [];
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(finalResponse(100, content));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.finalMessage).toBe(content);
+      expect(chat).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(saveToolUse).not.toHaveBeenCalled();
+    });
+
+    it('stops correction when its internal control message cannot be persisted', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      saveMessage.mockImplementation(async (_sessionId, role, content) => {
+        if (
+          role === 'user' &&
+          typeof content === 'string' &&
+          content.includes('native tool-call')
+        )
+          throw new Error('correction write failed');
+        return 'persisted-message';
+      });
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValue(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        );
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'message_persistence_failed' },
+      });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('honors cancellation after a textual tool-call candidate', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const controller = new AbortController();
+      const chat = vi.mocked(deps.chatService.chat).mockImplementationOnce(async () => {
+        controller.abort();
+        return finalResponse(100, '{"tool_calls":[{"name":"Read","arguments":{}}]}');
+      });
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false, signal: controller.signal },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.success).toBe(false);
+      expect(chat).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('preserves a native tool permission denial after correcting JSON prose', async () => {
+      const { deps, saveToolUse } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        )
+        .mockResolvedValueOnce(toolResponse(120))
+        .mockResolvedValueOnce(finalResponse(140, 'The requested read was denied.'));
+      vi.mocked(deps.toolExecutor.execute).mockResolvedValueOnce({
+        success: false,
+        llmContent: 'Permission denied',
+        error: { type: ToolErrorType.PERMISSION_DENIED, message: 'Permission denied' },
+      });
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.finalMessage).toBe('The requested read was denied.');
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(saveToolUse).toHaveBeenCalledOnce();
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+      expect(events.filter((event) => event.kind === 'tool_result')).toEqual([
+        expect.objectContaining({
+          result: expect.objectContaining({
+            success: false,
+            error: expect.objectContaining({ type: ToolErrorType.PERMISSION_DENIED }),
+          }),
+        }),
+      ]);
+    });
+
     it('recovers one empty final after a successful tool call', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;

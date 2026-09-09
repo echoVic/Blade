@@ -97,10 +97,12 @@ import {
   checkIncompleteIntent,
   checkOutputRecovery,
   checkStopHook,
+  checkTextualToolCall,
   checkVerificationRequired,
   checkWorktreeRequirement,
   isDelegationForbidden,
   isExplicitWorktreeRequest,
+  MAX_TEXTUAL_TOOL_CALL_RETRIES,
   recordVerificationEvidence,
   resolveSingleTaskDelegationRequirement,
 } from './completionPolicy.js';
@@ -1178,6 +1180,7 @@ validates the object and may return a bounded corrective error.`;
     let handoffAttemptSpent = false;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
+    let textualToolCallRetryCount = 0;
     let emptyFinalCorrectionSpent = false;
     let recoveredEmptyFinalStateLoaded = false;
     let recoveredSuccessfulToolResult = false;
@@ -2628,6 +2631,39 @@ validates the object and may return a bounded corrective error.`;
           (recoveryAction.action === 'truncated' ||
             recoveryAction.action === 'budget_stop')
         ) {
+          const textualToolAction =
+            !structuredOutputContract && !turnResult.toolCalls?.length
+              ? checkTextualToolCall(
+                  turnResult.content,
+                  activeUserRequest,
+                  turnTools.map((tool) => tool.name),
+                  MAX_TEXTUAL_TOOL_CALL_RETRIES
+                )
+              : { action: 'none' as const };
+          if (textualToolAction.action === 'fail') {
+            lastMessageUuid = await persistTurnContinuation({
+              deps,
+              context,
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+            });
+            return {
+              success: false,
+              error: {
+                type: 'intent_fulfillment_failed',
+                message: textualToolAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                outputTruncated: true,
+              },
+            };
+          }
           if (!turnResult.content?.trim() && !structuredOutput) {
             return {
               success: false,
@@ -2803,6 +2839,48 @@ validates the object and may return a bounded corrective error.`;
               lastMessageUuid
             );
             if (retryUserUuid) lastMessageUuid = retryUserUuid;
+            continue;
+          }
+
+          const textualToolAction = checkTextualToolCall(
+            turnResult.content,
+            activeUserRequest,
+            turnTools.map((tool) => tool.name),
+            turnsCount >= maxTurns
+              ? MAX_TEXTUAL_TOOL_CALL_RETRIES
+              : textualToolCallRetryCount
+          );
+          if (!structuredOutputContract && textualToolAction.action !== 'none') {
+            lastMessageUuid = await persistTurnContinuation({
+              deps,
+              context,
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+              ...(textualToolAction.action === 'retry'
+                ? {
+                    controlPrompt: textualToolAction.prompt,
+                    controlMetadata: INTERNAL_CONTROL_MESSAGE_METADATA,
+                  }
+                : {}),
+            });
+            if (textualToolAction.action === 'fail') {
+              return {
+                success: false,
+                error: {
+                  type: 'intent_fulfillment_failed',
+                  message: textualToolAction.message,
+                },
+                metadata: {
+                  turnsCount,
+                  toolCallsCount: allToolResults.length,
+                  duration: Date.now() - startTime,
+                  tokensUsed: totalTokens,
+                },
+              };
+            }
+            textualToolCallRetryCount++;
             continue;
           }
 

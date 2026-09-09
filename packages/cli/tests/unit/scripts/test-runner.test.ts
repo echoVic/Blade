@@ -231,6 +231,22 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     );
   });
 
+  it('keeps all four textual tool-call recovery surfaces release-blocking', async () => {
+    const file = 'tests/integration/real-api/textual-tool-call-trajectory.test.ts';
+    expect(testTypes.realApiQualification.files).toContain(file);
+    const source = await readFile(
+      path.resolve(import.meta.dirname, '../../..', file),
+      'utf8'
+    );
+    expect(source).toContain(
+      "const surfaces = ['headless', 'acp', 'pty', 'web'] as const"
+    );
+    expect(source).toContain('resolveRequiredDeepSeekQualificationModels()');
+    expect(source).toContain('maxRetries: 0');
+    expect(source).toContain('expect(proxy.injectedRequestNumbers).toEqual([])');
+    expect(source).not.toContain('releaseBlockingSurfaces');
+  });
+
   it('keeps cross-provider fallback in the release-blocking matrix', () => {
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts'
