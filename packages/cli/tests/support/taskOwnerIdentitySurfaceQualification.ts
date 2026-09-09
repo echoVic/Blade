@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, cp, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import {
+  access,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  realpath,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -65,12 +72,16 @@ let liveLease: SessionLease | undefined;
 const result: Record<string, unknown> = { root, workspace };
 const proxySockets = new Set<Socket>();
 let registryConnects = 0;
+const otherProxyRequests: string[] = [];
 const stalledProxy = createServer((socket) => {
   proxySockets.add(socket);
   socket.once('close', () => proxySockets.delete(socket));
   socket.once('data', (data) => {
-    if (data.toString().startsWith('CONNECT registry.npmjs.org:443'))
+    if (data.toString().startsWith('CONNECT registry.npmjs.org:443')) {
       registryConnects++;
+    } else {
+      otherProxyRequests.push(data.toString().split('\r\n')[0] ?? 'unknown');
+    }
   });
 });
 
@@ -135,6 +146,12 @@ function launch(
 }
 
 try {
+  await new Promise<void>((resolve, reject) => {
+    stalledProxy.once('error', reject);
+    stalledProxy.listen(0, '127.0.0.1', resolve);
+  });
+  const proxyAddress = stalledProxy.address();
+  assert(proxyAddress && typeof proxyAddress !== 'string');
   await seed('ui-active-owner', 'OWNER ACTIVE', false);
   liveLease = await SessionLease.acquire('ui-active-owner', workspace);
   await seed('ui-orphan-owner', 'OWNER ORPHAN', true);
@@ -149,7 +166,8 @@ try {
       '--port',
       String(backendPort),
     ],
-    workspace
+    workspace,
+    { ...environment, HTTPS_PROXY: `http://127.0.0.1:${proxyAddress.port}` }
   );
   const vite = launch(
     'bun',
@@ -242,12 +260,6 @@ try {
     if (!exited) terminal.kill('SIGKILL');
     await exit;
   }
-  await new Promise<void>((resolve, reject) => {
-    stalledProxy.once('error', reject);
-    stalledProxy.listen(0, '127.0.0.1', resolve);
-  });
-  const proxyAddress = stalledProxy.address();
-  assert(proxyAddress && typeof proxyAddress !== 'string');
   const startupEvidence = [];
   for (const executable of ['node', 'bun']) {
     const startupHome = path.join(root, `startup-${executable}`);
@@ -256,11 +268,9 @@ try {
       path.join(home, '.blade', 'config.json'),
       path.join(startupHome, '.blade', 'config.json')
     );
-    await cp(
-      path.join(home, '.blade', 'skills'),
-      path.join(startupHome, '.blade', 'skills'),
-      { recursive: true }
-    );
+    await assert.rejects(access(path.join(startupHome, '.blade', 'skills')), {
+      code: 'ENOENT',
+    });
     const previousConnects = registryConnects;
     const startedAt = Date.now();
     const startupTerminal = spawnPty(
@@ -309,8 +319,13 @@ try {
         `${executable} registry connections outlived the deadline`
       );
       assert.equal(startupExited, false);
+      assert.deepEqual(otherProxyRequests, []);
+      await assert.rejects(access(path.join(startupHome, '.blade', 'skills')), {
+        code: 'ENOENT',
+      });
       startupEvidence.push({
         executable,
+        noSkillDownload: true,
         readyWhileRegistryPending: true,
         readyMs,
         registryDeadlineReleased: true,

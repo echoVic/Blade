@@ -12,12 +12,6 @@ vi.mock('../../../src/security/WorkspaceTrustService.js', () => ({
   },
 }));
 
-vi.mock('../../../src/skills/SkillInstaller.js', () => ({
-  getSkillInstaller: () => ({
-    ensureDefaultSkillsInstalled: vi.fn(async () => undefined),
-  }),
-}));
-
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 
 describe('SkillRegistry workspace trust gate', () => {

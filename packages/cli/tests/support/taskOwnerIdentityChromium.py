@@ -113,7 +113,45 @@ with sync_playwright() as p:
             expect(current.get_by_role('button', name='选择「OWNER ACTIVE」')).to_be_visible()
             expect(current.locator('textarea[data-blade-composer]')).to_be_visible()
         observer.screenshot(path=str(pathlib.Path(root) / 'deleted-live-observer.png'), full_page=True)
+        page.locator('[data-settings-trigger]').click()
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills' and response.request.method == 'GET') as skills_response:
+            page.get_by_role('tab', name='技能', exact=True).click()
+        assert skills_response.value.ok, skills_response.value.text()
+        skills = skills_response.value.json()
+        assert {skill['name'] for skill in skills} == {'skill-creator', 'update-config'}, skills
+        assert all(skill['location'] == 'Built-in' and not skill['removable'] for skill in skills), skills
+        panel = page.locator('#settings-panel-skills')
+        panel.get_by_role('button').filter(has_text='skill-creator').click()
+        expect(panel.get_by_text('Built-in', exact=True)).to_be_visible()
+        expect(panel.get_by_role('button', name='受管理', exact=True)).to_be_disabled()
+        assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills').exists()
+        page.screenshot(path=str(pathlib.Path(root) / 'bundled-skills.png'), full_page=True)
+
+        local_skill = pathlib.Path(root) / 'local-source' / 'skill-creator'
+        local_skill.mkdir(parents=True)
+        local_content = '---\nname: skill-creator\ndescription: LOCAL_SKILL_OVERRIDE\nuser-invocable: true\n---\nLocal fixture instructions.\n'
+        (local_skill / 'SKILL.md').write_text(local_content)
+        panel.get_by_role('button', name='安装技能', exact=True).click()
+        install = page.get_by_role('dialog', name='安装技能', exact=True)
+        install.get_by_role('button', name='本地', exact=True).click()
+        install.get_by_role('textbox', name='本地技能路径').fill(str(local_skill))
+        install.get_by_role('button', name='安装', exact=True).click()
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills/install' and response.request.method == 'POST') as installed:
+            page.get_by_role('dialog', name='安装状态', exact=True).get_by_role('button', name='安装', exact=True).click()
+        assert installed.value.ok, installed.value.text()
+        expect(panel.get_by_role('button', name='卸载', exact=True)).to_be_enabled()
+        expect(panel.get_by_text('LOCAL_SKILL_OVERRIDE', exact=True).last).to_be_visible()
+        page.screenshot(path=str(pathlib.Path(root) / 'local-skill-installed.png'), full_page=True)
+        panel.get_by_role('button', name='卸载', exact=True).click()
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills/skill-creator' and response.request.method == 'DELETE') as removed:
+            panel.get_by_role('button', name='卸载技能', exact=True).click()
+        assert removed.value.ok, removed.value.text()
+        expect(panel.get_by_text('Built-in', exact=True)).to_be_visible()
+        expect(panel.get_by_role('button', name='受管理', exact=True)).to_be_disabled()
+        assert (local_skill / 'SKILL.md').read_text() == local_content
+        assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills' / 'skill-creator').exists()
+        page.screenshot(path=str(pathlib.Path(root) / 'bundled-skill-restored.png'), full_page=True)
         assert faults == [], faults
-        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "faults": faults}))
+        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "skills": {"bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True}, "faults": faults}))
     finally:
         browser.close()

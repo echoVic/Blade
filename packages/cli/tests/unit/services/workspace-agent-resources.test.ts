@@ -3,12 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../src/skills/SkillInstaller.js', () => ({
-  getSkillInstaller: () => ({
-    ensureDefaultSkillsInstalled: vi.fn(async () => undefined),
-  }),
-}));
-
 import {
   getWorkspaceAgentResourceCacheStats,
   MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES,

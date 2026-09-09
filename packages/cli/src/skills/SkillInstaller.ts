@@ -1,9 +1,4 @@
-/**
- * SkillInstaller - 内置 Skills 安装器
- *
- * 首次启动时自动下载官方 Skills 到本地目录。
- * 使用 git clone 从 GitHub 下载。
- */
+// Explicit installation of official, repository, or local skills.
 
 import { exec } from 'node:child_process';
 import * as fs from 'node:fs/promises';
@@ -21,8 +16,6 @@ const logger = createLogger(LogCategory.GENERAL);
 const OFFICIAL_SKILLS_REPO = {
   url: 'https://github.com/anthropics/skills.git',
   branch: 'main',
-  // 默认安装的 Skills 列表
-  defaultSkills: ['skill-creator'],
 };
 
 /**
@@ -33,19 +26,6 @@ export class SkillInstaller {
 
   constructor(skillsDir?: string) {
     this.skillsDir = skillsDir || path.join(homedir(), '.blade', 'skills');
-  }
-
-  /**
-   * 检查 Skill 是否已安装
-   */
-  async isInstalled(skillName: string): Promise<boolean> {
-    const skillPath = path.join(this.skillsDir, skillName, 'SKILL.md');
-    try {
-      await fs.access(skillPath);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   /**
@@ -125,22 +105,6 @@ export class SkillInstaller {
         `Failed to install ${skillName}: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
       return false;
-    }
-  }
-
-  /**
-   * 确保默认 Skills 已安装
-   * 在首次启动时调用
-   */
-  async ensureDefaultSkillsInstalled(): Promise<void> {
-    // 确保目录存在
-    await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
-
-    for (const skillName of OFFICIAL_SKILLS_REPO.defaultSkills) {
-      const installed = await this.isInstalled(skillName);
-      if (!installed) {
-        await this.installOfficialSkill(skillName);
-      }
     }
   }
 

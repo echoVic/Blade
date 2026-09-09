@@ -167,7 +167,7 @@ cat ~/.blade/config.json
 
 ### Update to the Latest Version
 
-TUI startup uses valid local version metadata cached within the last hour to decide whether to show an update prompt. Missing or expired metadata refreshes in the background without delaying the interface or interrupting the current session with an update prompt. The result is available on the next launch; run `blade update` to check immediately. The five-second query deadline covers connection and response-body consumption. This does not change default skill installation on the first launch.
+TUI startup uses valid local version metadata cached within the last hour to decide whether to show an update prompt. Missing or expired metadata refreshes in the background without delaying the interface or interrupting the current session with an update prompt. The result is available on the next launch; run `blade update` to check immediately. The five-second query deadline covers connection and response-body consumption. Built-in skills ship with the package, so first launch and workspace initialization no longer download default skills. Install additional skills explicitly through Web settings.
 
 ```bash
 # Check for updates

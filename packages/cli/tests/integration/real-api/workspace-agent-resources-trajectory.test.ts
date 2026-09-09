@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
@@ -18,6 +18,7 @@ import { ConfigManager } from '../../../src/config/ConfigManager.js';
 import { type BladeConfig, PermissionMode } from '../../../src/config/types.js';
 import { resetWorkspaceIdentityCache } from '../../../src/security/WorkspaceIdentity.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { getSkillCreatorContent } from '../../../src/skills/builtin/skill-creator.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { getCwd, runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -26,6 +27,7 @@ import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
   resolveForkQualificationModels,
+  resolveRequiredDeepSeekQualificationModels,
 } from './testConfig.js';
 
 const gpt = isRealApiTestEnabled()
@@ -212,6 +214,129 @@ async function collectTurn(
   );
   return { events, result };
 }
+
+const builtinModels = isRealApiTestEnabled()
+  ? resolveRequiredDeepSeekQualificationModels()
+  : [];
+const describeBuiltin = isRealApiTestEnabled() ? describe.sequential : describe.skip;
+
+describeBuiltin('bundled skill invocation without installation (real API)', () => {
+  for (const model of builtinModels) {
+    it(`${model.model} invokes the bundled skill from an empty skills directory`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-builtin-skill-'));
+      const workspace = path.join(root, 'workspace');
+      const userSkillsDir = path.join(root, 'user-skills');
+      const originalCwd = getCwd();
+      const originalConfig = getState().config.config;
+      const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      let runtime: SessionRuntime | undefined;
+      let agent: Agent | undefined;
+      try {
+        await mkdir(workspace);
+        process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
+        setCwdState(workspace);
+        ConfigManager.resetInstance();
+        WorkspaceTrustService.resetInstance();
+        resetWorkspaceIdentityCache();
+        resetWorkspaceAgentResources();
+        SkillRegistry.resetInstance();
+        SkillRegistry.getInstance({
+          cwd: workspace,
+          userSkillsDir,
+          claudeUserSkillsDir: path.join(root, 'claude-skills'),
+          projectSkillsDir: path.join(workspace, '.blade', 'skills'),
+          claudeProjectSkillsDir: path.join(workspace, '.claude', 'skills'),
+        });
+        const config = buildRealApiRuntimeConfig(model);
+        const configured = config.models[0];
+        if (!configured) throw new Error('Missing real model configuration');
+        config.models = [
+          {
+            ...configured,
+            overrides: { ...configured.overrides, maxRetries: 0 },
+          },
+        ];
+        await writeWorkspaceModelConfig(workspace, config);
+        await WorkspaceTrustService.getInstance().trust(workspace);
+        getState().config.actions.setConfig({
+          ...config,
+          permissionMode: PermissionMode.YOLO,
+          hooks: { enabled: false },
+          disableAllHooks: true,
+          mcpServers: {},
+        });
+        runtime = await SessionRuntime.create({
+          sessionId: `builtin-skill-${Date.now()}`,
+          workspaceRoot: workspace,
+        });
+        agent = await Agent.createWithRuntime(runtime, {
+          sessionId: runtime.sessionId,
+          toolWhitelist: ['Skill'],
+          maxTurns: 3,
+        });
+        const resources = await resolveWorkspaceAgentResources(workspace);
+        expect(resources.skills.get('skill-creator')?.source).toBe('builtin');
+        await expect(access(userSkillsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+        const events: LoopEvent[] = [];
+        const result = await drainLoop(
+          agent.chatStream(
+            'Call Skill exactly once with skill "skill-creator". I want to create a documentation review skill. Do not create or edit files yet. Read the skill instructions, then ask me the first setup question. Do not call any other tool.',
+            {
+              messages: [],
+              userId: 'builtin-skill-qualification',
+              sessionId: runtime.sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.YOLO,
+            },
+            { stream: true }
+          ),
+          async (event) => {
+            events.push(event);
+          }
+        );
+        const toolEvents = events.filter((event) => event.kind === 'tool_result');
+        expect(result.success).toBe(true);
+        expect(result.finalMessage?.trim().length).toBeGreaterThan(0);
+        expect(toolEvents).toHaveLength(1);
+        expect(toolEvents[0]?.result).toMatchObject({
+          success: true,
+          metadata: { skillName: 'skill-creator', basePath: '' },
+          llmContent: expect.stringContaining(getSkillCreatorContent().instructions),
+        });
+        expect(
+          events.flatMap((event) =>
+            event.kind === 'tool_start' && 'function' in event.toolCall
+              ? [event.toolCall.function.name]
+              : []
+          )
+        ).toEqual(['Skill']);
+        await expect(access(userSkillsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+        assertNoSecrets({ result, events }, [model.apiKey]);
+        console.log(
+          `[builtin-skill] ${JSON.stringify({
+            model: model.model,
+            invoked: true,
+            source: 'builtin',
+            noSkillDirectory: true,
+          })}`
+        );
+      } finally {
+        await agent?.destroy();
+        await runtime?.dispose();
+        resetWorkspaceAgentResources();
+        SkillRegistry.resetInstance();
+        WorkspaceTrustService.resetInstance();
+        resetWorkspaceIdentityCache();
+        ConfigManager.resetInstance();
+        setCwdState(originalCwd);
+        if (originalConfig) getState().config.actions.setConfig(originalConfig);
+        if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+        await rm(root, { recursive: true, force: true });
+      }
+    }, 180_000);
+  }
+});
 
 describeReal('workspace agent resources trajectory (real API)', () => {
   const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;

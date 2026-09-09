@@ -119,7 +119,9 @@ User: Use the code-review skill to review src/utils/git.ts
 
 ## Built-in Skills
 
-Blade may include some built-in Skills, which are automatically downloaded to `~/.blade/skills/` on first launch.
+`skill-creator` and `update-config` ship with Blade and work without a download. First launch, workspace initialization, and refresh discover local skills only; they do not automatically clone GitHub repositories or create a default skill directory.
+
+Existing same-name local skills still override bundled versions according to the normal precedence rules, including skills installed as directory links. Use the Web settings Skills panel to explicitly install official, repository, or local skills. Uninstalling a user-level override restores the bundled content; removing a local link leaves its source directory intact.
 
 ## Example Skills
 

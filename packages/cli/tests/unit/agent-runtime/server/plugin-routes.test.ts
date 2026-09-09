@@ -6,12 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 
-vi.mock('../../../../src/skills/SkillInstaller.js', () => ({
-  getSkillInstaller: () => ({
-    ensureDefaultSkillsInstalled: vi.fn(async () => undefined),
-  }),
-}));
-
 import { resetWorkspaceAgentResources } from '../../../../src/agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../../../../src/config/ConfigManager.js';
 import { ConfigService } from '../../../../src/config/ConfigService.js';

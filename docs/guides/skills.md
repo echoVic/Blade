@@ -119,7 +119,9 @@ AI: [识别到 code-review skill，自动调用]
 
 ## 内置 Skills
 
-Blade 可能包含一些内置 Skills，首次启动时会自动下载到 `~/.blade/skills/`。
+`skill-creator` 和 `update-config` 随 Blade 包提供，无需下载即可使用。首次启动、工作区初始化和刷新只发现本地技能，不会自动 clone GitHub 仓库或创建默认技能目录。
+
+已安装的同名本地 Skill 仍按原有优先级覆盖内置版本，目录符号链接也会被发现。可在 Web 设置的「技能」面板显式安装官方、仓库或本地技能；卸载用户级覆盖版本后恢复内置内容。卸载本地链接只移除链接，不删除源目录。
 
 ## 示例 Skills
 
