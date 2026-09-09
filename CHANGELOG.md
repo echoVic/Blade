@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.152] - 2026-09-09
+
+### Fixed
+- Run Skill installation Git commands with argument arrays instead of shell interpolation, and validate explicit or derived skill names before invoking Git or modifying files.
+- Restrict repository sources to HTTPS or SSH without embedded credentials, query parameters, or fragments; reject malformed install requests at the HTTP boundary with a 400 response.
+- Reject overlapping local source and destination directories before replacement, including symlinked parents and case aliases, while preserving normal local links, copies, and reinstall behavior.
+
+### Tests
+- Added failing-first regressions for command and option injection inputs, directory traversal, source preservation, path overlap, name derivation, and HTTP validation.
+- Verified literal shell metacharacters through a real Git clone, and exercised Chromium rejection messages followed by successful local installation and uninstall without changing source files.
+
 ## [0.10.151] - 2026-09-09
 
 ### Fixed
