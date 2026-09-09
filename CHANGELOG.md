@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.150] - 2026-09-09
+
+### Fixed
+- Keep registry access off the TUI startup path: use fresh local version metadata for update prompts and refresh missing or expired metadata in the background for the next launch. Explicit `blade update` checks still wait for the registry.
+- Coalesce startup refreshes, preserve version dismissals saved during a network request, and validate registry version metadata before caching it.
+- Bound version queries through response-body consumption, cancel unread responses, and release proxy resources on success, failure, or cancellation.
+
+### Tests
+- Added failing-first regressions for nonblocking startup, refresh deduplication, cache and dismissal behavior, body deadlines, cancellation, and proxy cleanup, plus real HTTP response-body lifecycle coverage.
+- Verified Node and Bun raw-PTY startup while the registry connection remained stalled, automatic request cleanup, cached update prompts and Skip, alongside the existing Chromium lifecycle checks. Default skills were preinstalled to isolate the version-check path.
+
 ## [0.10.149] - 2026-09-09
 
 ### Fixed
