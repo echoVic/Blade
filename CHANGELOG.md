@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.154] - 2026-09-10
+
+### Fixed
+- Enforce explicit model-round limits before all recovery continuations, including truncated output, incomplete intent, structured output, verification, delegation, empty finals, Stop hooks, and mid-turn input. A valid final response can still finish on the last permitted round.
+- Honor cancellation while awaiting the TUI turn-limit decision without starting compaction. Keep explicit continuation, checkpoint persistence, and round-counter reset behavior intact.
+- Acknowledge consumed input when its turn budget is exhausted so Web reload and process recovery cannot silently replay it or turn a failed task into a completed one; preserve unconsumed follow-up input.
+
+### Tests
+- Added failing-first budget and cancellation regressions, including streaming, pending input, interactive continuation, and terminal input acknowledgement.
+- Verified DeepSeek Flash/Pro across Headless, ACP, raw PTY, and Chromium: exhausted turns make exactly one model request, TUI Stop ends the run, and Web retains failure after reload without replaying the input.
+
 ## [0.10.153] - 2026-09-10
 
 ### Fixed
