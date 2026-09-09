@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.153] - 2026-09-10
+
+### Fixed
+- Correct bare tool-call JSON returned as ordinary text when the user explicitly requested a currently available tool. The Runtime requests a native tool call or a final answer from existing results, with at most two corrections per loop invocation; text is never promoted into executable tool calls.
+- Fail instead of reporting successful completion when the correction or turn budget is exhausted, including output-length exhaustion. Keep ordinary JSON examples, quoted requests, structured-output contracts, unavailable tools, and permission checks on their existing paths.
+
+### Tests
+- Added failing-first coverage for recovery, repeated invalid finals, output and turn limits, streaming, cancellation, persistence failure, permission denial, and ordinary JSON responses.
+- Qualified DeepSeek Flash/Pro across Headless, ACP, raw PTY, and Chromium with real model-produced JSON prose followed by one host correction and one native Read; verified durable records, hidden internal control messages, Web completion state, and reload behavior.
+
 ## [0.10.152] - 2026-09-09
 
 ### Fixed
