@@ -28,6 +28,7 @@ const CACHE_TTL = 1 * 60 * 60 * 1000;
 
 // npm registry URL
 const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
+let startupRefresh: Promise<void> | null = null;
 
 interface VersionCache {
   latestVersion?: string;
@@ -94,19 +95,21 @@ async function writeCache(cache: VersionCache): Promise<void> {
  */
 async function fetchLatestVersion(): Promise<string | null> {
   try {
-    const response = await proxyFetch(NPM_REGISTRY_URL, {
-      timeout: 5000, // 5 秒超时
-      headers: {
-        Accept: 'application/json',
+    return await proxyFetch(
+      NPM_REGISTRY_URL,
+      {
+        timeout: 5000,
+        headers: { Accept: 'application/json' },
       },
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-    return data.version || null;
+      async (response) => {
+        if (!response.ok) return null;
+        const data: unknown = await response.json();
+        if (!data || typeof data !== 'object' || !('version' in data)) return null;
+        return typeof data.version === 'string' && semver.valid(data.version)
+          ? data.version
+          : null;
+      }
+    );
   } catch {
     return null;
   }
@@ -136,7 +139,7 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
 
   // 读取缓存
   const cache = await readCache();
-  const skipUntilVersion = cache?.skipUntilVersion;
+  let skipUntilVersion = cache?.skipUntilVersion;
 
   // 尝试从缓存读取版本
   let latestVersion: string | null = null;
@@ -145,6 +148,7 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
   } else {
     // 从 npm 获取最新版本
     latestVersion = await fetchLatestVersion();
+    skipUntilVersion = (await readCache())?.skipUntilVersion ?? skipUntilVersion;
 
     if (latestVersion) {
       // 更新缓存（保留 skipUntilVersion）
@@ -263,8 +267,41 @@ export async function performUpgrade(): Promise<{ success: boolean; message: str
  */
 export async function checkVersionOnStartup(): Promise<VersionCheckResult | null> {
   try {
-    const result = await checkVersion();
-    return result.shouldPrompt ? result : null;
+    const cache = await readCache();
+    if (
+      !cache?.latestVersion ||
+      !semver.valid(cache.latestVersion) ||
+      !cache.checkedAt
+    ) {
+      if (!startupRefresh) {
+        startupRefresh = checkVersion(true)
+          .then(
+            () => undefined,
+            () => undefined
+          )
+          .finally(() => {
+            startupRefresh = null;
+          });
+      }
+      return null;
+    }
+    const currentVersion = await getCurrentVersion();
+    if (
+      !semver.valid(currentVersion) ||
+      !semver.gt(cache.latestVersion, currentVersion) ||
+      (cache.skipUntilVersion &&
+        semver.valid(cache.skipUntilVersion) &&
+        !semver.gt(cache.latestVersion, cache.skipUntilVersion))
+    ) {
+      return null;
+    }
+    return {
+      currentVersion,
+      latestVersion: cache.latestVersion,
+      hasUpdate: true,
+      shouldPrompt: true,
+      releaseNotesUrl: CHANGELOG_URL,
+    };
   } catch {
     return null;
   }

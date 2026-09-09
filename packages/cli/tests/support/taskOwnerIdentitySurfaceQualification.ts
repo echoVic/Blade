@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { copyFile, cp, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { createServer, type Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -63,6 +63,16 @@ const children: ChildProcess[] = [];
 let serverOutput = '';
 let liveLease: SessionLease | undefined;
 const result: Record<string, unknown> = { root, workspace };
+const proxySockets = new Set<Socket>();
+let registryConnects = 0;
+const stalledProxy = createServer((socket) => {
+  proxySockets.add(socket);
+  socket.once('close', () => proxySockets.delete(socket));
+  socket.once('data', (data) => {
+    if (data.toString().startsWith('CONNECT registry.npmjs.org:443'))
+      registryConnects++;
+  });
+});
 
 async function waitFor(check: () => boolean | Promise<boolean>, label: string) {
   const deadline = Date.now() + 30_000;
@@ -232,6 +242,154 @@ try {
     if (!exited) terminal.kill('SIGKILL');
     await exit;
   }
+  await new Promise<void>((resolve, reject) => {
+    stalledProxy.once('error', reject);
+    stalledProxy.listen(0, '127.0.0.1', resolve);
+  });
+  const proxyAddress = stalledProxy.address();
+  assert(proxyAddress && typeof proxyAddress !== 'string');
+  const startupEvidence = [];
+  for (const executable of ['node', 'bun']) {
+    const startupHome = path.join(root, `startup-${executable}`);
+    await mkdir(path.join(startupHome, '.blade'), { recursive: true });
+    await copyFile(
+      path.join(home, '.blade', 'config.json'),
+      path.join(startupHome, '.blade', 'config.json')
+    );
+    await cp(
+      path.join(home, '.blade', 'skills'),
+      path.join(startupHome, '.blade', 'skills'),
+      { recursive: true }
+    );
+    const previousConnects = registryConnects;
+    const startedAt = Date.now();
+    const startupTerminal = spawnPty(
+      executable,
+      [path.join(repo, 'packages/cli/dist/blade.js'), '--trust-workspace', '--resume'],
+      {
+        cwd: workspace,
+        cols: 140,
+        rows: 45,
+        name: 'xterm-256color',
+        env: createTuiPtyEnvironment({
+          ...environment,
+          HOME: startupHome,
+          HTTPS_PROXY: `http://127.0.0.1:${proxyAddress.port}`,
+        }),
+      }
+    );
+    let startupOutput = '';
+    let startupExited = false;
+    const startupExit = new Promise<void>((resolve) =>
+      startupTerminal.onExit(() => {
+        startupExited = true;
+        resolve();
+      })
+    );
+    startupTerminal.onData((data) => {
+      startupOutput = (startupOutput + stripVTControlCharacters(data)).slice(-48_000);
+    });
+    try {
+      await waitFor(
+        () => /\[INTERRUPTED\] OWNER PTY ORPHAN/.test(startupOutput),
+        `${executable} TUI did not start while registry was stalled`
+      );
+      assert(
+        registryConnects > previousConnects,
+        `${executable} did not attempt a registry connection`
+      );
+      assert(
+        proxySockets.size > 0,
+        `${executable} waited until its registry request ended`
+      );
+      assert.doesNotMatch(startupOutput, /Update available!/);
+      const readyMs = Date.now() - startedAt;
+      await waitFor(
+        () => proxySockets.size === 0,
+        `${executable} registry connections outlived the deadline`
+      );
+      assert.equal(startupExited, false);
+      startupEvidence.push({
+        executable,
+        readyWhileRegistryPending: true,
+        readyMs,
+        registryDeadlineReleased: true,
+      });
+    } finally {
+      await writeFile(path.join(root, `startup-${executable}.txt`), startupOutput);
+      if (!startupExited) startupTerminal.kill('SIGTERM');
+      await Promise.race([
+        startupExit,
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+      if (!startupExited) startupTerminal.kill('SIGKILL');
+      await startupExit;
+      for (const socket of proxySockets) socket.destroy();
+      await waitFor(
+        () => proxySockets.size === 0,
+        'Startup proxy connections did not close'
+      );
+    }
+  }
+  result.startup = startupEvidence;
+  const cachedHome = path.join(root, 'startup-node');
+  await writeFile(
+    path.join(cachedHome, '.blade', 'version-cache.json'),
+    JSON.stringify({ latestVersion: '999.0.1', checkedAt: Date.now() })
+  );
+  const beforeCached = registryConnects;
+  const cachedTerminal = spawnPty(
+    'node',
+    [path.join(repo, 'packages/cli/dist/blade.js'), '--trust-workspace', '--resume'],
+    {
+      cwd: workspace,
+      cols: 140,
+      rows: 45,
+      name: 'xterm-256color',
+      env: createTuiPtyEnvironment({
+        ...environment,
+        HOME: cachedHome,
+        HTTPS_PROXY: `http://127.0.0.1:${proxyAddress.port}`,
+      }),
+    }
+  );
+  let cachedOutput = '';
+  let cachedExited = false;
+  const cachedExit = new Promise<void>((resolve) =>
+    cachedTerminal.onExit(() => {
+      cachedExited = true;
+      resolve();
+    })
+  );
+  cachedTerminal.onData((data) => {
+    cachedOutput = (cachedOutput + stripVTControlCharacters(data)).slice(-48_000);
+  });
+  try {
+    await waitFor(
+      () => cachedOutput.includes('Update available!'),
+      'Fresh cached update did not show its prompt'
+    );
+    assert.equal(registryConnects, beforeCached);
+    cachedTerminal.write('2');
+    await waitFor(
+      () => /\[INTERRUPTED\] OWNER PTY ORPHAN/.test(cachedOutput),
+      'Skip update did not return to the session selector'
+    );
+    result.cachedUpdate = {
+      promptShown: true,
+      skipContinued: true,
+      noRegistryRequest: registryConnects === beforeCached,
+    };
+  } finally {
+    await writeFile(path.join(root, 'cached-update.txt'), cachedOutput);
+    if (!cachedExited) cachedTerminal.kill('SIGTERM');
+    await Promise.race([
+      cachedExit,
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
+    if (!cachedExited) cachedTerminal.kill('SIGKILL');
+    await cachedExit;
+  }
   await writeFile(path.join(root, 'result.json'), JSON.stringify(result, null, 2));
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } catch (error) {
@@ -251,6 +409,12 @@ try {
       else child.kill('SIGKILL');
     }
     await exited;
+  }
+  for (const socket of proxySockets) socket.destroy();
+  if (stalledProxy.listening) {
+    await new Promise<void>((resolve, reject) =>
+      stalledProxy.close((error) => (error ? reject(error) : resolve()))
+    );
   }
   await liveLease?.release();
 }

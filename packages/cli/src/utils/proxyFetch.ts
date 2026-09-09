@@ -41,32 +41,12 @@ export interface ProxyFetchOptions extends RequestInit {
   timeout?: number;
 }
 
-/**
- * 支持代理的 fetch 函数
- *
- * 自动检测并使用 https_proxy/http_proxy 环境变量配置的代理。
- * 如果没有配置代理，则直接使用原生 fetch。
- *
- * @example
- * ```ts
- * import { proxyFetch } from '../utils/proxyFetch.js';
- *
- * // 基本用法（自动使用代理）
- * const response = await proxyFetch('https://api.example.com/data');
- *
- * // 带选项
- * const response = await proxyFetch('https://api.example.com/data', {
- *   method: 'POST',
- *   headers: { 'Content-Type': 'application/json' },
- *   body: JSON.stringify({ key: 'value' }),
- *   timeout: 10000, // 10 秒超时
- * });
- * ```
- */
-export async function proxyFetch(
+// Keep response consumption inside the request's deadline and resource scope.
+export async function proxyFetch<T>(
   url: string | URL,
-  options: ProxyFetchOptions = {}
-): Promise<Response> {
+  options: ProxyFetchOptions,
+  consume: (response: Response) => Promise<T>
+): Promise<T> {
   const { timeout = 30000, signal: externalSignal, ...fetchOptions } = options;
 
   // 如果外部信号已取消，立即抛出 AbortError（与原生 fetch 行为一致）
@@ -89,6 +69,7 @@ export async function proxyFetch(
   // 监听外部信号
   const abortListener = () => controller.abort();
   externalSignal?.addEventListener('abort', abortListener);
+  let response: Awaited<ReturnType<typeof undiciFetch>> | undefined;
 
   try {
     // 构建 undici 请求选项
@@ -100,10 +81,8 @@ export async function proxyFetch(
       dispatcher: dispatcher as Dispatcher | undefined,
     };
 
-    const response = await undiciFetch(url.toString(), undiciFetchOptions);
-
-    // undici 的 Response 类型与标准 Response 兼容
-    return response as unknown as Response;
+    response = await undiciFetch(url.toString(), undiciFetchOptions);
+    return await consume(response as unknown as Response);
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
       // 区分超时 vs 用户取消
@@ -118,5 +97,11 @@ export async function proxyFetch(
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener('abort', abortListener);
+    controller.abort();
+    if (response?.body && !response.body.locked) {
+      await response.body.cancel().catch(() => undefined);
+    }
+    // Bun's built-in undici shim has no dispatcher lifecycle methods.
+    await dispatcher?.destroy?.().catch(() => undefined);
   }
 }
