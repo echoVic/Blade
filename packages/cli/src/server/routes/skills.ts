@@ -11,7 +11,13 @@ import {
   clearAllPluginResources,
   integrateAllPlugins,
 } from '../../plugins/PluginIntegrator.js';
-import { getSkillInstaller } from '../../skills/SkillInstaller.js';
+import { safeParseSchema, Type } from '../../schema/index.js';
+import {
+  getSkillInstaller,
+  isSafeSkillRepositoryUrl,
+  isValidSkillInstallName,
+  skillNameFromRepositoryUrl,
+} from '../../skills/SkillInstaller.js';
 import { getCwd } from '../../utils/cwd.js';
 import { BadRequestError } from '../error.js';
 import { normalizeLocalWorkspacePath } from '../sessionRef.js';
@@ -20,6 +26,23 @@ const logger = createLogger(LogCategory.SERVICE);
 
 const USER_SKILLS_ROOT = path.join(homedir(), '.blade', 'skills');
 const SKILLS_CONFIG_PATH = path.join(homedir(), '.blade', 'skills-config.json');
+
+const SkillInstallRequestSchema = Type.Union([
+  Type.Object({
+    source: Type.Literal('catalog'),
+    name: Type.String({ minLength: 1, maxLength: 64 }),
+  }),
+  Type.Object({
+    source: Type.Literal('repo'),
+    url: Type.String({ minLength: 1, maxLength: 4096 }),
+    name: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  }),
+  Type.Object({
+    source: Type.Literal('local'),
+    path: Type.String({ minLength: 1, maxLength: 4096 }),
+    name: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  }),
+]);
 
 interface SkillsConfig {
   disabled: string[];
@@ -238,12 +261,32 @@ export const SkillsRoutes = () => {
 
   app.post('/install', async (c) => {
     try {
-      const body = (await c.req.json()) as {
-        source: 'catalog' | 'repo' | 'local';
-        url?: string;
-        path?: string;
-        name?: string;
-      };
+      const parsed = safeParseSchema(
+        SkillInstallRequestSchema,
+        await c.req.json().catch(() => null)
+      );
+      if (!parsed.success) throw new BadRequestError('Invalid skill install request');
+      const body = parsed.data;
+      if (body.name !== undefined && !isValidSkillInstallName(body.name)) {
+        throw new BadRequestError('Invalid skill name');
+      }
+      if (body.source === 'repo' && !isSafeSkillRepositoryUrl(body.url)) {
+        throw new BadRequestError(
+          'Skill repositories must use HTTPS or SSH without embedded credentials'
+        );
+      }
+      if (body.source === 'local' && (!body.path.trim() || body.path.includes('\0'))) {
+        throw new BadRequestError('Invalid local skill path');
+      }
+      const installName =
+        body.name ??
+        (body.source === 'repo'
+          ? skillNameFromRepositoryUrl(body.url)
+          : body.source === 'local'
+            ? path.basename(body.path)
+            : undefined);
+      if (!isValidSkillInstallName(installName))
+        throw new BadRequestError('Invalid skill name');
 
       const installer = getSkillInstaller();
       const directory = requireLocalDirectory(c.get('directory') || getCwd());

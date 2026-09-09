@@ -10,8 +10,17 @@ with sync_playwright() as p:
     try:
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         faults = []
+        expected_install_errors = []
+        def collect_console(message):
+            if message.type != 'error':
+                return
+            location = message.location
+            if urlparse(location.get('url', '')).path == '/skills/install' and '400 (Bad Request)' in message.text:
+                expected_install_errors.append(message.text)
+            else:
+                faults.append(message.text)
         page.on('pageerror', lambda error: faults.append(str(error)))
-        page.on('console', lambda message: faults.append(message.text) if message.type == 'error' else None)
+        page.on('console', collect_console)
         foreground_response = page.request.post(f'{origin}/sessions', data={
             'projectPath': str(pathlib.Path(root) / 'team-project_with_underscore'),
             'title': 'SURFACE FOREGROUND',
@@ -127,10 +136,33 @@ with sync_playwright() as p:
         assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills').exists()
         page.screenshot(path=str(pathlib.Path(root) / 'bundled-skills.png'), full_page=True)
 
+        marker = pathlib.Path(root) / 'unexpected-command'
+        panel.get_by_role('button', name='安装技能', exact=True).click()
+        rejected_install = page.get_by_role('dialog', name='安装技能', exact=True)
+        rejected_install.get_by_role('button', name='仓库', exact=True).click()
+        rejected_install.get_by_role('textbox', name='技能仓库地址').fill(f'ext::touch {marker}')
+        rejected_install.get_by_role('button', name='安装', exact=True).click()
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills/install' and response.request.method == 'POST') as rejected:
+            page.get_by_role('dialog', name='安装状态', exact=True).get_by_role('button', name='安装', exact=True).click()
+        assert rejected.value.status == 400, rejected.value.text()
+        status = page.get_by_role('dialog', name='安装状态', exact=True)
+        expect(status.get_by_text('Skill repositories must use HTTPS or SSH without embedded credentials', exact=True)).to_be_visible()
+        assert not marker.exists()
+        assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills').exists()
+        page.screenshot(path=str(pathlib.Path(root) / 'unsafe-skill-rejected.png'), full_page=True)
+        status.get_by_role('button', name='关闭', exact=True).click()
+        rejected_install.get_by_role('button', name='关闭技能安装', exact=True).click()
+
         local_skill = pathlib.Path(root) / 'local-source' / 'skill-creator'
         local_skill.mkdir(parents=True)
         local_content = '---\nname: skill-creator\ndescription: LOCAL_SKILL_OVERRIDE\nuser-invocable: true\n---\nLocal fixture instructions.\n'
         (local_skill / 'SKILL.md').write_text(local_content)
+        outside = pathlib.Path(root) / 'home' / '.blade' / 'outside'
+        outside.mkdir()
+        (outside / 'keep.txt').write_text('KEEP')
+        invalid_name = page.request.post(f'{origin}/skills/install', data={'source': 'local', 'path': str(local_skill), 'name': '../outside'})
+        assert invalid_name.status == 400, invalid_name.text()
+        assert (outside / 'keep.txt').read_text() == 'KEEP'
         panel.get_by_role('button', name='安装技能', exact=True).click()
         install = page.get_by_role('dialog', name='安装技能', exact=True)
         install.get_by_role('button', name='本地', exact=True).click()
@@ -152,6 +184,6 @@ with sync_playwright() as p:
         assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills' / 'skill-creator').exists()
         page.screenshot(path=str(pathlib.Path(root) / 'bundled-skill-restored.png'), full_page=True)
         assert faults == [], faults
-        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "skills": {"bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True}, "faults": faults}))
+        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "skills": {"unsafeInstallRejected": True, "traversalRejected": True, "bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True}, "faults": faults}))
     finally:
         browser.close()

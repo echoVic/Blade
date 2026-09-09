@@ -1,14 +1,61 @@
 // Explicit installation of official, repository, or local skills.
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const logger = createLogger(LogCategory.GENERAL);
+
+export function isValidSkillInstallName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value === value.trim() &&
+    /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(value)
+  );
+}
+
+export function isSafeSkillRepositoryUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || /\s/.test(value)) return false;
+  if (
+    [...value].some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+    )
+  )
+    return false;
+  if (value.startsWith('git@')) {
+    return /^git@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/.test(
+      value
+    );
+  }
+  if (!/^(https|ssh):\/\//.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'https:' || url.protocol === 'ssh:') &&
+      Boolean(url.hostname) &&
+      !url.hostname.startsWith('-') &&
+      !url.password &&
+      !(url.protocol === 'https:' && url.username) &&
+      !(url.username && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(url.username)) &&
+      !url.search &&
+      !url.hash &&
+      url.pathname !== '/'
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function skillNameFromRepositoryUrl(url: string): string {
+  const pathname = url.startsWith('git@')
+    ? url.slice(url.indexOf(':') + 1)
+    : new URL(url).pathname;
+  return path.posix.basename(pathname.replace(/\/+$/, '')).replace(/\.git$/, '');
+}
 
 /**
  * 官方 Skills 仓库信息
@@ -33,17 +80,24 @@ export class SkillInstaller {
    */
   private async isGitAvailable(): Promise<boolean> {
     try {
-      await execAsync('git --version');
+      await this.runGit(['--version'], 5000);
       return true;
     } catch {
       return false;
     }
   }
 
-  /**
-   * 安装官方 Skill（使用 git sparse-checkout）
-   */
+  private async runGit(args: string[], timeout: number): Promise<void> {
+    await execFileAsync('git', args, {
+      shell: false,
+      timeout,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+  }
+
   async installOfficialSkill(skillName: string): Promise<boolean> {
+    if (!isValidSkillInstallName(skillName)) return false;
     const { url, branch } = OFFICIAL_SKILLS_REPO;
     const localPath = path.join(this.skillsDir, skillName);
     const tempDir = path.join(this.skillsDir, `.tmp-${skillName}-${Date.now()}`);
@@ -62,9 +116,19 @@ export class SkillInstaller {
 
       // 使用 git clone --depth 1 --filter 克隆指定目录
       // 方法：克隆整个仓库（浅克隆），然后只复制需要的目录
-      await execAsync(
-        `git clone --depth 1 --branch ${branch} --single-branch ${url} "${tempDir}"`,
-        { timeout: 30000 }
+      await this.runGit(
+        [
+          'clone',
+          '--depth',
+          '1',
+          '--branch',
+          branch,
+          '--single-branch',
+          '--',
+          url,
+          tempDir,
+        ],
+        30000
       );
 
       // 复制指定的 skill 目录
@@ -114,7 +178,9 @@ export class SkillInstaller {
    * @param skillName 可选的 skill 名称，默认从 URL 提取
    */
   async installFromRepo(repoUrl: string, skillName?: string): Promise<boolean> {
-    const name = skillName || this.extractRepoName(repoUrl);
+    if (!isSafeSkillRepositoryUrl(repoUrl)) return false;
+    const name = skillName ?? skillNameFromRepositoryUrl(repoUrl);
+    if (!isValidSkillInstallName(name)) return false;
     const localPath = path.join(this.skillsDir, name);
     const tempDir = path.join(this.skillsDir, `.tmp-repo-${name}-${Date.now()}`);
 
@@ -128,9 +194,7 @@ export class SkillInstaller {
 
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
-      await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`, {
-        timeout: 60000,
-      });
+      await this.runGit(['clone', '--depth', '1', '--', repoUrl, tempDir], 60000);
 
       const skillMdPath = path.join(tempDir, 'SKILL.md');
       try {
@@ -176,18 +240,51 @@ export class SkillInstaller {
     skillName?: string,
     symlink = true
   ): Promise<boolean> {
-    const name = skillName || path.basename(localSourcePath);
-    const targetPath = path.join(this.skillsDir, name);
+    if (
+      typeof localSourcePath !== 'string' ||
+      !localSourcePath.trim() ||
+      localSourcePath.includes('\0')
+    )
+      return false;
+    const name = skillName ?? path.basename(localSourcePath);
+    if (!isValidSkillInstallName(name)) return false;
+    const targetPath = path.resolve(this.skillsDir, name);
 
     try {
-      const sourcePath = path.resolve(localSourcePath);
-
-      try {
-        await fs.access(sourcePath);
-      } catch {
-        logger.warn(`Local path does not exist: ${sourcePath}`);
-        return false;
+      const sourcePath = await fs.realpath(path.resolve(localSourcePath));
+      let targetParent = path.dirname(targetPath);
+      const missingParts: string[] = [];
+      while (true) {
+        try {
+          targetParent = path.join(await fs.realpath(targetParent), ...missingParts);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          missingParts.unshift(path.basename(targetParent));
+          targetParent = path.dirname(targetParent);
+        }
       }
+      let resolvedTarget = path.join(targetParent, name);
+      try {
+        if (!(await fs.lstat(resolvedTarget)).isSymbolicLink()) {
+          resolvedTarget = await fs.realpath(resolvedTarget);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (
+        [
+          path.relative(resolvedTarget, sourcePath),
+          path.relative(sourcePath, resolvedTarget),
+        ].some(
+          (relative) =>
+            relative === '' ||
+            (!relative.startsWith(`..${path.sep}`) &&
+              relative !== '..' &&
+              !path.isAbsolute(relative))
+        )
+      )
+        return false;
 
       const skillMdPath = path.join(sourcePath, 'SKILL.md');
       try {
@@ -221,14 +318,6 @@ export class SkillInstaller {
   }
 
   /**
-   * 从 URL 提取仓库名称
-   */
-  private extractRepoName(url: string): string {
-    const match = url.match(/\/([^/]+?)(\.git)?$/);
-    return match?.[1] || 'unknown-skill';
-  }
-
-  /**
    * 安装所有官方 Skills
    */
   async installAllOfficialSkills(): Promise<{ installed: string[]; failed: string[] }> {
@@ -249,9 +338,19 @@ export class SkillInstaller {
 
       // 克隆整个仓库
       logger.info('Cloning official skills repository...');
-      await execAsync(
-        `git clone --depth 1 --branch ${branch} --single-branch ${url} "${tempDir}"`,
-        { timeout: 60000 }
+      await this.runGit(
+        [
+          'clone',
+          '--depth',
+          '1',
+          '--branch',
+          branch,
+          '--single-branch',
+          '--',
+          url,
+          tempDir,
+        ],
+        60000
       );
 
       // 获取所有 skills
@@ -262,6 +361,10 @@ export class SkillInstaller {
         if (!entry.isDirectory()) continue;
 
         const skillName = entry.name;
+        if (!isValidSkillInstallName(skillName)) {
+          failed.push(skillName);
+          continue;
+        }
         const sourceDir = path.join(skillsSourceDir, skillName);
         const localPath = path.join(this.skillsDir, skillName);
 

@@ -123,6 +123,13 @@ User: Use the code-review skill to review src/utils/git.ts
 
 Existing same-name local skills still override bundled versions according to the normal precedence rules, including skills installed as directory links. Use the Web settings Skills panel to explicitly install official, repository, or local skills. Uninstalling a user-level override restores the bundled content; removing a local link leaves its source directory intact.
 
+## Installation Inputs
+
+- Installation names contain 1–64 lowercase letters, digits, or hyphens and must start and end with a letter or digit. Names inferred from a repository or local directory are validated too.
+- Repository sources support `https://`, `ssh://`, and `git@host:owner/repo.git`. Embedded credentials, query parameters, fragments, local `file://` sources, and Git external protocols are rejected. Private repositories use existing Git credential helpers or SSH configuration.
+- Local paths may contain spaces. The source and installation target must not be the same directory or contain one another; rejection leaves source content intact. Ordinary symlink installs and reinstalls remain supported.
+- Invalid requests return HTTP 400. Network errors or missing `SKILL.md` files still produce a non-success installation response.
+
 ## Example Skills
 
 ### Base64 Encode/Decode

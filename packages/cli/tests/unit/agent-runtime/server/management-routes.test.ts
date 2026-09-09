@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   getCurrentModel: vi.fn(),
   resolveModelConfig: vi.fn(),
   installFromLocal: vi.fn(),
+  installOfficialSkill: vi.fn(),
+  installFromRepo: vi.fn(),
 }));
 
 vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
@@ -86,13 +88,18 @@ vi.mock('../../../../src/services/pi/PiModelCatalog.js', () => ({
   }),
 }));
 
-vi.mock('../../../../src/skills/SkillInstaller.js', () => ({
-  getSkillInstaller: () => ({
-    installOfficialSkill: vi.fn(),
-    installFromRepo: vi.fn(),
-    installFromLocal: mocks.installFromLocal,
-  }),
-}));
+vi.mock('../../../../src/skills/SkillInstaller.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../../src/skills/SkillInstaller.js')>();
+  return {
+    ...actual,
+    getSkillInstaller: () => ({
+      installOfficialSkill: mocks.installOfficialSkill,
+      installFromRepo: mocks.installFromRepo,
+      installFromLocal: mocks.installFromLocal,
+    }),
+  };
+});
 
 describe('management routes', () => {
   beforeEach(() => {
@@ -115,6 +122,8 @@ describe('management routes', () => {
     mocks.getCurrentModel.mockReset();
     mocks.resolveModelConfig.mockReset();
     mocks.installFromLocal.mockReset();
+    mocks.installOfficialSkill.mockReset();
+    mocks.installFromRepo.mockReset();
     mocks.getAllServers.mockReturnValue(new Map());
     mocks.getServerStatus.mockReturnValue(null);
     mocks.registerServer.mockResolvedValue(undefined);
@@ -476,6 +485,46 @@ describe('management routes', () => {
     expect(response.status).toBe(400);
     expect(mocks.installFromLocal).not.toHaveBeenCalled();
   });
+
+  it.each([
+    null,
+    [],
+    { source: 'catalog', name: '../outside' },
+    { source: 'catalog', name: 'safe\n' },
+    { source: 'local', path: '/tmp/source', name: '..' },
+    { source: 'local', path: 42 },
+    { source: 'local', path: '/tmp/invalid name' },
+    { source: 'repo', url: 'https://example.test/invalid_name.git' },
+    { source: 'repo', url: 'https:example.test/safe-skill.git' },
+    { source: 'repo', url: ['https://example.test/skill.git'] },
+    { source: 'repo', url: 'ext::marker', name: 'safe-skill' },
+    { source: 'repo', url: 'https://user:secret@example.test/skill.git' },
+    { source: 'repo', url: '--upload-pack=marker', name: 'safe-skill' },
+    { source: 'local', path: '   ' },
+    { source: 'local', path: '/tmp/skill\0name' },
+    { source: 'local', path: '/tmp/source', name: '' },
+  ])(
+    'rejects malformed or unsafe install request %j before resolving resources',
+    async (body) => {
+      const app = new Hono();
+      app.onError((error, context) =>
+        error instanceof BladeServerError
+          ? context.json(error.toObject(), 400)
+          : context.json({ error: String(error) }, 500)
+      );
+      app.route('/skills', SkillsRoutes());
+      const response = await app.request('/skills/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+      expect(mocks.resolveResources).not.toHaveBeenCalled();
+      expect(mocks.installFromLocal).not.toHaveBeenCalled();
+      expect(mocks.installOfficialSkill).not.toHaveBeenCalled();
+      expect(mocks.installFromRepo).not.toHaveBeenCalled();
+    }
+  );
 
   it('returns a gateway error when the remote catalog is unavailable', async () => {
     vi.stubGlobal(
