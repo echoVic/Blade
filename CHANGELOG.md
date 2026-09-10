@@ -1,6 +1,14 @@
 # Changelog
 
+## [0.10.157] - 2026-09-10
+
+### Fixed
+- Correct formatting in the committed Web timeline files so the release passes the format gate. v0.10.156 was tagged but not published because that gate failed; its tag is unchanged.
+- Publish the on-demand skills catalog behavior and timeline display improvements described below, without including concurrent uncommitted chat-selection work.
+
 ## [0.10.156] - 2026-09-10
+
+This tag was not published to npm; v0.10.157 contains these changes.
 
 ### Fixed
 - Load the remote skills catalog only while the installation dialog is open on its Catalog tab. Viewing, refreshing, enabling, or uninstalling installed skills no longer prefetches GitHub data.
