@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.158] - 2026-09-11
+
+### Fixed
+- Avoid intermittent ACP workspace-reference rejection when Bun on macOS resolves an atomically published file to its same-directory hardlink name. Accept the alias only after rechecking device, inode, owner, and private permissions against the original file identity.
+- Keep directory path validation strict and reject cross-directory aliases, different inodes, symlinks, and file replacement. Remote history-only access does not gain execution authority.
+
+### Tests
+- Add seven deterministic hardlink regressions covering publication, persisted reads, and invalid aliases; verify the repair under the concurrent test suite.
+- Verify DeepSeek Flash/Pro ACP-backed history in Chromium and through real Ink input, plus separate Node/Bun raw-PTY startup and lifecycle checks. Account for terminal line wrapping while retaining an exact assertion on the remote workspace path.
+
 ## [0.10.157] - 2026-09-10
 
 ### Fixed
