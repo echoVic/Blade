@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.159] - 2026-09-11
+
+### Fixed
+- Preserve the Web task switcher's highlighted workspace and session identity when background tasks, approval requests, or status changes reorder live results. Enter no longer opens the task that moved into the old list position.
+- Select the first remaining result when the highlighted task disappears, reset selection on search, mode changes, or reopening, and keep Enter inert for empty results.
+
+### Tests
+- Add failing-first component regressions for cross-project identities, live reordering, completion, and removal, with search, empty-result, wraparound, and reopen controls.
+- Verify the old behavior fails in production Chromium, then qualify the fix with real DeepSeek Flash/Pro background tasks and existing raw-PTY task-attention trajectories. Exercise live insertion, cross-page archive, and exact keyboard selection in the development GUI.
+
 ## [0.10.158] - 2026-09-11
 
 ### Fixed
