@@ -123,6 +123,8 @@ User: Use the code-review skill to review src/utils/git.ts
 
 Existing same-name local skills still override bundled versions according to the normal precedence rules, including skills installed as directory links. Use the Web settings Skills panel to explicitly install official, repository, or local skills. Uninstalling a user-level override restores the bundled content; removing a local link leaves its source directory intact.
 
+The Web Installed list, refresh, enable/disable, and uninstall actions use local skills without prefetching the remote catalog. The official catalog loads only while the Install Skill dialog is open on its Catalog tab. Catalog failures stay visible with a retry action and do not block repository or local-path installation. Closing the dialog or staying on Repo or Local does not start another catalog request.
+
 ## Installation Inputs
 
 - Installation names contain 1–64 lowercase letters, digits, or hyphens and must start and end with a letter or digit. Names inferred from a repository or local directory are validated too.

@@ -4,6 +4,7 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from '../../../src/components/settings/SettingsModal';
+import { SkillsPanel } from '../../../src/components/skills/SkillsModal';
 import { setLocale } from '../../../src/i18n';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useConfigStore } from '../../../src/store/ConfigStore';
@@ -191,6 +192,133 @@ describe('SettingsModal', () => {
     expect(document.body.textContent).toContain('Scheduled Tasks');
     expect(document.body.textContent).toContain('No schedules yet');
     expect(loadSchedules).toHaveBeenCalledOnce();
+  });
+
+  it('keeps installed skill management independent of the remote catalog', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json([]));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => root.render(<SkillsPanel active />));
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(['/skills']);
+    const refresh = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Refresh skills"]'
+    );
+    if (!refresh) throw new Error('Missing installed skill refresh');
+    await act(async () => refresh.click());
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/skills',
+      '/skills',
+    ]);
+    await act(async () => root.render(<SkillsPanel active={false} />));
+    await act(async () => root.render(<SkillsPanel active />));
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url) === '/skills/catalog')
+    ).toBe(false);
+  });
+
+  it('loads the catalog only while the installation catalog is visible', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json([]));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => root.render(<SkillsPanel active />));
+    const clickButton = async (text: string) => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button')
+      ).find((candidate) => candidate.textContent?.trim() === text);
+      if (!button) throw new Error(`Missing button ${text}`);
+      await act(async () => button.click());
+    };
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(0);
+    await clickButton('Install skill');
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(1);
+    await clickButton('Local');
+    const close = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Close skill installation"]'
+    );
+    if (!close) throw new Error('Missing install close');
+    await act(async () => close.click());
+    await clickButton('Install skill');
+    expect(document.querySelector('[aria-label="Local skill path"]')).not.toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(1);
+    await clickButton('Catalog');
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(2);
+  });
+
+  it('keeps catalog failure retryable without blocking local skill installation', async () => {
+    let catalogFails = true;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      if (String(input) === '/skills/catalog' && catalogFails) {
+        return Response.json(
+          { error: 'GitHub skills catalog returned 403' },
+          { status: 502 }
+        );
+      }
+      if (String(input) === '/skills/install') return Response.json({ success: true });
+      return Response.json([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => root.render(<SkillsPanel active />));
+    const clickButton = async (text: string, parent: ParentNode = document) => {
+      const button = Array.from(
+        parent.querySelectorAll<HTMLButtonElement>('button')
+      ).find((candidate) => candidate.textContent?.trim() === text);
+      if (!button) throw new Error(`Missing button ${text}`);
+      await act(async () => button.click());
+    };
+    await clickButton('Install skill');
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'GitHub skills catalog returned 403'
+    );
+    await clickButton('Retry');
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(2);
+    await clickButton('Local');
+    const input = document.querySelector<HTMLInputElement>(
+      '[aria-label="Local skill path"]'
+    );
+    if (!input) throw new Error('Missing local skill input');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        input,
+        '/tmp/local-skill'
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const installDialog = document.querySelector('[role="dialog"]');
+    if (!installDialog) throw new Error('Missing install dialog');
+    await clickButton('Install', installDialog);
+    const statusDialog = Array.from(document.querySelectorAll('[role="dialog"]')).find(
+      (dialog) => dialog.textContent?.includes('Install Status')
+    );
+    if (!statusDialog) throw new Error('Missing install confirmation');
+    await clickButton('Install', statusDialog);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/skills/install',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source: 'local', path: '/tmp/local-skill' }),
+      })
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === '/skills/catalog')
+    ).toHaveLength(2);
+    catalogFails = false;
+    await clickButton('Install skill');
+    await clickButton('Catalog');
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(document.body.textContent).toContain('No skills found');
   });
 
   it('closes with Escape and restores focus to the opening trigger', async () => {

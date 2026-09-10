@@ -11,12 +11,20 @@ with sync_playwright() as p:
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         faults = []
         expected_install_errors = []
+        catalog_requests = []
+        catalog_console_errors = []
+        catalog_failures = []
+        page.on('request', lambda request: catalog_requests.append(request.url) if urlparse(request.url).path == '/skills/catalog' else None)
         def collect_console(message):
             if message.type != 'error':
                 return
             location = message.location
             if urlparse(location.get('url', '')).path == '/skills/install' and '400 (Bad Request)' in message.text:
                 expected_install_errors.append(message.text)
+            elif urlparse(location.get('url', '')).path == '/skills/catalog' and '502 (Bad Gateway)' in message.text:
+                catalog_console_errors.append(message.text)
+            elif message.text.startswith('HttpResponseError: GitHub skills catalog returned '):
+                catalog_console_errors.append(message.text)
             else:
                 faults.append(message.text)
         page.on('pageerror', lambda error: faults.append(str(error)))
@@ -135,10 +143,38 @@ with sync_playwright() as p:
         expect(panel.get_by_role('button', name='受管理', exact=True)).to_be_disabled()
         assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills').exists()
         page.screenshot(path=str(pathlib.Path(root) / 'bundled-skills.png'), full_page=True)
+        assert catalog_requests == [], catalog_requests
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills' and response.request.method == 'GET') as refreshed_skills:
+            panel.get_by_role('button', name='刷新技能', exact=True).click()
+        assert refreshed_skills.value.ok
+        assert catalog_requests == [], catalog_requests
 
         marker = pathlib.Path(root) / 'unexpected-command'
-        panel.get_by_role('button', name='安装技能', exact=True).click()
+        with page.expect_response(lambda response: urlparse(response.url).path == '/skills/catalog') as catalog_response:
+            panel.get_by_role('button', name='安装技能', exact=True).click()
         rejected_install = page.get_by_role('dialog', name='安装技能', exact=True)
+        response = catalog_response.value
+        if not response.ok:
+            assert response.status == 502, response.text()
+            error = response.json()['error']
+            expect(rejected_install.get_by_role('alert')).to_contain_text(error)
+            expect(rejected_install.get_by_role('button', name='安装', exact=True)).to_be_disabled()
+            catalog_failures.append(error)
+            with page.expect_response(lambda response: urlparse(response.url).path == '/skills/catalog') as retried_catalog:
+                rejected_install.get_by_role('button', name='重试', exact=True).click()
+            retry = retried_catalog.value
+            if not retry.ok:
+                assert retry.status == 502, retry.text()
+                error = retry.json()['error']
+                expect(rejected_install.get_by_role('alert')).to_contain_text(error)
+                catalog_failures.append(error)
+            else:
+                expect(rejected_install.get_by_role('alert')).to_have_count(0)
+        else:
+            assert isinstance(response.json(), list)
+            expect(rejected_install.get_by_role('alert')).to_have_count(0)
+        request_count = len(catalog_requests)
+        assert request_count == 1 + (1 if catalog_failures else 0), catalog_requests
         rejected_install.get_by_role('button', name='仓库', exact=True).click()
         rejected_install.get_by_role('textbox', name='技能仓库地址').fill(f'ext::touch {marker}')
         rejected_install.get_by_role('button', name='安装', exact=True).click()
@@ -183,7 +219,10 @@ with sync_playwright() as p:
         assert (local_skill / 'SKILL.md').read_text() == local_content
         assert not (pathlib.Path(root) / 'home' / '.blade' / 'skills' / 'skill-creator').exists()
         page.screenshot(path=str(pathlib.Path(root) / 'bundled-skill-restored.png'), full_page=True)
+        assert len(catalog_requests) == request_count, catalog_requests
+        if catalog_console_errors:
+            assert catalog_failures, catalog_console_errors
         assert faults == [], faults
-        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "skills": {"unsafeInstallRejected": True, "traversalRejected": True, "bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True}, "faults": faults}))
+        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "skills": {"unsafeInstallRejected": True, "traversalRejected": True, "bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True, "catalogRequestedOnDemand": True, "catalogRequests": len(catalog_requests), "catalogFailures": catalog_failures, "catalogConsoleErrors": catalog_console_errors}, "faults": faults}))
     finally:
         browser.close()

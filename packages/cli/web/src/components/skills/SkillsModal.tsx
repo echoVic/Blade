@@ -95,16 +95,6 @@ export function SkillsPanel({ active }: { active: boolean }) {
     },
   });
 
-  const {
-    data: catalog = [],
-    loading: catalogLoading,
-    error: catalogError,
-    run: loadCatalog,
-  } = useRequest(fetchCatalog, {
-    refreshDeps: [active],
-    ready: active,
-  });
-
   const filteredSkills = skills.filter((skill) =>
     skill.name.toLowerCase().includes(searchInstalled.toLowerCase())
   );
@@ -485,11 +475,8 @@ export function SkillsPanel({ active }: { active: boolean }) {
 
       <SkillsInstallModal
         open={installOpen}
-        catalog={catalog}
+        active={active}
         installed={skills.map((skill) => skill.name)}
-        catalogLoading={catalogLoading}
-        catalogError={catalogError?.message ?? null}
-        onRetryCatalog={loadCatalog}
         onOpenChange={setInstallOpen}
         onInstall={requestInstall}
       />
@@ -532,15 +519,13 @@ function TabButton({
 
 function SkillsInstallModal({
   open,
+  active,
   onOpenChange,
   onInstall,
-  catalog,
   installed,
-  catalogLoading,
-  catalogError,
-  onRetryCatalog,
 }: {
   open: boolean;
+  active: boolean;
   onOpenChange: (open: boolean) => void;
   onInstall: (payload: {
     source: 'catalog' | 'repo' | 'local';
@@ -548,11 +533,7 @@ function SkillsInstallModal({
     url?: string;
     path?: string;
   }) => void;
-  catalog: CatalogSkill[];
   installed: string[];
-  catalogLoading: boolean;
-  catalogError: string | null;
-  onRetryCatalog: () => void;
 }) {
   const t = useT();
   const [tab, setTab] = useState<'catalog' | 'repo' | 'local'>('catalog');
@@ -560,6 +541,14 @@ function SkillsInstallModal({
   const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);
   const [repoUrl, setRepoUrl] = useState('');
   const [localPath, setLocalPath] = useState('');
+  const {
+    data: catalog = [],
+    loading: catalogLoading,
+    error: catalogError,
+    run: loadCatalog,
+  } = useRequest(fetchCatalog, {
+    ready: active && open && tab === 'catalog',
+  });
 
   const filteredCatalog = catalog.filter((item) =>
     item.name.toLowerCase().includes(query.toLowerCase())
@@ -654,10 +643,10 @@ function SkillsInstallModal({
                       role="alert"
                       className="flex flex-col items-center gap-2 py-6 text-center text-xs font-mono text-red-600 dark:text-red-400"
                     >
-                      <span>{catalogError}</span>
+                      <span>{catalogError.message}</span>
                       <button
                         type="button"
-                        onClick={onRetryCatalog}
+                        onClick={loadCatalog}
                         className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] dark:border-red-900"
                       >
                         {t('skills.action.retry')}
