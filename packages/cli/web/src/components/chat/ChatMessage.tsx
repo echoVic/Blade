@@ -1,13 +1,3 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -28,8 +18,19 @@ import {
   getAgentTimeline,
   getSubagents,
   getTimelineText,
+  projectTimelineForDisplay
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { CodeReviewReport, parseCodeReviewReport } from './CodeReviewReport';
 import { McpElicitationSection } from './McpElicitationSection';
 import {
@@ -515,7 +516,7 @@ function ToolCallsGroup({
           </div>
         )}
       {expanded && (
-        <div data-agent-tool-group-details className="mt-2 space-y-2 pl-1">
+        <div data-agent-tool-group-details className="pl-1 mt-2 space-y-2">
           <ToolCallsList toolCalls={groupedTools} />
         </div>
       )}
@@ -1049,7 +1050,7 @@ function ConfirmationSection({
       data-pending-interaction="permission"
       tabIndex={-1}
       role="alert"
-      className="space-y-3 rounded-lg border border-amber-300/70 bg-amber-50/70 p-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
+      className="p-4 space-y-3 rounded-lg border outline-none border-amber-300/70 bg-amber-50/70 focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
     >
       <div className="text-[13px] text-[hsl(var(--deck-ink))] font-mono">
         {t('interaction.permission.title', { tool: confirmation.toolName })}
@@ -1195,7 +1196,7 @@ function QuestionSection({
       data-pending-interaction="question"
       tabIndex={-1}
       role="alert"
-      className="space-y-4 rounded-lg border border-amber-300/70 bg-amber-50/70 p-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
+      className="p-4 space-y-4 rounded-lg border outline-none border-amber-300/70 bg-amber-50/70 focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
     >
       {question.questions.map((q, idx) => (
         <div key={idx} className="space-y-2">
@@ -1286,7 +1287,7 @@ function AgentMessageContent({ message }: { message: Message }) {
 
   const { toolCalls, tasks, confirmation, question, elicitation } = agentContent;
   const subagents = getSubagents(agentContent);
-  const timeline = getAgentTimeline(agentContent);
+  const timeline = projectTimelineForDisplay(getAgentTimeline(agentContent));
   const hasContent =
     timeline.length > 0 ||
     tasks.length > 0 ||
@@ -1404,7 +1405,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
           data-chat-message-id={message.id}
           data-chat-role="user"
           data-user-shell-command
-          className="flex w-full justify-end p-4"
+          className="flex justify-end p-4 w-full"
         >
           <div className="w-full max-w-[85%] overflow-hidden rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]">
             <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-3 py-2">
@@ -1435,9 +1436,9 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
       <div
         data-chat-message-id={message.id}
         data-chat-role="user"
-        className="group flex gap-2 justify-end p-4 w-full items-start"
+        className="flex gap-2 justify-end items-start p-4 w-full group"
       >
-        <div className="mt-1 flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="flex mt-1 opacity-0 transition-opacity shrink-0 group-hover:opacity-100 group-focus-within:opacity-100">
           <CopyButton text={text} label="Copy message" />
         </div>
         <div className="bg-[hsl(var(--deck-surface-2))] rounded-lg px-4 py-3 max-w-[85%]">
@@ -1479,7 +1480,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
       data-chat-message-id={message.id}
       data-chat-role="assistant"
       className={cn(
-        'group flex gap-4 justify-start w-full',
+        'flex gap-4 justify-start w-full group',
         showAvatar ? 'p-4' : 'px-4 pt-0 pb-3'
       )}
     >

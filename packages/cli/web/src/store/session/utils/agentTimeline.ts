@@ -184,6 +184,79 @@ export function getAgentTimeline(content: AgentResponseContent): AgentTimelineBl
   return timeline;
 }
 
+/**
+ * Project the durable arrival-order timeline into a tidier presentation without
+ * mutating the stored record (which stays the single source of truth for replay
+ * and tests). Two collapses happen within each phase — a phase being a run of
+ * blocks bounded by assistant prose:
+ *
+ * 1. Tool groups separated only by thinking (think → act → think → act) merge
+ *    into one group so a burst of commands reads as a single "N commands" block
+ *    instead of a fragmented stack.
+ * 2. Consecutive thinking blocks fold into one, so reasoning stays a single
+ *    secondary entry rather than repeated collapsed headers.
+ *
+ * Prose text always flushes the current phase and passes through untouched,
+ * preserving the real "explain → work → explain" narrative order.
+ */
+export function projectTimelineForDisplay(
+  timeline: AgentTimelineBlock[]
+): AgentTimelineBlock[] {
+  if (timeline.length === 0) return timeline;
+
+  const result: AgentTimelineBlock[] = [];
+  // Indices into `result` for the block currently accumulating within a phase.
+  let toolGroupIndex = -1;
+  let thinkingIndex = -1;
+
+  const resetPhase = () => {
+    toolGroupIndex = -1;
+    thinkingIndex = -1;
+  };
+
+  for (const block of timeline) {
+    if (block.type === 'text') {
+      result.push(block);
+      resetPhase();
+      continue;
+    }
+
+    if (block.type === 'thinking') {
+      if (thinkingIndex >= 0) {
+        const existing = result[thinkingIndex] as Extract<
+          AgentTimelineBlock,
+          { type: 'thinking' }
+        >;
+        result[thinkingIndex] = {
+          ...existing,
+          content: `${existing.content}\n\n${block.content}`,
+        };
+      } else {
+        thinkingIndex = result.length;
+        result.push(block);
+      }
+      continue;
+    }
+
+    // tool_group
+    if (toolGroupIndex >= 0) {
+      const existing = result[toolGroupIndex] as Extract<
+        AgentTimelineBlock,
+        { type: 'tool_group' }
+      >;
+      result[toolGroupIndex] = {
+        ...existing,
+        toolCallIds: [...existing.toolCallIds, ...block.toolCallIds],
+      };
+    } else {
+      toolGroupIndex = result.length;
+      result.push(block);
+    }
+  }
+
+  return result;
+}
+
 export function getTimelineText(content: AgentResponseContent): string {
   return getAgentTimeline(content)
     .filter(
