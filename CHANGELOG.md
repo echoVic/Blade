@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.156] - 2026-09-10
+
+### Fixed
+- Load the remote skills catalog only while the installation dialog is open on its Catalog tab. Viewing, refreshing, enabling, or uninstalling installed skills no longer prefetches GitHub data.
+- Keep catalog errors and retry visible without blocking repository or local installation. Returning to Catalog refreshes the request; closing the dialog or staying on Repo or Local does not start another catalog request.
+
+### Changed
+- Include the previously committed Web timeline display improvement: combine thinking blocks and tool groups within phases while preserving assistant prose boundaries and the stored arrival-order timeline.
+
+### Tests
+- Added failing-first settings regressions for lazy catalog loading, tab changes, retry, and local installation after a catalog failure.
+- Verified real Chromium behavior with GitHub returning 403, including visible errors, explicit retry, successful local installation and uninstall, plus raw-PTY lifecycle checks and real DeepSeek Flash/Pro bundled-skill invocation.
+
 ## [0.10.155] - 2026-09-10
 
 ### Fixed
