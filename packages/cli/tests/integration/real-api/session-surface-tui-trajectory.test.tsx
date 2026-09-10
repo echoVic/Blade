@@ -261,7 +261,12 @@ describeReal('production TUI remote Session history trajectory', () => {
               );
               expect(controller.getState().olderCursor).toBeTruthy();
               expect(historyInputReady).toBe(true);
-              expect(stdout.output).toContain(reference.remoteWorkspacePath);
+              expect(controller.getState().session?.displayCwd).toBe(
+                reference.remoteWorkspacePath
+              );
+              expect(stdout.output.replace(/\r?\n[ \t]*/g, '')).toContain(
+                reference.remoteWorkspacePath
+              );
               expect(stdout.output).toContain('Qualification history page item 054');
             });
             await new Promise<void>((resolve) => setTimeout(resolve, 100));

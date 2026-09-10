@@ -96,6 +96,10 @@ History viewer keys:
 | `f` | Fork the Session; the result remains remote and history-only |
 | `Esc` / `q` | Close the viewer and return to the unchanged local Session |
 
+## Workspace reference reliability
+
+Opaque remote workspace references are published through atomic hardlinks in private state directories. Bun on macOS may resolve a newly published file to its temporary hardlink name. Blade accepts this only when the file retains its device and inode, owner and private permissions, and the alias is in the same validated directory. Cross-directory aliases, symlinks, file replacement, and mismatched directory paths still fail closed; history-only access does not gain execution authority.
+
 ## Bounded reads and privacy
 
 - A page contains at most `50` visible messages by default; the API maximum is

@@ -58,6 +58,7 @@ interface WorkspaceReferenceHooksForTesting {
   readonly beforeCapacityLockAttempt?: () => Promise<void>;
   readonly beforePublish?: (context: WorkspaceReferencePublishContext) => Promise<void>;
   readonly syncDirectory?: (directoryPath: string) => Promise<void>;
+  readonly realpath?: (filePath: string) => Promise<string>;
 }
 
 interface CapacityCoordinator {
@@ -614,7 +615,12 @@ async function assertPrivateRegularFile(
   if (process.platform !== 'win32' && mode !== 0o600) {
     throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
   }
-  await assertExactRealpathChild(filePath, expectedParent, path.basename(filePath));
+  await assertExactRealpathChild(
+    filePath,
+    expectedParent,
+    path.basename(filePath),
+    stats
+  );
 }
 
 async function assertPrivateRegularFileHandle(
@@ -652,19 +658,46 @@ async function assertPrivateRegularFileHandle(
     throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
   }
 
-  await assertExactRealpathChild(filePath, expectedParent, path.basename(filePath));
+  await assertExactRealpathChild(
+    filePath,
+    expectedParent,
+    path.basename(filePath),
+    handleStats
+  );
 }
 
 async function assertExactRealpathChild(
   childPath: string,
   expectedParent: string,
-  childName: string
+  childName: string,
+  expectedFileIdentity?: Awaited<ReturnType<FileHandle['stat']>>
 ): Promise<void> {
-  const childRealpath = await realpath(childPath);
-  const parentRealpath = await realpath(expectedParent);
-  if (childRealpath !== path.join(parentRealpath, childName)) {
-    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  const resolveRealpath = referenceHooksForTesting?.realpath ?? realpath;
+  const childRealpath = await resolveRealpath(childPath);
+  const parentRealpath = await resolveRealpath(expectedParent);
+  if (childRealpath === path.join(parentRealpath, childName)) return;
+  // Bun on macOS may resolve a new hardlink to its temporary name.
+  if (expectedFileIdentity && path.dirname(childRealpath) === parentRealpath) {
+    const [current, alias] = await Promise.all([
+      lstat(childPath, { bigint: true }),
+      lstat(childRealpath, { bigint: true }),
+    ]);
+    if (
+      current.isFile() &&
+      !current.isSymbolicLink() &&
+      alias.isFile() &&
+      !alias.isSymbolicLink() &&
+      sameFile(expectedFileIdentity, current) &&
+      sameFile(current, alias) &&
+      (typeof process.getuid !== 'function' ||
+        (Number(current.uid) === process.getuid() &&
+          Number(alias.uid) === process.getuid())) &&
+      (process.platform === 'win32' ||
+        (unixMode(current.mode) === 0o600 && unixMode(alias.mode) === 0o600))
+    )
+      return;
   }
+  throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
 }
 
 async function syncDirectory(directoryPath: string): Promise<void> {

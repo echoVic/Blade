@@ -1,12 +1,14 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
   open,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
   unlink,
@@ -63,6 +65,7 @@ interface ReferenceTestHooks {
     readonly tempPath: string;
   }) => Promise<void>;
   readonly syncDirectory?: (directoryPath: string) => Promise<void>;
+  readonly realpath?: (filePath: string) => Promise<string>;
 }
 
 interface ReferenceTestSeams {
@@ -696,6 +699,180 @@ describe('AcpRemoteWorkspaceReference', () => {
     await expect(pending).resolves.toBe(winnerRef);
     expect(await fileExists(publishContext.tempPath)).toBe(false);
     seams.setHooks(undefined);
+  });
+
+  it('publishes a verified sidecar when realpath chooses its same-directory hardlink', async () => {
+    const module = await loadReferenceModule();
+    const seams = requireReferenceTestSeams(module);
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\Hardlink.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    let finalPath = '';
+    let tempPath = '';
+    let aliasLookups = 0;
+    seams.setHooks({
+      beforePublish: async (context) => {
+        finalPath = context.finalPath;
+        tempPath = context.tempPath;
+      },
+      realpath: async (filePath) => {
+        if (filePath === finalPath && (await fileExists(tempPath))) {
+          aliasLookups++;
+          return realpath(tempPath);
+        }
+        return realpath(filePath);
+      },
+    });
+    const workspaceRef = await module.getOrCreateAcpRemoteWorkspaceReference(
+      hostStateRoot,
+      descriptor
+    );
+    expect(aliasLookups).toBeGreaterThan(0);
+    expect(await fileExists(tempPath)).toBe(false);
+    await expect(
+      module.readAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).resolves.toBe(workspaceRef);
+  });
+
+  it('reads a committed sidecar through a same-directory hardlink alias', async () => {
+    const module = await loadReferenceModule();
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\ReadAlias.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const workspaceRef = await module.getOrCreateAcpRemoteWorkspaceReference(
+      hostStateRoot,
+      descriptor
+    );
+    let sidecarPath = '';
+    let aliasPath = '';
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      sidecarPath = module.getAcpRemoteWorkspaceReferenceFilePath(scope, descriptor);
+      aliasPath = path.join(path.dirname(sidecarPath), 'retained-hardlink');
+      await link(sidecarPath, aliasPath);
+    });
+    let aliasLookups = 0;
+    requireReferenceTestSeams(module).setHooks({
+      realpath: async (filePath) => {
+        if (filePath === sidecarPath) {
+          aliasLookups++;
+          return realpath(aliasPath);
+        }
+        return realpath(filePath);
+      },
+    });
+    await expect(
+      module.readAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).resolves.toBe(workspaceRef);
+    expect(aliasLookups).toBe(2);
+    await expect(
+      module.getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).resolves.toBe(workspaceRef);
+    expect(aliasLookups).toBe(4);
+  });
+
+  it.each(['other-inode', 'other-directory', 'symlink'])(
+    'rejects a realpath alias with %s identity',
+    async (kind) => {
+      const module = await loadReferenceModule();
+      const seams = requireReferenceTestSeams(module);
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('C:\\Repo\\UnsafeAlias.ts')
+      );
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      await ensureAcpRemoteHostStateRoot(hostStateRoot);
+      let finalPath = '';
+      let aliasPath = '';
+      let aliasLookups = 0;
+      seams.setHooks({
+        beforePublish: async (context) => {
+          finalPath = context.finalPath;
+          aliasPath = path.join(
+            kind === 'other-directory' ? storageRoot : context.referenceDirectoryPath,
+            'untrusted-alias'
+          );
+          if (kind === 'other-inode')
+            await writeFile(aliasPath, 'unrelated', { mode: 0o600 });
+          else if (kind === 'symlink') await symlink(context.tempPath, aliasPath);
+          else await link(context.tempPath, aliasPath);
+        },
+        realpath: async (filePath) => {
+          if (filePath === finalPath) {
+            aliasLookups++;
+            return path.join(
+              await realpath(path.dirname(aliasPath)),
+              path.basename(aliasPath)
+            );
+          }
+          return realpath(filePath);
+        },
+      });
+      await expect(
+        module.getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+      ).rejects.toMatchObject({ code: 'session_surface_state_invalid' });
+      expect(aliasLookups).toBeGreaterThan(0);
+      expect(await fileExists(finalPath)).toBe(false);
+    }
+  );
+
+  it('rejects a file replaced during hardlink alias validation', async () => {
+    const module = await loadReferenceModule();
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\ReplacedAlias.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    let finalPath = '';
+    let aliasPath = '';
+    let replacementMade = false;
+    requireReferenceTestSeams(module).setHooks({
+      beforePublish: async (context) => {
+        finalPath = context.finalPath;
+        aliasPath = path.join(context.referenceDirectoryPath, 'replacement-alias');
+      },
+      realpath: async (filePath) => {
+        if (filePath === finalPath) {
+          await unlink(finalPath);
+          await writeFile(finalPath, 'replacement', { mode: 0o600, flag: 'wx' });
+          await link(finalPath, aliasPath);
+          replacementMade = true;
+          return realpath(aliasPath);
+        }
+        return realpath(filePath);
+      },
+    });
+    await expect(
+      module.getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).rejects.toMatchObject({ code: 'session_surface_state_invalid' });
+    expect(replacementMade).toBe(true);
+    expect(await readFile(finalPath, 'utf8')).toBe('replacement');
+  });
+
+  it('does not accept a mismatched directory realpath as a file alias', async () => {
+    const module = await loadReferenceModule();
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\DirectoryAlias.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    let referenceDirectory = '';
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      referenceDirectory = module.getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+      await mkdir(referenceDirectory, { mode: 0o700 });
+    });
+    requireReferenceTestSeams(module).setHooks({
+      realpath: async (filePath) =>
+        filePath === referenceDirectory
+          ? path.join(await realpath(hostStateRoot), 'different-directory')
+          : realpath(filePath),
+    });
+    await expect(
+      module.getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).rejects.toMatchObject({ code: 'session_surface_state_invalid' });
+    expect(await readdir(referenceDirectory)).toEqual([]);
   });
 
   it('uses platform policy to avoid opening directories for fsync on win32', async () => {
