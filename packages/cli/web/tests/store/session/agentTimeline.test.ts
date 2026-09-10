@@ -81,7 +81,10 @@ describe('projectTimelineForDisplay', () => {
     ];
 
     expect(projectTimelineForDisplay(timeline)).toEqual([
-      expect.objectContaining({ type: 'thinking', content: 'plan a\n\nplan b\n\nplan c' }),
+      expect.objectContaining({
+        type: 'thinking',
+        content: 'plan a\n\nplan b\n\nplan c',
+      }),
       expect.objectContaining({
         type: 'tool_group',
         toolCallIds: ['read-1', 'read-2', 'read-3', 'bash-1'],
@@ -98,9 +101,13 @@ describe('projectTimelineForDisplay', () => {
       { id: 'tool_group-4', type: 'tool_group', toolCallIds: ['edit-1'] },
     ];
 
-    expect(
-      projectTimelineForDisplay(timeline).map((block) => block.type)
-    ).toEqual(['thinking', 'tool_group', 'text', 'thinking', 'tool_group']);
+    expect(projectTimelineForDisplay(timeline).map((block) => block.type)).toEqual([
+      'thinking',
+      'tool_group',
+      'text',
+      'thinking',
+      'tool_group',
+    ]);
   });
 
   it('does not merge tool groups split by prose', () => {

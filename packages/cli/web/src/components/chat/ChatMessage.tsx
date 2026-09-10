@@ -18,7 +18,7 @@ import {
   getAgentTimeline,
   getSubagents,
   getTimelineText,
-  projectTimelineForDisplay
+  projectTimelineForDisplay,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
 import {
