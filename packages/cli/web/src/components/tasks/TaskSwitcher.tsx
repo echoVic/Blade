@@ -99,7 +99,10 @@ export function TaskSwitcher() {
   const cancellingTaskKeys = useSessionStore((state) => state.cancellingTaskKeys);
   const retryingTaskKeys = useSessionStore((state) => state.retryingTaskKeys);
   const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selection, setSelection] = useState<{
+    scope: string;
+    key: string | null;
+  } | null>(null);
   const [selectingKey, setSelectingKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -226,7 +229,24 @@ export function TaskSwitcher() {
     () => filterCommandActions(commands, query),
     [commands, query]
   );
-  const activeResultsLength = mode === 'tasks' ? results.length : commandResults.length;
+  const resultKeys = useMemo(
+    () =>
+      mode === 'tasks'
+        ? results.map((session) => sessionRefKey(sessionRefFromSession(session)))
+        : commandResults.map((command) => command.id),
+    [mode, results, commandResults]
+  );
+  const selectionScope = JSON.stringify([open, mode, query]);
+  const selectedIndex = Math.max(
+    0,
+    selection?.scope === selectionScope && selection.key !== null
+      ? resultKeys.indexOf(selection.key)
+      : -1
+  );
+  const selectedKey = resultKeys[selectedIndex] ?? null;
+  const setSelectedIndex = (index: number) =>
+    setSelection({ scope: selectionScope, key: resultKeys[index] ?? null });
+  const activeResultsLength = resultKeys.length;
   const pendingInteractionCount = useMemo(
     () => sessions.filter((session) => Boolean(session.pendingInteraction)).length,
     [sessions]
@@ -238,7 +258,6 @@ export function TaskSwitcher() {
   useEffect(() => {
     if (!open) return;
     setQuery('');
-    setSelectedIndex(0);
     setSelectingKey(null);
     setActionError(null);
   }, [mode, open]);
@@ -248,8 +267,8 @@ export function TaskSwitcher() {
   }, [historyOnly, open, setOpen]);
 
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
+    setSelection({ scope: selectionScope, key: selectedKey });
+  }, [selectionScope, selectedKey]);
 
   useEffect(() => {
     const selectedResult = listRef.current?.querySelector<HTMLElement>(
@@ -308,15 +327,15 @@ export function TaskSwitcher() {
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setSelectedIndex((current) =>
-        activeResultsLength === 0 ? 0 : (current + 1) % activeResultsLength
+      setSelectedIndex(
+        activeResultsLength === 0 ? 0 : (selectedIndex + 1) % activeResultsLength
       );
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setSelectedIndex((current) =>
+      setSelectedIndex(
         activeResultsLength === 0
           ? 0
-          : (current - 1 + activeResultsLength) % activeResultsLength
+          : (selectedIndex - 1 + activeResultsLength) % activeResultsLength
       );
     } else if (event.key === 'Enter' && selected) {
       event.preventDefault();

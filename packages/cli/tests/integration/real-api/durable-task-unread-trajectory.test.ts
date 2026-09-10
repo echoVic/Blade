@@ -145,6 +145,7 @@ describeDurableUnread('Durable task unread Web trajectory (real API)', () => {
           liveSidebar: {
             initialHandshakeReconciled: true,
             createdWithoutReload: true,
+            switcherSelectionPreserved: true,
             completedWithoutReload: true,
             stopRemoved: true,
             archiveEnabled: true,

@@ -40,6 +40,7 @@ export interface DurableTaskUnreadWebEvidence {
   liveSidebar: {
     initialHandshakeReconciled: true;
     createdWithoutReload: true;
+    switcherSelectionPreserved: true;
     completedWithoutReload: true;
     stopRemoved: true;
     archiveEnabled: true;
@@ -477,6 +478,17 @@ export async function runDurableTaskUnreadWebDriver(input: {
       })
       .waitFor({ state: 'visible', timeout: 30_000 });
     const liveDocument = await livePage.evaluate(() => performance.timeOrigin);
+    await openTaskSwitcher(livePage);
+    const highlightedTask = livePage.locator('[role="option"][aria-selected="true"]');
+    const selectedBeforeKey = sessionRefKey(selectedBefore);
+    await highlightedTask.waitFor({ state: 'visible' });
+    if (
+      (await highlightedTask.getAttribute('data-session-ref')) !== selectedBeforeKey
+    ) {
+      throw new Error(
+        'TaskSwitcher did not initially highlight the foreground session'
+      );
+    }
 
     const backgroundTask = await dispatchBackgroundTask({
       origin,
@@ -516,6 +528,29 @@ export async function runDurableTaskUnreadWebDriver(input: {
       throw new Error('New background task required reload or changed selection');
     }
     const backgroundKey = sessionRefKey(backgroundTask);
+    const liveSwitcherTask = livePage.locator(
+      `[role="option"][data-session-ref='${backgroundKey}']`
+    );
+    await liveSwitcherTask.waitFor({ state: 'visible', timeout: 30_000 });
+    if ((await liveSwitcherTask.getAttribute('data-task-result-index')) !== '0') {
+      throw new Error('Running task did not move ahead of the idle foreground session');
+    }
+    if (
+      (await highlightedTask.getAttribute('data-session-ref')) !== selectedBeforeKey
+    ) {
+      throw new Error('Live task insertion moved the TaskSwitcher keyboard selection');
+    }
+    await livePage.keyboard.press('Enter');
+    await livePage.getByRole('dialog').waitFor({ state: 'hidden', timeout: 30_000 });
+    const selectedAfterEnter = new URL(livePage.url());
+    if (
+      selectedAfterEnter.searchParams.get('session') !== selectedBefore.sessionId ||
+      selectedAfterEnter.searchParams.get('project') !== selectedBefore.projectPath
+    ) {
+      throw new Error(
+        'TaskSwitcher Enter opened a task other than the highlighted session'
+      );
+    }
     const siblingRef = await input.seedSibling(backgroundTask);
     if (siblingRef.sessionId !== backgroundTask.sessionId) {
       throw new Error('Sibling fixture did not preserve the shared session ID');
@@ -757,6 +792,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
       liveSidebar: {
         initialHandshakeReconciled: true,
         createdWithoutReload: true,
+        switcherSelectionPreserved: true,
         completedWithoutReload: true,
         stopRemoved: true,
         archiveEnabled: true,

@@ -58,6 +58,8 @@ describe('TaskSwitcher', () => {
   let root: ReactDOM.Root;
   const cancelTask = vi.fn().mockResolvedValue(undefined);
   const retryTask = vi.fn().mockResolvedValue(undefined);
+  const selectSession =
+    vi.fn<ReturnType<typeof useSessionStore.getState>['selectSession']>();
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -65,6 +67,7 @@ describe('TaskSwitcher', () => {
     root = ReactDOM.createRoot(container);
     cancelTask.mockReset().mockResolvedValue(undefined);
     retryTask.mockReset().mockResolvedValue(undefined);
+    selectSession.mockReset().mockResolvedValue(undefined);
     useAppStore.setState({
       isTaskSwitcherOpen: true,
       taskSwitcherMode: 'tasks',
@@ -87,7 +90,7 @@ describe('TaskSwitcher', () => {
       cancelTask,
       retryTask,
       selectProject: vi.fn(),
-      selectSession: vi.fn().mockResolvedValue(undefined),
+      selectSession,
     });
   });
 
@@ -114,6 +117,171 @@ describe('TaskSwitcher', () => {
       await Promise.resolve();
     });
   }
+
+  async function pressKey(key: string): Promise<void> {
+    const input = document.body.querySelector<HTMLInputElement>(
+      'input[role="combobox"]'
+    );
+    expect(input).not.toBeNull();
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    });
+  }
+
+  function highlightedTitle(): string | null {
+    return (
+      document.body.querySelector('[role="option"][aria-selected="true"]')
+        ?.textContent ?? null
+    );
+  }
+
+  it('keeps the highlighted compound SessionRef when live attention reorders tasks', async () => {
+    const target = createSession({
+      sessionId: 'shared-task',
+      title: 'Keep this workspace',
+      projectPath: '/workspace/target',
+      taskStatus: 'running',
+      lastMessageTime: '2026-08-07T11:00:00.000Z',
+    });
+    const sibling = createSession({
+      sessionId: 'shared-task',
+      title: 'Other workspace',
+      projectPath: '/workspace/sibling',
+      taskStatus: 'running',
+    });
+    useSessionStore.setState({ sessions: [target, sibling] });
+    await renderSwitcher();
+    expect(highlightedTitle()).toContain(target.title);
+
+    await act(async () => {
+      useSessionStore.setState({
+        sessions: [
+          target,
+          {
+            ...sibling,
+            pendingInteraction: {
+              type: 'permission',
+              requestId: 'reordered-permission',
+            },
+          },
+        ],
+      });
+    });
+
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain(
+      sibling.title
+    );
+    expect(highlightedTitle()).toContain(target.title);
+    await pressKey('Enter');
+    expect(selectSession).toHaveBeenCalledExactlyOnceWith({
+      sessionId: target.sessionId,
+      projectPath: target.projectPath,
+    });
+  });
+
+  it('keeps keyboard selection when a running task completes and moves down', async () => {
+    const first = createSession({
+      sessionId: 'first',
+      title: 'First task',
+      taskStatus: 'running',
+      lastMessageTime: '2026-08-07T11:00:00.000Z',
+    });
+    const selected = createSession({
+      sessionId: 'selected',
+      title: 'Selected task',
+      taskStatus: 'running',
+    });
+    const queued = createSession({ sessionId: 'queued', title: 'Queued task' });
+    useSessionStore.setState({ sessions: [first, selected, queued] });
+    await renderSwitcher();
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(selected.title);
+
+    await act(async () => {
+      useSessionStore.setState({
+        sessions: [first, { ...selected, taskStatus: 'completed' }, queued],
+      });
+    });
+
+    expect(highlightedTitle()).toContain(selected.title);
+    await pressKey('ArrowUp');
+    expect(highlightedTitle()).toContain(queued.title);
+  });
+
+  it('selects the first remaining task when the highlighted task is removed', async () => {
+    const first = createSession({ sessionId: 'first', title: 'First task' });
+    const removed = createSession({ sessionId: 'removed', title: 'Removed task' });
+    useSessionStore.setState({ sessions: [first, removed] });
+    await renderSwitcher();
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(removed.title);
+
+    await act(async () => {
+      useSessionStore.setState({ sessions: [first] });
+    });
+
+    expect(highlightedTitle()).toContain(first.title);
+    await pressKey('Enter');
+    expect(selectSession).toHaveBeenCalledExactlyOnceWith({
+      sessionId: first.sessionId,
+      projectPath: first.projectPath,
+    });
+  });
+
+  it('resets search selection and handles an empty result set without opening a task', async () => {
+    const first = createSession({ sessionId: 'first', title: 'First task' });
+    const second = createSession({ sessionId: 'second', title: 'Second task' });
+    useSessionStore.setState({ sessions: [first, second] });
+    await renderSwitcher();
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(second.title);
+    const input = document.body.querySelector<HTMLInputElement>(
+      'input[role="combobox"]'
+    );
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value'
+    )?.set;
+    expect(input).not.toBeNull();
+    expect(setValue).toBeDefined();
+
+    await act(async () => {
+      setValue?.call(input, 'no matching task');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(input?.hasAttribute('aria-activedescendant')).toBe(false);
+    await pressKey('ArrowDown');
+    await pressKey('ArrowUp');
+    await pressKey('Enter');
+    expect(selectSession).not.toHaveBeenCalled();
+
+    await act(async () => {
+      setValue?.call(input, 'task');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(highlightedTitle()).toContain(first.title);
+    await pressKey('ArrowUp');
+    expect(highlightedTitle()).toContain(second.title);
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(first.title);
+  });
+
+  it('starts at the first task after closing and reopening the switcher', async () => {
+    const first = createSession({ sessionId: 'first', title: 'First task' });
+    const second = createSession({ sessionId: 'second', title: 'Second task' });
+    useSessionStore.setState({ sessions: [first, second] });
+    await renderSwitcher();
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(second.title);
+    await pressKey('Escape');
+    await act(async () => {
+      useAppStore.getState().setTaskSwitcherOpen(true);
+    });
+    expect(highlightedTitle()).toContain(first.title);
+  });
 
   it('shows exact queue position and stops a task without closing the switcher', async () => {
     await renderSwitcher();

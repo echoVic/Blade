@@ -89,6 +89,7 @@ Web:
 - Footer Archive Popover loads archived Sessions with pagination on demand.
 - Inherited-archive descendants show the archive root and disable incorrect local restore operations.
 - After restoration, Session returns to project-level navigation and can continue the original transcript.
+- The task switcher preserves keyboard focus by the full workspace and session identity while its live results reorder. Background task insertion or status changes cannot redirect Enter to another task; archiving, deleting, or filtering out the highlighted result selects the first remaining item, and empty results perform no selection.
 
 ACP:
 
