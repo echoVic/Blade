@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.155] - 2026-09-10
+
+### Fixed
+- Keep Runtime correction, Stop hook, and continuation controls in model context without showing them as user-authored messages in CLI/TUI, Web, or ACP history. Preserve control metadata and the assistant-before-correction persistence order.
+- Exclude messages explicitly marked as hidden, including their parts, from Markdown exports even with reasoning enabled. Identical user-authored text stays visible; unmarked historical records are not rewritten or guessed from content.
+- Require a native call during correction of a single explicitly requested tool when no successful result exists, rather than accepting another promise to execute. Preserve permission checks, user steering, and output-budget failure; never execute textual arguments directly.
+
+### Tests
+- Added failing-first visibility and export regressions, and extended real DeepSeek Flash/Pro checks across Headless, ACP reload, raw-PTY restart, and Chromium reload.
+- Textual-tool correction tests now explicitly construct only the first request as a JSON-generation request to the real Provider. Record the constrained request number, keep the original request, forward responses unchanged, and leave subsequent production recovery requests untouched; do not treat this fixture as proof of natural first-response behavior.
+
 ## [0.10.154] - 2026-09-10
 
 ### Fixed
