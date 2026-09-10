@@ -9,6 +9,7 @@ import { chromium } from 'playwright';
 import { SessionSchema } from '../../src/api/schemas.js';
 import { HeadlessJsonlEventSchema } from '../../src/commands/headlessEvents.js';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
+import { SessionService } from '../../src/services/SessionService.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -17,13 +18,14 @@ import {
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface Input {
-  scenario: 'textual-tool' | 'turn-limit';
+  scenario: 'textual-tool' | 'turn-limit' | 'incomplete-intent';
   surface: 'headless' | 'acp' | 'pty' | 'web';
   workspace: string;
   sessionId: string;
   prompt: string;
   marker: string;
   browserExecutable: string;
+  webMode: 'production' | 'development';
 }
 
 const input: Input = JSON.parse(process.argv[2]);
@@ -34,7 +36,10 @@ const childEnv = {
   BLADE_AUTO_MEMORY: '0',
   BLADE_TELEMETRY_DISABLED: '1',
 };
-const controls = 'native tool-call interface';
+const controls =
+  input.scenario === 'textual-tool'
+    ? 'native tool-call interface'
+    : '请执行你提到的操作';
 const turnLimit = input.scenario === 'turn-limit';
 const maxTurns = turnLimit ? '1' : '4';
 let output = '';
@@ -204,6 +209,18 @@ async function run() {
         .join('');
       assert(text.includes(input.marker), text);
       assert(!JSON.stringify(notifications).includes(controls));
+      const previousUpdates = notifications.length;
+      await connection.loadSession({ sessionId, cwd: input.workspace, mcpServers: [] });
+      const replayed = notifications.slice(previousUpdates);
+      assert(!JSON.stringify(replayed).includes(controls));
+      assert(
+        replayed.some(
+          ({ update }) =>
+            update.sessionUpdate === 'agent_message_chunk' &&
+            update.content.type === 'text' &&
+            update.content.text.includes(input.marker)
+        )
+      );
     } finally {
       await process.stop();
       await connection.closed;
@@ -263,10 +280,86 @@ async function run() {
         terminal.write('n');
       }
       await waitFor(finalized, 'TUI turn did not complete');
+      const messages = await SessionService.loadSessionModelContext(
+        sessionId,
+        input.workspace
+      );
+      assert(
+        messages.some(
+          (message) =>
+            message.role === 'assistant' &&
+            typeof message.content === 'string' &&
+            message.content.includes(input.marker)
+        ),
+        JSON.stringify({
+          phase: 'tui-durable-final',
+          assistant: messages
+            .filter((message) => message.role === 'assistant')
+            .map((message) => ({
+              content: message.content,
+              toolCalls: message.tool_calls,
+            })),
+        })
+      );
       await waitFor(() => output.includes(input.marker), 'TUI omitted final result');
       assert(!output.includes(controls));
     } finally {
       await stop();
+    }
+    const resumedHandshake = createTuiPtyComposerReadyHandshake(childEnv);
+    const resumed = spawnPty(
+      'node',
+      [
+        cliEntry,
+        '--trust-workspace',
+        '--resume',
+        sessionId,
+        '--permission-mode',
+        'yolo',
+        '--max-turns',
+        maxTurns,
+        '--no-verification-agent',
+      ],
+      {
+        cwd: input.workspace,
+        env: resumedHandshake.env,
+        cols: 160,
+        rows: 48,
+        name: 'xterm-256color',
+      }
+    );
+    let resumedOutput = '';
+    let resumedExited = false;
+    const resumedExit = new Promise<void>((resolve) =>
+      resumed.onExit(() => {
+        resumedExited = true;
+        resolve();
+      })
+    );
+    resumed.onData((chunk) => {
+      resumedOutput = (resumedOutput + chunk).slice(-256_000);
+    });
+    const stopResumed = ownCleanup(async () => {
+      if (!resumedExited) resumed.kill('SIGTERM');
+      await Promise.race([
+        resumedExit,
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+      if (!resumedExited) resumed.kill('SIGKILL');
+      await resumedExit;
+    });
+    try {
+      await waitFor(
+        () => resumedOutput.includes(resumedHandshake.marker),
+        'Resumed TUI composer not ready'
+      );
+      await waitFor(
+        () => resumedOutput.includes(input.marker),
+        'Resumed TUI omitted response'
+      );
+      assert(!resumedOutput.includes(controls));
+    } finally {
+      await stopResumed();
     }
   } else {
     const reserve = createServer();
@@ -276,10 +369,46 @@ async function run() {
     const port = address.port;
     await new Promise<void>((resolve) => reserve.close(() => resolve()));
     const process = await launch(['serve', '--port', String(port)]);
-    const origin = `http://127.0.0.1:${port}`;
+    let origin = `http://127.0.0.1:${port}`;
     const requestState = { refreshing: false, closing: false };
     let stopBrowser: (() => Promise<void>) | undefined;
+    let stopDevServer: (() => Promise<void>) | undefined;
     try {
+      if (input.webMode === 'development') {
+        await new Promise<void>((resolve) => reserve.listen(0, '127.0.0.1', resolve));
+        const devAddress = reserve.address();
+        assert(devAddress && typeof devAddress !== 'string');
+        const devPort = devAddress.port;
+        await new Promise<void>((resolve) => reserve.close(() => resolve()));
+        const devServer = spawn(
+          'bun',
+          [
+            'run',
+            '--filter',
+            'blade-web',
+            'dev',
+            '--host',
+            '127.0.0.1',
+            '--port',
+            String(devPort),
+          ],
+          {
+            cwd: path.resolve(import.meta.dirname, '../../../..'),
+            env: { ...childEnv, VITE_API_TARGET: origin },
+            detached: true,
+            stdio: ['ignore', 'ignore', 'pipe'],
+          }
+        );
+        let devIdentity:
+          | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+          | undefined;
+        stopDevServer = ownCleanup(() =>
+          stopForegroundGuiLauncher(devServer, devIdentity)
+        );
+        assert(devServer.pid);
+        devIdentity = await captureForegroundGuiLauncherIdentity(devServer.pid);
+        origin = `http://127.0.0.1:${devPort}`;
+      }
       const browser = await chromium.launch({
         headless: true,
         executablePath: input.browserExecutable,
@@ -335,7 +464,37 @@ async function run() {
       await composer.press('Enter');
       if (turnLimit) {
         const error = page.locator('[data-blade-session-error]');
-        await error.waitFor({ state: 'visible', timeout: 30000 });
+        try {
+          await error.waitFor({ state: 'visible', timeout: 30000 });
+        } catch (failure) {
+          const response = await fetch(
+            `${origin}/sessions/${sessionId}?${new URLSearchParams({ projectPath: input.workspace })}`
+          );
+          const record = SessionSchema.parse(await response.json());
+          const events = await new PersistentStore(input.workspace).loadEvents(
+            sessionId
+          );
+          console.error(
+            JSON.stringify({
+              phase: 'awaiting-budget-error',
+              taskStatus: record.taskStatus,
+              assistantText: await page
+                .locator('[data-chat-role="assistant"]')
+                .allTextContents(),
+              composerText: await composer.inputValue(),
+              turns: events
+                ?.filter(
+                  (event) =>
+                    event.type === 'turn_started' ||
+                    event.type === 'turn_completed' ||
+                    event.type === 'turn_aborted'
+                )
+                .map((event) => event.type),
+              faults,
+            })
+          );
+          throw failure;
+        }
         const errorText = await error.innerText();
         assert(/Agent 运行失败。|Agent execution failed\./.test(errorText), errorText);
         await page
@@ -346,6 +505,10 @@ async function run() {
           .waitFor({ state: 'visible', timeout: 30000 });
         assert((await page.locator('body').innerText()).includes(input.marker));
         assert.equal(await page.locator('[data-tool-name]').count(), 0);
+        assert.equal(await page.locator('[data-chat-role="user"]').count(), 1);
+        assert(
+          !(await page.locator('body').innerText()).includes('请执行你提到的操作')
+        );
         assert.equal(
           await page
             .getByRole('button', {
@@ -395,6 +558,10 @@ async function run() {
           throw error;
         }
         assert.equal(await page.locator('[data-tool-name]').count(), 0);
+        assert.equal(await page.locator('[data-chat-role="user"]').count(), 1);
+        assert(
+          !(await page.locator('body').innerText()).includes('请执行你提到的操作')
+        );
       } else {
         await waitFor(finalized, 'Web turn did not complete');
         const final = page
@@ -433,6 +600,7 @@ async function run() {
           );
           assert.equal(await page.locator('[data-tool-name]').count(), 1);
           assert(!(await page.locator('body').innerText()).includes(controls));
+          assert.equal(await page.locator('[data-chat-role="user"]').count(), 1);
         };
         await assertCompletedView();
         await page.screenshot({
@@ -448,7 +616,11 @@ async function run() {
       try {
         await stopBrowser?.();
       } finally {
-        await process.stop();
+        try {
+          await stopDevServer?.();
+        } finally {
+          await process.stop();
+        }
       }
     }
   }
@@ -456,9 +628,11 @@ async function run() {
   console.log(
     JSON.stringify({
       surface: input.surface,
+      ...(input.surface === 'web' ? { webMode: input.webMode } : {}),
       sessionId,
       markerVisible: true,
-      ...(turnLimit ? { turnLimitReached: true } : { internalControlHidden: true }),
+      internalControlHidden: true,
+      ...(turnLimit ? { turnLimitReached: true } : {}),
       faults,
     })
   );

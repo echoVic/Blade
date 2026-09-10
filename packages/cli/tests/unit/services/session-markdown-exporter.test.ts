@@ -73,6 +73,55 @@ const metadata = {
 };
 
 describe('SessionMarkdownExporter', () => {
+  it.each([false, true])(
+    'honors hidden message metadata before rendering parts (reasoning=%s)',
+    (includeReasoning) => {
+      const hiddenMessage: Extract<SessionEvent, { type: 'message_created' }> = {
+        id: 'internal-message',
+        sessionId: metadata.sessionId,
+        timestamp,
+        type: 'message_created',
+        cwd: projectPath,
+        version: 'test',
+        data: {
+          messageId: 'internal',
+          role: 'user',
+          createdAt: timestamp,
+          metadata: { clientVisible: false },
+        },
+      };
+      const control = 'Please continue the conversation.';
+      const result = renderSessionMarkdown(
+        [
+          message('user-1', 'user'),
+          part('user-1', 'user-text', 'text', { text: control }),
+          hiddenMessage,
+          part('internal', 'control-text', 'text', { text: control }),
+          part('internal', 'control-reasoning', 'reasoning', {
+            text: 'HIDDEN_REASONING',
+          }),
+          part('internal', 'control-summary', 'summary', { text: 'HIDDEN_SUMMARY' }),
+          part('internal', 'control-image', 'image', { mimeType: 'image/png' }),
+          part('internal', 'control-tool', 'tool_call', {
+            toolName: 'Bash',
+            input: { command: 'HIDDEN_COMMAND' },
+          }),
+          message('assistant-1', 'assistant'),
+          part('assistant-1', 'answer', 'text', { text: 'Visible answer.' }),
+        ],
+        metadata,
+        { includeReasoning }
+      );
+      expect(result.markdown.split(control)).toHaveLength(2);
+      expect(result.markdown).toContain('Visible answer.');
+      expect(result.markdown).not.toContain('HIDDEN_');
+      expect(result.markdown).not.toContain('[Image:');
+      expect(result.messageCount).toBe(2);
+      expect(result.reasoningCount).toBe(0);
+      expect(result.activityCount).toBe(0);
+    }
+  );
+
   it('renders ordered user, assistant, image, summary, and optional reasoning sections', () => {
     const events = [
       message('user-1', 'user'),

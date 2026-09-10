@@ -25,6 +25,7 @@ export interface RecordingProviderProxy {
   requestFinishedAt: number[];
   heldRequestNumbers: number[];
   injectedRequestNumbers: number[];
+  jsonOnlyRequestNumbers: number[];
   forwardedRequestNumbers: number[];
   requestLifecycle: RecordingProviderRequestLifecycle[];
   maxInFlight: number;
@@ -40,6 +41,7 @@ export async function startRecordingProviderProxy(
     holdMs?: number;
     onHold?: (requestNumber: number) => void | Promise<void>;
     inject503Once?: { path: string; retryAfterMs?: number };
+    firstRequestJsonOnly?: { prompt: string };
   } = {}
 ): Promise<RecordingProviderProxy> {
   const injection = options.inject503Once;
@@ -60,6 +62,7 @@ export async function startRecordingProviderProxy(
   const requestFinishedAt: number[] = [];
   const heldRequestNumbers: number[] = [];
   const injectedRequestNumbers: number[] = [];
+  const jsonOnlyRequestNumbers: number[] = [];
   const forwardedRequestNumbers: number[] = [];
   const requestLifecycle: RecordingProviderRequestLifecycle[] = [];
   let matchingRequestHeld = false;
@@ -162,11 +165,32 @@ export async function startRecordingProviderProxy(
           }
           headers.set(name, Array.isArray(value) ? value.join(', ') : value);
         }
+        let upstreamBody = body;
+        if (requestNumber === 1 && options.firstRequestJsonOnly) {
+          const parsed: unknown = JSON.parse(bodyText);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Tool-choice qualification requires a JSON request object');
+          }
+          upstreamBody = Buffer.from(
+            JSON.stringify({
+              ...Object.fromEntries(
+                Object.entries(parsed).filter(
+                  ([key]) => key !== 'tools' && key !== 'tool_choice'
+                )
+              ),
+              messages: [
+                { role: 'user', content: options.firstRequestJsonOnly.prompt },
+              ],
+              response_format: { type: 'json_object' },
+            })
+          );
+          jsonOnlyRequestNumbers.push(requestNumber);
+        }
         recordLifecycle({ requestNumber, phase: 'upstream_started' });
         const upstreamResponse = await fetch(target, {
           method: request.method,
           headers,
-          body: body.length > 0 ? body : undefined,
+          body: upstreamBody.length > 0 ? upstreamBody : undefined,
         });
         recordLifecycle({
           requestNumber,
@@ -264,6 +288,7 @@ export async function startRecordingProviderProxy(
     requestFinishedAt,
     heldRequestNumbers,
     injectedRequestNumbers,
+    jsonOnlyRequestNumbers,
     forwardedRequestNumbers,
     requestLifecycle,
     get maxInFlight() {

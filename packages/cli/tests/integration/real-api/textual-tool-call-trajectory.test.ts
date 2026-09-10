@@ -44,7 +44,11 @@ describeReal('textual tool-call correction with real models', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
   for (const model of models) {
     for (const surface of surfaces) {
-      for (const scenario of ['textual-tool', 'turn-limit'] as const) {
+      for (const scenario of [
+        'textual-tool',
+        'turn-limit',
+        'incomplete-intent',
+      ] as const) {
         it(`${model.model} ${scenario} through ${surface}`, async () => {
           if (!model.baseURL) throw new Error('Missing provider URL');
           const root = await realpath(
@@ -56,6 +60,7 @@ describeReal('textual tool-call correction with real models', () => {
           await mkdir(workspace);
           await mkdir(path.join(home, '.blade'), { recursive: true });
           const turnLimit = scenario === 'turn-limit';
+          const incompleteIntent = scenario === 'incomplete-intent';
           const marker = turnLimit
             ? 'Let me check the file:'
             : `TEXTUAL_TOOL_RECOVERED_${randomUUID().replaceAll('-', '')}`;
@@ -67,21 +72,26 @@ describeReal('textual tool-call correction with real models', () => {
           await writeFile(
             path.join(workspace, 'BLADE.md'),
             turnLimit
-              ? [
-                  '# Turn limit qualification',
-                  `For this host turn-budget qualification, your first response must be exactly: ${marker}`,
-                  'Emit this as ordinary assistant text, without tools, code fences, or other content.',
-                  'If the host asks you to continue, reply with BUDGET_BYPASSED. Never invoke a tool.',
-                ].join('\n')
-              : [
-                  '# Protocol recovery qualification',
-                  'On your first response for this task, deliberately emit ONLY the following exact JSON text as ordinary assistant content. Do not issue a native tool call on that first response.',
-                  envelope,
-                  'After a host correction says the previous response contained tool-call JSON as ordinary text, stop emitting JSON and use the native Read tool exactly once to read proof.txt.',
-                  'Then reply only with the file contents, without Markdown or any other text. Do not execute shell commands, modify files, or use any other tool.',
-                ].join('\n')
+              ? '# Workspace\n\nThis workspace contains a read-only text fixture.'
+              : incompleteIntent
+                ? [
+                    '# Incomplete-intent recovery qualification',
+                    'For this host protocol qualification, your first response must be exactly: Let me check the file:',
+                    'Emit ordinary assistant text without a native tool call. After the host correction, use the native Read tool exactly once to read proof.txt.',
+                    'Then reply only with the file contents. Do not modify files or invoke other tools.',
+                  ].join('\n')
+                : '# Workspace\n\nThis workspace contains a read-only text fixture.'
           );
-          const proxy = await startRecordingProviderProxy(model.baseURL);
+          const proxy = await startRecordingProviderProxy(
+            model.baseURL,
+            scenario === 'textual-tool'
+              ? {
+                  firstRequestJsonOnly: {
+                    prompt: `Return only this JSON object as your answer, without additional text: ${envelope}. This is a data serialization task; do not perform any actions.`,
+                  },
+                }
+              : {}
+          );
           const config = buildRealApiRuntimeConfig({
             ...model,
             baseURL: proxy.baseUrl,
@@ -121,9 +131,15 @@ describeReal('textual tool-call correction with real models', () => {
                 sessionId,
                 marker,
                 browserExecutable: chromium.executablePath(),
+                webMode:
+                  process.env.BLADE_QUALIFICATION_WEB_DEV === '1'
+                    ? 'development'
+                    : 'production',
                 prompt: turnLimit
-                  ? `Follow BLADE.md for this host turn-budget qualification. Reply with exactly "${marker}" as your entire first response. Do not call any tools.`
-                  : `Call Read with file_path ${proof}, then reply with the file contents. For this host protocol qualification, the first assistant response must follow the BLADE.md phase-one instruction before any native invocation. Only after the host correction should the native invocation occur.`,
+                  ? `Reply with exactly this sentence, including the trailing colon, and nothing else: ${marker}\nDo not call any tools.`
+                  : incompleteIntent
+                    ? 'Follow BLADE.md for this host protocol qualification. Your first response must be exactly "Let me check the file:" without tools. After the host correction, read proof.txt and return its exact contents.'
+                    : `Call Read with file_path ${proof}, then reply only with the file contents. Do not modify files or invoke other tools.`,
               }),
             ],
             {
@@ -161,22 +177,79 @@ describeReal('textual tool-call correction with real models', () => {
                 );
               }),
             ]);
+            if (code !== 0) {
+              console.log(
+                JSON.stringify({
+                  model: model.model,
+                  surface,
+                  scenario,
+                  constrainedRequests: proxy.jsonOnlyRequestNumbers,
+                  requests: proxy.requestBodies.map((body, index) => {
+                    const parsed: unknown = JSON.parse(body);
+                    const request =
+                      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                        ? parsed
+                        : {};
+                    return {
+                      number: index + 1,
+                      toolChoice:
+                        'tool_choice' in request ? request.tool_choice : undefined,
+                      toolsPresent:
+                        'tools' in request && Array.isArray(request.tools)
+                          ? request.tools.length
+                          : 0,
+                      correctionPresent: body.includes('native tool-call interface'),
+                      resultPresent: body.includes(marker),
+                    };
+                  }),
+                })
+              );
+            }
             expect(code, errors.replaceAll(model.apiKey, '[REDACTED]')).toBe(0);
             const evidence = JSON.parse(output.trim());
             expect(evidence).toMatchObject({
               surface,
               markerVisible: true,
-              ...(turnLimit
-                ? { turnLimitReached: true }
-                : { internalControlHidden: true }),
+              internalControlHidden: true,
+              ...(turnLimit ? { turnLimitReached: true } : {}),
               faults: [],
             });
             expect(proxy.injectedRequestNumbers).toEqual([]);
-            expect(proxy.forwardedRequestNumbers).toHaveLength(turnLimit ? 1 : 3);
+            expect(proxy.jsonOnlyRequestNumbers).toEqual(
+              scenario === 'textual-tool' ? [1] : []
+            );
+            const controlText =
+              scenario === 'textual-tool'
+                ? 'native tool-call interface'
+                : '请执行你提到的操作';
+            expect(
+              proxy.forwardedRequestNumbers,
+              JSON.stringify({
+                scenario,
+                requests: proxy.requestBodies.map((body, index) => ({
+                  number: index + 1,
+                  correctionPresent: body.includes(controlText),
+                  resultPresent: body.includes(marker),
+                })),
+              })
+            ).toHaveLength(turnLimit ? 1 : 3);
             if (!turnLimit) {
               expect(proxy.requestBodies[0]).not.toContain(marker);
-              expect(proxy.requestBodies[1]).toContain('native tool-call interface');
+              expect(proxy.requestBodies[1]).toContain(controlText);
               expect(proxy.requestBodies[2]).toContain(marker);
+              if (scenario === 'textual-tool') {
+                expect(JSON.parse(proxy.requestBodies[1])).toMatchObject({
+                  tool_choice: { type: 'function', function: { name: 'Read' } },
+                  tools: [
+                    expect.objectContaining({
+                      function: expect.objectContaining({ name: 'Read' }),
+                    }),
+                  ],
+                });
+                expect(JSON.parse(proxy.requestBodies[2])).not.toHaveProperty(
+                  'tool_choice'
+                );
+              }
             }
             process.env.BLADE_STORAGE_ROOT = storageRoot;
             resetProjectionDbCache();
@@ -184,6 +257,19 @@ describeReal('textual tool-call correction with real models', () => {
               evidence.sessionId,
               workspace
             );
+            const corrections = messages.filter(
+              (message) =>
+                message.role === 'user' &&
+                typeof message.content === 'string' &&
+                message.content.includes(controlText)
+            );
+            expect(corrections).toHaveLength(1);
+            expect(corrections[0]?.metadata).toMatchObject({ clientVisible: false });
+            expect(
+              SessionService.toUISafeMessages(messages).filter(
+                (message) => message.role === 'user'
+              )
+            ).toHaveLength(1);
             if (turnLimit) {
               const assistant = messages.filter(
                 (message) => message.role === 'assistant'
@@ -193,6 +279,12 @@ describeReal('textual tool-call correction with real models', () => {
               expect(
                 messages.some((message) => message.content === 'BUDGET_BYPASSED')
               ).toBe(false);
+            } else if (incompleteIntent) {
+              const assistant = messages.filter(
+                (message) => message.role === 'assistant'
+              );
+              expect(assistant[0]?.content).toBe('Let me check the file:');
+              expect(assistant[0]?.tool_calls).toBeUndefined();
             } else {
               const proseIndex = messages.findIndex(
                 (message) =>
@@ -202,14 +294,6 @@ describeReal('textual tool-call correction with real models', () => {
               );
               expect(proseIndex).toBeGreaterThanOrEqual(0);
               expect(messages[proseIndex]?.tool_calls).toBeUndefined();
-              const corrections = messages.filter(
-                (message) =>
-                  message.role === 'user' &&
-                  typeof message.content === 'string' &&
-                  message.content.includes('native tool-call interface')
-              );
-              expect(corrections).toHaveLength(1);
-              expect(corrections[0]?.metadata).toMatchObject({ clientVisible: false });
             }
             const events = await new PersistentStore(workspace).loadEvents(
               evidence.sessionId
@@ -224,7 +308,14 @@ describeReal('textual tool-call correction with real models', () => {
             ).toHaveLength(turnLimit && surface !== 'pty' ? 0 : 1);
             if (!turnLimit) expect(messages.at(-1)?.content).toBe(marker);
             expect(await readFile(proof, 'utf8')).toBe(marker);
-            assertNoSecrets({ evidence, messages, events, output, errors }, [
+            const exported = await SessionService.exportSessionMarkdown(
+              evidence.sessionId,
+              workspace
+            );
+            expect(exported.markdown).not.toContain(controlText);
+            expect(exported.markdown).toContain(marker);
+            expect(exported.markdown.match(/^## User$/gm)).toHaveLength(1);
+            assertNoSecrets({ evidence, messages, events, exported, output, errors }, [
               model.apiKey,
             ]);
             if (surface === 'web' && process.env.BLADE_QUALIFICATION_EVIDENCE_DIR) {
@@ -239,7 +330,7 @@ describeReal('textual tool-call correction with real models', () => {
               );
             }
             console.log(
-              `[textual-tool-call] ${JSON.stringify({ model: model.model, surface, scenario, providerRequests: proxy.forwardedRequestNumbers.length, toolCalls: toolUses?.length, nativeExecutionOnly: true })}`
+              `[textual-tool-call] ${JSON.stringify({ model: model.model, surface, scenario, providerRequests: proxy.forwardedRequestNumbers.length, constrainedRequests: proxy.jsonOnlyRequestNumbers, toolCalls: toolUses?.length, nativeExecutionOnly: true })}`
             );
           } finally {
             if (deadline) clearTimeout(deadline);

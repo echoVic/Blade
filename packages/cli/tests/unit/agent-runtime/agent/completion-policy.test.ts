@@ -186,6 +186,22 @@ describe('completionPolicy', () => {
       });
     });
 
+    it('identifies a single requested tool without promoting textual arguments', () => {
+      expect(checkTextualToolCall(envelope, 'Call Read.', ['Read'], 0)).toMatchObject({
+        action: 'retry',
+        toolName: 'Read',
+      });
+      const multiple = JSON.stringify({
+        tool_calls: [
+          { name: 'Read', arguments: { path: 'a' } },
+          { name: 'Bash', arguments: { command: 'pwd' } },
+        ],
+      });
+      expect(
+        checkTextualToolCall(multiple, 'Call Read. Call Bash.', ['Read', 'Bash'], 0)
+      ).not.toHaveProperty('toolName');
+    });
+
     it('does not suggest unavailable or differently named tools', () => {
       expect(checkTextualToolCall(envelope, 'Call Read.', [], 0)).toEqual({
         action: 'none',

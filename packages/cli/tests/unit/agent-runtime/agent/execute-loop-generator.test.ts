@@ -3112,14 +3112,9 @@ describe('executeLoopGenerator', () => {
             : label === 'required delegation'
               ? 'Delegate the implementation inspection to a subagent.'
               : 'Inspect the file.';
+        const context = createMockContext();
         const { events, result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            request,
-            createMockContext(),
-            options,
-            'ROOT_SYSTEM_PROMPT'
-          )
+          executeLoopGenerator(deps, request, context, options, 'ROOT_SYSTEM_PROMPT')
         );
         expect(result).toMatchObject({
           success: false,
@@ -3135,6 +3130,19 @@ describe('executeLoopGenerator', () => {
           )
         ).toBe(true);
         expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+        const controls = saveMessage.mock.calls.filter(
+          (call) => call[1] === 'user' && call[2] !== request
+        );
+        expect(controls).toHaveLength(1);
+        expect(controls[0]?.[4]).toMatchObject({ clientVisible: false });
+        expect(context.messages.at(-1)?.metadata).toMatchObject({
+          clientVisible: false,
+        });
+        expect(
+          SessionService.toUISafeMessages(context.messages).map(
+            (message) => message.content
+          )
+        ).toEqual([request, content]);
       }
     );
 
@@ -3263,7 +3271,7 @@ describe('executeLoopGenerator', () => {
         shouldStop: false,
         continueReason: 'Keep inspecting the file.',
       });
-      const { deps } = createTypedPersistenceHarness();
+      const { deps, saveMessage } = createTypedPersistenceHarness();
       deps.runtimeOptions.maxTurns = 1;
       const chat = vi
         .mocked(deps.chatService.chat)
@@ -3283,6 +3291,11 @@ describe('executeLoopGenerator', () => {
         metadata: { turnsCount: 1 },
       });
       expect(chat).toHaveBeenCalledOnce();
+      const control = saveMessage.mock.calls.find(
+        (call) =>
+          typeof call[2] === 'string' && call[2].includes('Keep inspecting the file.')
+      );
+      expect(control?.[4]).toEqual({ clientVisible: false });
     });
 
     it('leaves input queued after the final tool round for the next turn', async () => {
@@ -3400,6 +3413,13 @@ describe('executeLoopGenerator', () => {
       );
       expect(onTurnLimitReached).toHaveBeenCalledExactlyOnceWith({ turnsCount: 1 });
       expect(saveCompaction).toHaveBeenCalledOnce();
+      const replacement = saveCompaction.mock.calls[0]?.[2]?.replacementMessages;
+      expect(replacement?.at(-1)?.metadata).toMatchObject({ clientVisible: false });
+      expect(
+        SessionService.toUISafeMessages(replacement ?? []).map(
+          (message) => message.content
+        )
+      ).toEqual(['Inspect the file.']);
       expect(result).toMatchObject({
         success: true,
         finalMessage: 'Continued final answer.',
@@ -4041,12 +4061,178 @@ describe('executeLoopGenerator', () => {
         metadata: { toolCallsCount: 1 },
       });
       expect(chat).toHaveBeenCalledTimes(3);
+      expect(chat.mock.calls[1]?.[3]?.toolChoice).toEqual({
+        type: 'tool',
+        toolName: 'Read',
+      });
+      expect(chat.mock.calls[2]?.[3]?.toolChoice).toBeUndefined();
       expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
       expect(saveToolUse).toHaveBeenCalledOnce();
       const correction = saveMessage.mock.calls.find(
         (call) => call[1] === 'user' && String(call[2]).includes('native tool-call')
       );
       expect(correction?.[4]).toMatchObject({ clientVisible: false });
+    });
+
+    it('clears a textual tool constraint when new user steering changes the task', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        )
+        .mockResolvedValueOnce(finalResponse(120, 'No file access is needed.'));
+      const turnSteering: NonNullable<LoopOptions['turnSteering']> = {
+        drain: vi
+          .fn<NonNullable<LoopOptions['turnSteering']>['drain']>()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'changed-request',
+              content: 'Do not call Read. Explain without file access.',
+              queuedAt: Date.now(),
+              recovered: false,
+            },
+          ])
+          .mockResolvedValue([]),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
+      };
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false, turnSteering },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'No file access is needed.',
+      });
+      expect(chat.mock.calls[1]?.[3]?.toolChoice).toBeUndefined();
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('does not force a tool that already produced a successful result', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce(
+          finalResponse(
+            120,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        )
+        .mockResolvedValueOnce(
+          finalResponse(140, 'The existing read result is enough.')
+        );
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'The existing read result is enough.',
+      });
+      expect(chat.mock.calls[2]?.[3]?.toolChoice).toBeUndefined();
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+    });
+
+    it('fails when a required textual-call correction only promises native execution', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        )
+        .mockResolvedValueOnce(
+          finalResponse(
+            120,
+            'I need to actually invoke the Read tool. Let me do that now.'
+          )
+        );
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+      });
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(chat.mock.calls[1]?.[3]?.toolChoice).toEqual({
+        type: 'tool',
+        toolName: 'Read',
+      });
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('keeps native correction required across output truncation', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(
+        deps.toolExecutor.getRegistry().getFunctionDeclarationsByMode
+      ).mockReturnValue([readTool.getFunctionDeclaration()]);
+      const chat = vi.mocked(deps.chatService.chat);
+      chat
+        .mockResolvedValueOnce(
+          finalResponse(
+            100,
+            '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}'
+          )
+        )
+        .mockResolvedValueOnce({ ...toolResponse(120), finishReason: 'length' })
+        .mockResolvedValue({
+          ...finalResponse(140, 'I need to invoke Read.'),
+          finishReason: 'length',
+        });
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Call Read with path package.json.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'intent_fulfillment_failed' },
+        metadata: { outputTruncated: true },
+      });
+      expect(chat).toHaveBeenCalledTimes(5);
+      for (const call of chat.mock.calls.slice(1)) {
+        expect(call[3]?.toolChoice).toEqual({ type: 'tool', toolName: 'Read' });
+      }
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
     });
 
     it('fails instead of accepting repeated textual tool calls as successful completion', async () => {
@@ -5391,6 +5577,7 @@ describe('executeLoopGenerator', () => {
       expect(context.messages).toContainEqual({
         role: 'user',
         content: expect.stringContaining('explicitly required verification'),
+        metadata: { clientVisible: false },
       });
     });
 
@@ -5440,10 +5627,12 @@ describe('executeLoopGenerator', () => {
 
       expect(result.success).toBe(true);
       expect(chatMock).toHaveBeenCalledTimes(2);
-      expect(context.messages).not.toContainEqual({
-        role: 'user',
-        content: expect.stringContaining('explicitly required verification'),
-      });
+      expect(context.messages).not.toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('explicitly required verification'),
+        })
+      );
     });
 
     it('requires a fresh built-in verification Task after a non-trivial change', async () => {
@@ -6316,6 +6505,7 @@ describe('executeLoopGenerator', () => {
         content: expect.stringContaining(
           'Missing successful verification categories: type-check'
         ),
+        metadata: { clientVisible: false },
       });
     });
 
@@ -6381,6 +6571,7 @@ describe('executeLoopGenerator', () => {
       expect(context.messages).toContainEqual({
         role: 'user',
         content: expect.stringContaining('explicitly required delegation'),
+        metadata: { clientVisible: false },
       });
     });
 
@@ -6437,6 +6628,7 @@ describe('executeLoopGenerator', () => {
       expect(context.messages).toContainEqual({
         role: 'user',
         content: expect.stringContaining('explicitly required delegation'),
+        metadata: { clientVisible: false },
       });
     });
 

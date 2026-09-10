@@ -14,7 +14,9 @@ Markdown。导出器读取 JSONL 事件流的稳定快照，并应用所有 `ses
 - durable compaction summary；
 - Session、项目名、模型、创建/更新时间和 active/archived 状态。
 
-system recovery marker 与其他内部 system text 不进入导出。模型 reasoning 默认省略，
+system recovery marker 与其他内部 system text 不进入导出。带 `clientVisible: false` 的消息及其附属内容也不导出，包括 Runtime 纠正与续跑提示；即使启用 reasoning 也不会暴露这些消息。用户自己输入相同文字不会被按内容过滤，模型上下文仍保留内部控制消息。
+
+模型 reasoning 默认省略，
 只有显式 `--reasoning` 或 `includeReasoning=true` 才会包含。reasoning 仍经过与普通
 文本相同的 Unicode 和凭证清理。
 

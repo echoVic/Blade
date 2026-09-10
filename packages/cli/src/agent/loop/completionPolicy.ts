@@ -142,7 +142,7 @@ export function checkTextualToolCall(
   retryCount: number
 ):
   | { action: 'none' }
-  | { action: 'retry'; prompt: string }
+  | { action: 'retry'; prompt: string; toolName?: string }
   | { action: 'fail'; message: string } {
   if (!content || content.length > 65_536 || availableToolNames.length === 0) {
     return { action: 'none' };
@@ -181,6 +181,7 @@ export function checkTextualToolCall(
   )
     return { action: 'none' };
 
+  const requestedToolNames = new Set<string>();
   for (const call of parsed.tool_calls) {
     if (!call || typeof call !== 'object' || Array.isArray(call))
       return { action: 'none' };
@@ -231,9 +232,16 @@ export function checkTextualToolCall(
     );
     if (!explicitCall.test(request) || forbiddenCall.test(request))
       return { action: 'none' };
+    requestedToolNames.add(fn.name);
   }
   return retryCount < MAX_TEXTUAL_TOOL_CALL_RETRIES
-    ? { action: 'retry', prompt: TEXTUAL_TOOL_CALL_RETRY_PROMPT }
+    ? {
+        action: 'retry',
+        prompt: TEXTUAL_TOOL_CALL_RETRY_PROMPT,
+        ...(requestedToolNames.size === 1
+          ? { toolName: [...requestedToolNames][0] }
+          : {}),
+      }
     : { action: 'fail', message: TEXTUAL_TOOL_CALL_FAILURE_MESSAGE };
 }
 

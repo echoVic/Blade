@@ -341,6 +341,14 @@ export function renderSessionMarkdown(
   let reasoningCount = 0;
 
   for (const message of projectMessages(events)) {
+    if (
+      message.metadata &&
+      typeof message.metadata === 'object' &&
+      !Array.isArray(message.metadata) &&
+      message.metadata.clientVisible === false
+    ) {
+      continue;
+    }
     const userShellCommand = userShellCommandRecordFromMetadata(message.metadata);
     if (userShellCommand) {
       const command = sanitizeCredentialText(userShellCommand.command, state);

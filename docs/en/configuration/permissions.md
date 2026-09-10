@@ -216,6 +216,8 @@ Output-length recovery, incomplete-intent correction, structured-output correcti
 
 The interactive TUI asks whether to continue at the limit. Choosing "Continue" compacts the conversation and commits its checkpoint before resetting the round counter; choosing "Stop" ends the task. Cancellation while awaiting this choice ends the task without starting compaction. Non-interactive callers without a continuation callback receive `max_turns_exceeded` without another model request. The exhausted turn's consumed input is acknowledged so Web reload or process recovery cannot automatically replay it; unconsumed follow-up input remains queued.
 
+Runtime-generated correction, Stop hook, and continuation controls remain in model context but are not displayed as user messages in conversation history or exports. Visibility is metadata-based, so identical text entered by the user remains visible; older records without a visibility marker are not guessed from text or rewritten automatically.
+
 ## CLI Arguments
 
 ```bash

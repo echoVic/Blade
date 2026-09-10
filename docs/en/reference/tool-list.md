@@ -8,6 +8,8 @@ Tools execute only through the Provider's native tool-call protocol. If the user
 
 Each loop invocation allows at most two corrections without extending an explicit turn limit. Exhaustion returns `intent_fulfillment_failed` rather than success; this counter is not guaranteed across process recovery. Matching is deliberately limited to bare JSON call envelopes, not mixed prose, fenced code, or unknown formats. Ordinary JSON examples, quoted requests, and structured-output contracts retain their existing behavior. Permissions, skill restrictions, and approval still run through the normal execution pipeline. Internal correction messages are persisted for model continuation but hidden from user-input views.
 
+For an envelope naming a single explicitly requested available tool with no successful result in the current loop, the corrective round requests that native tool. Merely promising execution or exhausting the output budget fails explicitly. The constraint clears after handling its tool result or new user steering; multi-tool envelopes do not arbitrarily force one tool, and textual arguments are never executed directly.
+
 ## File Operations
 
 ACP text-filesystem ownership follows one capability matrix:

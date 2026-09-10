@@ -14,6 +14,7 @@ import type {
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../server/bus.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
+import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../services/clientMessageVisibility.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
@@ -386,7 +387,6 @@ export interface PersistTurnContinuationParams {
   assistantReasoningContent?: string;
   lastMessageUuid: string | null;
   controlPrompt?: string;
-  controlMetadata?: MessagePersistenceMetadata;
 }
 
 export async function persistTurnContinuation(
@@ -400,7 +400,6 @@ export async function persistTurnContinuation(
     assistantReasoningContent,
     lastMessageUuid,
     controlPrompt,
-    controlMetadata,
   } = params;
 
   state.appendAssistant({
@@ -420,17 +419,18 @@ export async function persistTurnContinuation(
   if (assistantUuid) uuid = assistantUuid;
 
   if (controlPrompt !== undefined) {
-    const controlMsg: Message = { role: 'user', content: controlPrompt };
-    if (controlMetadata) {
-      controlMsg.metadata = controlMetadata as unknown as JsonValue;
-    }
+    const controlMsg: Message = {
+      role: 'user',
+      content: controlPrompt,
+      metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
+    };
     state.appendControl('user', controlMsg);
     const userUuid = await saveUserMessage(
       deps,
       context,
-      controlMsg.content as string,
+      controlPrompt,
       uuid,
-      controlMetadata
+      INTERNAL_CONTROL_MESSAGE_METADATA
     );
     if (userUuid) uuid = userUuid;
   }

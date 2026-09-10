@@ -1187,6 +1187,7 @@ validates the object and may return a bounded corrective error.`;
     let delegationRetryCount = 0;
     let verificationRetryCount = 0;
     let requiredToolName: 'Task' | 'Bash' | undefined;
+    let textualCorrectionToolName: string | undefined;
     let worktreeRetryCount = 0;
     let independentVerificationRetryCount = 0;
     let independentVerificationTaskRequired = false;
@@ -1745,6 +1746,7 @@ validates the object and may return a bounded corrective error.`;
                 .map((part) => part.text)
                 .join('\n'));
         if (steering.origin !== 'background_subagent' && steeringText.trim()) {
+          textualCorrectionToolName = undefined;
           activeUserRequest = [activeUserRequest, steeringText].join('\n');
           delegationUserRequests.push(steeringText);
           verificationPolicyRequest = [
@@ -1887,6 +1889,7 @@ validates the object and may return a bounded corrective error.`;
 
                 const continueMessage: Message = {
                   role: 'user',
+                  metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
                   content:
                     'This session is being continued from a previous conversation. ' +
                     'The conversation is summarized above.\n\n' +
@@ -2336,7 +2339,12 @@ validates the object and may return a bounded corrective error.`;
           resolveSingleTaskDelegationRequirement(delegationPolicySources)
             ? tools.filter((tool) => tool.name !== 'Task')
             : tools;
-        const turnRequiredToolName = requiredToolName;
+        const turnTextualCorrectionToolName =
+          textualCorrectionToolName &&
+          availableTurnTools.some((tool) => tool.name === textualCorrectionToolName)
+            ? textualCorrectionToolName
+            : undefined;
+        const turnRequiredToolName = requiredToolName ?? turnTextualCorrectionToolName;
         const turnTools = turnRequiredToolName
           ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
           : availableTurnTools;
@@ -2429,6 +2437,7 @@ validates the object and may return a bounded corrective error.`;
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
+        const replayRequiredToolName = requiredToolName;
         requiredToolName = undefined;
         const requestHistoryLength = state.historyLength + state.pending.length;
         const foregroundProviderRecovery =
@@ -2630,7 +2639,7 @@ validates the object and may return a bounded corrective error.`;
                 // 同步到 state（此时 pending 已被 writeback() commit，为空）
                 state.replaceHistory(context.messages);
                 contextTokenTracker.reset();
-                requiredToolName = turnRequiredToolName;
+                requiredToolName = replayRequiredToolName;
                 outcome = result.strategy === 'llm' ? 'completed' : 'fallback';
                 recovered = true;
                 logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
@@ -2827,6 +2836,7 @@ validates the object and may return a bounded corrective error.`;
           // Inject recovery prompt
           const recoveryMsg: Message = {
             role: 'user',
+            metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
             content:
               'Output token limit hit. Resume directly — no apology, no recap. ' +
               'Pick up mid-thought if that is where the cut happened. ' +
@@ -2839,7 +2849,8 @@ validates the object and may return a bounded corrective error.`;
             deps,
             context,
             recoveryMsg.content as string,
-            lastMessageUuid
+            lastMessageUuid,
+            INTERNAL_CONTROL_MESSAGE_METADATA
           );
           if (recoveryUserUuid) lastMessageUuid = recoveryUserUuid;
 
@@ -2860,7 +2871,7 @@ validates the object and may return a bounded corrective error.`;
                   MAX_TEXTUAL_TOOL_CALL_RETRIES
                 )
               : { action: 'none' as const };
-          if (textualToolAction.action === 'fail') {
+          if (textualToolAction.action === 'fail' || turnTextualCorrectionToolName) {
             lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
@@ -2873,7 +2884,10 @@ validates the object and may return a bounded corrective error.`;
               success: false,
               error: {
                 type: 'intent_fulfillment_failed',
-                message: textualToolAction.message,
+                message:
+                  textualToolAction.action === 'fail'
+                    ? textualToolAction.message
+                    : 'The model exhausted its output budget before invoking the required native tool.',
               },
               metadata: {
                 turnsCount,
@@ -3056,7 +3070,8 @@ validates the object and may return a bounded corrective error.`;
               deps,
               context,
               retryPrompt,
-              lastMessageUuid
+              lastMessageUuid,
+              INTERNAL_CONTROL_MESSAGE_METADATA
             );
             if (retryUserUuid) lastMessageUuid = retryUserUuid;
             continue;
@@ -3081,7 +3096,6 @@ validates the object and may return a bounded corrective error.`;
               ...(textualToolAction.action === 'retry'
                 ? {
                     controlPrompt: textualToolAction.prompt,
-                    controlMetadata: INTERNAL_CONTROL_MESSAGE_METADATA,
                   }
                 : {}),
             });
@@ -3101,7 +3115,36 @@ validates the object and may return a bounded corrective error.`;
               };
             }
             textualToolCallRetryCount++;
+            textualCorrectionToolName =
+              textualToolAction.toolName &&
+              !successfulTools.has(textualToolAction.toolName)
+                ? textualToolAction.toolName
+                : undefined;
             continue;
+          }
+          if (turnTextualCorrectionToolName) {
+            lastMessageUuid = await persistTurnContinuation({
+              deps,
+              context,
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+            });
+            return {
+              success: false,
+              error: {
+                type: 'intent_fulfillment_failed',
+                message:
+                  'The model did not invoke the required native tool after correcting a textual tool call.',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
           }
 
           const emptyFinalAction = await handleEmptyFinalCandidate(turnResult);
@@ -3278,7 +3321,6 @@ validates the object and may return a bounded corrective error.`;
               assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
               controlPrompt: independentVerificationAction.prompt,
-              controlMetadata: INTERNAL_CONTROL_MESSAGE_METADATA,
             });
             continue;
           }
@@ -3930,6 +3972,9 @@ validates the object and may return a bounded corrective error.`;
             function: { name: string; arguments: string };
           };
           allToolResults.push(result);
+          if (toolCall.function.name === turnTextualCorrectionToolName) {
+            textualCorrectionToolName = undefined;
+          }
 
           // Even a pre-launch abort must close the provider-visible assistant
           // tool call before an interrupted session can be resumed. Persist the

@@ -12,7 +12,9 @@ Default export includes:
 - durable compaction summary;
 - Session, project name, model, creation/update times, and active/archived status.
 
-System recovery markers and other internal system text do not enter the export. Model reasoning is omitted by default and only included with explicit `--reasoning` or `includeReasoning=true`. Reasoning still undergoes the same Unicode and credential cleaning as ordinary text.
+System recovery markers and other internal system text do not enter the export. Messages marked `clientVisible: false` and their parts are also excluded, including Runtime correction and continuation prompts, even when reasoning is enabled. Identical text entered by the user is not filtered by content, and internal controls remain in model context.
+
+Model reasoning is omitted by default and only included with explicit `--reasoning` or `includeReasoning=true`. Reasoning still undergoes the same Unicode and credential cleaning as ordinary text.
 
 Each file header contains:
 

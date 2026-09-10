@@ -146,6 +146,70 @@ describe('recording Provider proxy one-shot failure injection', () => {
     expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
   });
 
+  it('requests JSON-only text on the first request without replacing responses', async () => {
+    const receivedBodies: unknown[] = [];
+    const upstreamServer = createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        receivedBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        response.setHeader('content-type', 'text/event-stream');
+        response.end('data: unchanged-upstream-response\n\n');
+      })();
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstreamServer.once('error', reject);
+      upstreamServer.listen(0, '127.0.0.1', resolve);
+    });
+    closers.push(async () => {
+      upstreamServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    });
+    const address = upstreamServer.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test port');
+    const proxy = await startRecordingProviderProxy(
+      `http://127.0.0.1:${address.port}/v1`,
+      { firstRequestJsonOnly: { prompt: 'Return the requested JSON object.' } }
+    );
+    closers.unshift(proxy.close);
+    const request = {
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'Call Read.' }],
+      tools: [{ type: 'function', function: { name: 'Read' } }],
+      tool_choice: 'auto',
+      stream: true,
+    };
+    for (let index = 0; index < 2; index++) {
+      const response = await fetch(`${proxy.baseUrl}/chat/completions`, {
+        method: 'POST',
+        body: JSON.stringify(request),
+        headers: { 'content-type': 'application/json' },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('data: unchanged-upstream-response\n\n');
+    }
+    expect(receivedBodies).toEqual([
+      {
+        model: request.model,
+        messages: [{ role: 'user', content: 'Return the requested JSON object.' }],
+        stream: true,
+        response_format: { type: 'json_object' },
+      },
+      request,
+    ]);
+    expect(proxy.requestBodies.map((body) => JSON.parse(body))).toEqual([
+      request,
+      request,
+    ]);
+    expect(proxy.jsonOnlyRequestNumbers).toEqual([1]);
+    expect(proxy.injectedRequestNumbers).toEqual([]);
+    expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+  });
+
   it('records a bounded structural lifecycle for a held upstream request', async () => {
     const secret = 'proxy-lifecycle-secret';
     const { proxy } = await createProxy({

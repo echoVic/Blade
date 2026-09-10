@@ -22,6 +22,7 @@
  */
 
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../services/clientMessageVisibility.js';
 import type { ChatContext } from '../types.js';
 
 /**
@@ -193,7 +194,17 @@ export class ConversationState {
         'Cannot append system control message via appendControl. Use constructor for root system prompt.'
       );
     }
-    this._pending.push(msg);
+    this._pending.push({
+      ...msg,
+      metadata: {
+        ...(msg.metadata &&
+        typeof msg.metadata === 'object' &&
+        !Array.isArray(msg.metadata)
+          ? msg.metadata
+          : {}),
+        ...INTERNAL_CONTROL_MESSAGE_METADATA,
+      },
+    });
   }
 
   appendDurableControl(message: Message): void {
