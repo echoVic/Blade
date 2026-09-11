@@ -151,6 +151,20 @@ describeDurableUnread('Durable task unread Web trajectory (real API)', () => {
             archiveEnabled: true,
             selectionPreserved: true,
           },
+          switcherIme: [
+            {
+              mode: 'tasks',
+              trustedComposition: true,
+              candidateKeysIsolated: true,
+              ordinaryEscapeCloses: true,
+            },
+            {
+              mode: 'commands',
+              trustedComposition: true,
+              candidateKeysIsolated: true,
+              ordinaryEscapeCloses: true,
+            },
+          ],
           unreadAfterMissedCompletion: {
             browserUnread: true,
             siblingUnread: true,

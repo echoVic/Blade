@@ -90,6 +90,7 @@ Web:
 - Inherited-archive descendants show the archive root and disable incorrect local restore operations.
 - After restoration, Session returns to project-level navigation and can continue the original transcript.
 - The task switcher preserves keyboard focus by the full workspace and session identity while its live results reorder. Background task insertion or status changes cannot redirect Enter to another task; archiving, deleting, or filtering out the highlighted result selects the first remaining item, and empty results perform no selection.
+- Task and action searches leave Enter, arrow keys, and Escape to the input method during composition. Confirming a candidate does not open a task or execute an action, and cancelling a candidate does not dismiss the dialog. Normal keyboard actions resume after composition ends.
 
 ACP:
 
@@ -107,6 +108,8 @@ Deterministic tests cover:
 - Runtime, Web, TUI, and ACP write blocking.
 - SQLite/JSONL parity, cross-workspace identity, and Bus multi-tab convergence.
 - Web Popover keyboard focus, Archive/Restore actions, and current Session cleanup.
+
+Task-switcher IME regressions cover composition lifecycle, native `isComposing`, and legacy 229 events. Development GUI and real DeepSeek Flash/Pro production Chromium trajectories use CDP `Input.imeSetComposition` and verify `isTrusted`, `isComposing`, highlighting, and the selected Session URL. This qualifies browser-side composition, not manual acceptance of the macOS native candidate window.
 
 Real GPT qualification executes two model turns: archive after the first turn, proving both Runtime and metadata writes are rejected; after restoration, complete the second turn from the same durable history.
 

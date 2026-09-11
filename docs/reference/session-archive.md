@@ -116,6 +116,7 @@ Web：
 - 继承归档的后代展示归档根，并禁用错误的局部恢复操作。
 - 恢复后 Session 回到项目一级导航，可继续原 transcript。
 - 任务切换器实时更新排序时按完整工作区与会话身份保留键盘高亮，后台任务插入或状态变化不会让 Enter 打开另一项任务；选中项被归档、删除或移出搜索结果时回到首项，空结果不执行选择。
+- 任务搜索与操作搜索在输入法组合期间不将 Enter、方向键或 Escape 当成应用快捷键；候选确认不会打开任务或执行命令，取消候选不会关闭弹窗。组合结束后恢复正常键盘操作。
 
 ACP：
 
@@ -134,6 +135,8 @@ ACP：
 - Runtime、Web、TUI 和 ACP 写入阻断。
 - SQLite/JSONL parity、跨 workspace identity 和 Bus 多 tab 收敛。
 - Web Popover 键盘焦点、Archive/Restore action 和 current Session 清理。
+
+任务切换器的输入法回归覆盖组合生命周期、原生 `isComposing` 与 229 兼容事件。开发 GUI 和真实 DeepSeek Flash/Pro 生产 Chromium 流程使用 CDP `Input.imeSetComposition`，并检查浏览器事件的 `isTrusted`、`isComposing`、高亮和会话地址；这验证浏览器内组合输入，不代表 macOS 原生候选窗口已人工验收。
 
 真实 GPT 资格执行两次模型回合：第一回合后归档，证明 Runtime 与 metadata 写入均被
 拒绝；恢复后从同一 durable history 完成第二回合。

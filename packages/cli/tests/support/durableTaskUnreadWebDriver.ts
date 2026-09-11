@@ -46,6 +46,12 @@ export interface DurableTaskUnreadWebEvidence {
     archiveEnabled: true;
     selectionPreserved: true;
   };
+  switcherIme: Array<{
+    mode: 'tasks' | 'commands';
+    trustedComposition: true;
+    candidateKeysIsolated: true;
+    ordinaryEscapeCloses: true;
+  }>;
   unreadAfterMissedCompletion: UnreadCheckpoint;
   unreadAfterReload: UnreadCheckpoint;
   titleCountAfterReload: number;
@@ -198,6 +204,109 @@ async function openTaskSwitcher(page: Page): Promise<void> {
     state: 'visible',
     timeout: 30_000,
   });
+}
+
+async function verifySwitcherIme(
+  page: Page
+): Promise<DurableTaskUnreadWebEvidence['switcherIme']> {
+  const cdp = await page.context().newCDPSession(page);
+  const selectedUrl = page.url();
+  const evidence: DurableTaskUnreadWebEvidence['switcherIme'] = [];
+  try {
+    for (const [mode, query] of [
+      ['tasks', 'Unread'],
+      ['commands', 'settings'],
+    ] as const) {
+      await openTaskSwitcher(page);
+      await page
+        .getByRole('tab', { name: mode === 'tasks' ? 'Tasks' : 'Actions', exact: true })
+        .click();
+      const search = page.getByRole('combobox');
+      await search.fill('');
+      await search.evaluate((input) => {
+        input.setAttribute('data-ime-start', 'false');
+        input.setAttribute('data-ime-keys', '[]');
+        input.addEventListener('compositionstart', (event) => {
+          input.setAttribute('data-ime-start', String(event.isTrusted));
+        });
+        input.addEventListener('keydown', (event) => {
+          if (!(event instanceof KeyboardEvent)) return;
+          const keys: unknown = JSON.parse(input.getAttribute('data-ime-keys') ?? '[]');
+          if (!Array.isArray(keys)) throw new Error('Invalid IME evidence');
+          input.setAttribute(
+            'data-ime-keys',
+            JSON.stringify([
+              ...keys,
+              {
+                key: event.key,
+                trusted: event.isTrusted,
+                composing: event.isComposing,
+              },
+            ])
+          );
+        });
+      });
+      for (const key of ['ArrowDown', 'ArrowUp', 'Escape', 'Enter']) {
+        await cdp.send('Input.imeSetComposition', {
+          text: query,
+          selectionStart: 0,
+          selectionEnd: query.length,
+        });
+        await page
+          .locator('[role="option"][aria-selected="true"]')
+          .waitFor({ state: 'visible' });
+        const before = await search.getAttribute('aria-activedescendant');
+        if (!before || (await search.inputValue()) !== query)
+          throw new Error('IME search did not produce an active result');
+        await search.press(key);
+        if (
+          !(await search.isVisible()) ||
+          (await search.getAttribute('aria-activedescendant')) !== before ||
+          page.url() !== selectedUrl
+        ) {
+          throw new Error(`IME ${key} changed the ${mode} switcher selection`);
+        }
+      }
+      const trusted = await search.evaluate((input) => {
+        const value: unknown = JSON.parse(input.getAttribute('data-ime-keys') ?? '[]');
+        return (
+          input.getAttribute('data-ime-start') === 'true' &&
+          Array.isArray(value) &&
+          ['ArrowDown', 'ArrowUp', 'Escape', 'Enter'].every((key) =>
+            value.some(
+              (entry: unknown) =>
+                entry !== null &&
+                typeof entry === 'object' &&
+                'key' in entry &&
+                entry.key === key &&
+                'trusted' in entry &&
+                entry.trusted === true &&
+                'composing' in entry &&
+                entry.composing === true
+            )
+          )
+        );
+      });
+      if (!trusted)
+        throw new Error('IME qualification did not receive trusted composing keys');
+      await cdp.send('Input.imeSetComposition', {
+        text: '',
+        selectionStart: 0,
+        selectionEnd: 0,
+      });
+      await search.press('Escape');
+      await page.getByRole('dialog').waitFor({ state: 'hidden' });
+      evidence.push({
+        mode,
+        trustedComposition: true,
+        candidateKeysIsolated: true,
+        ordinaryEscapeCloses: true,
+      });
+    }
+  } finally {
+    await cdp.detach();
+  }
+  return evidence;
 }
 
 function attachFaultCollection(
@@ -551,6 +660,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
         'TaskSwitcher Enter opened a task other than the highlighted session'
       );
     }
+    const switcherIme = await verifySwitcherIme(livePage);
     const siblingRef = await input.seedSibling(backgroundTask);
     if (siblingRef.sessionId !== backgroundTask.sessionId) {
       throw new Error('Sibling fixture did not preserve the shared session ID');
@@ -798,6 +908,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
         archiveEnabled: true,
         selectionPreserved: true,
       },
+      switcherIme,
       unreadAfterMissedCompletion,
       unreadAfterReload,
       titleCountAfterReload,

@@ -142,6 +142,47 @@ with sync_playwright() as p:
         highlighted = page.locator('[role="option"][aria-selected="true"]')
         expect(options).to_have_count(2)
         expect(highlighted).to_contain_text('SWITCHER TWO')
+        ime = page.context.new_cdp_session(page)
+        ime_evidence = []
+        for mode, query in [('tasks', 'SWITCHER'), ('commands', '设置')]:
+            mode_tab = page.get_by_role('tab', name='任务' if mode == 'tasks' else '操作', exact=True)
+            mode_tab.click()
+            expect(mode_tab).to_have_attribute('aria-selected', 'true')
+            search = page.get_by_role('combobox')
+            search.fill('')
+            search.evaluate('''input => {
+                input.dataset.imeEvents = '[]';
+                for (const type of ['compositionstart', 'compositionend', 'keydown']) {
+                    input.addEventListener(type, event => {
+                        const events = JSON.parse(input.dataset.imeEvents);
+                        events.push({type, trusted: event.isTrusted, key: event.key, composing: event.isComposing});
+                        input.dataset.imeEvents = JSON.stringify(events);
+                    });
+                }
+            }''')
+            for key in ['ArrowDown', 'ArrowUp', 'Escape', 'Enter']:
+                ime.send('Input.imeSetComposition', {'text': query, 'selectionStart': 0, 'selectionEnd': len(query)})
+                expect(search).to_have_value(query)
+                expect(highlighted).to_have_count(1)
+                before = search.get_attribute('aria-activedescendant')
+                search.press(key)
+                expect(search).to_be_visible()
+                assert search.get_attribute('aria-activedescendant') == before
+                expect(page).to_have_url(selected_url)
+            events = json.loads(search.get_attribute('data-ime-events'))
+            assert any(event['type'] == 'compositionstart' and event['trusted'] for event in events), events
+            for key in ['ArrowDown', 'ArrowUp', 'Escape', 'Enter']:
+                assert any(event.get('key') == key and event.get('composing') and event['trusted'] for event in events), events
+            ime.send('Input.imeSetComposition', {'text': '', 'selectionStart': 0, 'selectionEnd': 0})
+            search.press('Escape')
+            expect(search).to_have_count(0)
+            ime_evidence.append({'mode': mode, 'trustedComposition': True, 'candidateKeysIsolated': True, 'ordinaryEscapeCloses': True})
+            if mode == 'tasks':
+                page.keyboard.press('Control+k')
+        ime.detach()
+        page.keyboard.press('Control+k')
+        task_search.fill('SWITCHER')
+        expect(highlighted).to_contain_text('SWITCHER TWO')
         task_search.press('ArrowDown')
         expect(highlighted).to_contain_text('SWITCHER ONE')
         archived_switcher = observer.request.post(f'{origin}/sessions/{switcher_tasks[1]["sessionId"]}/archive', params={'projectPath': foreground['projectPath']})
@@ -265,6 +306,6 @@ with sync_playwright() as p:
         if catalog_console_errors:
             assert catalog_failures, catalog_console_errors
         assert faults == [], faults
-        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "taskSwitcher": {"insertionPreserved": True, "archivePreserved": True, "removedSelectionReset": True, "emptySearchSafe": True, "enterSelectedExactSession": True}, "skills": {"unsafeInstallRejected": True, "traversalRejected": True, "bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True, "catalogRequestedOnDemand": True, "catalogRequests": len(catalog_requests), "catalogFailures": catalog_failures, "catalogConsoleErrors": catalog_console_errors}, "faults": faults}))
+        print(json.dumps({"orphanInterrupted": True, "activeRunning": True, "stopRemoved": True, "activeArchiveBlocked": True, "orphanArchived": True, "lifecycle": {"handshakeGapRecovered": True, "createdWithoutReload": True, "archivedAcrossPages": True, "restoredAcrossPages": True, "deletedAcrossPages": True, "selectionPreserved": True}, "taskSwitcher": {"insertionPreserved": True, "archivePreserved": True, "removedSelectionReset": True, "emptySearchSafe": True, "enterSelectedExactSession": True, "ime": ime_evidence}, "skills": {"unsafeInstallRejected": True, "traversalRejected": True, "bundledWithoutDownload": True, "explicitLocalInstall": True, "uninstallRestoresBuiltin": True, "localSourcePreserved": True, "catalogRequestedOnDemand": True, "catalogRequests": len(catalog_requests), "catalogFailures": catalog_failures, "catalogConsoleErrors": catalog_console_errors}, "faults": faults}))
     finally:
         browser.close()
