@@ -107,6 +107,7 @@ export function TaskSwitcher() {
   const [actionError, setActionError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
 
   const commands = useMemo<CommandCenterAction[]>(
     () => [
@@ -256,6 +257,7 @@ export function TaskSwitcher() {
     mode === 'commands' ? (commandResults[selectedIndex] ?? null) : null;
 
   useEffect(() => {
+    composingRef.current = false;
     if (!open) return;
     setQuery('');
     setSelectingKey(null);
@@ -324,7 +326,11 @@ export function TaskSwitcher() {
     requestAnimationFrame(command.run);
   };
 
+  const isCompositionKey = (event: KeyboardEvent) =>
+    composingRef.current || event.isComposing || event.keyCode === 229;
+
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isCompositionKey(event.nativeEvent)) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setSelectedIndex(
@@ -355,6 +361,9 @@ export function TaskSwitcher() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         hideCloseButton
+        onEscapeKeyDown={(event) => {
+          if (isCompositionKey(event)) event.preventDefault();
+        }}
         onCloseAutoFocus={restoreMobileNavigationFocus}
         className="top-3 w-[min(680px,calc(100vw-32px))] max-w-none translate-y-0 gap-0 overflow-hidden rounded-xl border-[hsl(var(--deck-border-strong))] bg-[hsl(var(--deck-canvas))] p-0 shadow-2xl sm:top-[18%]"
       >
@@ -388,6 +397,15 @@ export function TaskSwitcher() {
             )}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onBlur={() => {
+              composingRef.current = false;
+            }}
             onKeyDown={handleInputKeyDown}
             className="h-full min-w-0 flex-1 bg-transparent font-mono text-[14px] text-[hsl(var(--deck-ink))] outline-none placeholder:text-[hsl(var(--deck-ink-faint))]"
           />
