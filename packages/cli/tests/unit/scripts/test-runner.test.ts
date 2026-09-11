@@ -74,6 +74,185 @@ describe('test runner timeout selection', () => {
   });
 });
 
+describe('real API project scheduling', () => {
+  it.each([
+    {
+      ci: undefined,
+      realApi: undefined,
+      release: undefined,
+      workers: 4,
+      parallel: true,
+      retry: 1,
+    },
+    { ci: 'false', realApi: '0', release: '1', workers: 4, parallel: true, retry: 0 },
+    {
+      ci: 'false',
+      realApi: 'true',
+      release: undefined,
+      workers: 4,
+      parallel: true,
+      retry: 1,
+    },
+    {
+      ci: undefined,
+      realApi: '1',
+      release: undefined,
+      workers: 1,
+      parallel: false,
+      retry: 1,
+    },
+    { ci: 'false', realApi: '1', release: '1', workers: 1, parallel: false, retry: 0 },
+    {
+      ci: 'true',
+      realApi: undefined,
+      release: undefined,
+      workers: 1,
+      parallel: false,
+      retry: 1,
+    },
+    { ci: 'true', realApi: '1', release: '1', workers: 1, parallel: false, retry: 0 },
+  ])(
+    'preserves isolation and scheduling for $ci / $realApi / $release',
+    async (mode) => {
+      vi.resetModules();
+      vi.stubEnv('CI', mode.ci);
+      vi.stubEnv('REAL_API_TEST', mode.realApi);
+      vi.stubEnv('REAL_API_RELEASE_MATRIX', mode.release);
+      try {
+        const { default: config } = await import('../../../vitest.config.js');
+        if (!config || typeof config !== 'object')
+          throw new Error('Missing test configuration');
+        const project = config.test?.projects?.find(
+          (entry) =>
+            typeof entry === 'object' &&
+            entry !== null &&
+            'test' in entry &&
+            entry.test?.name === 'real-api'
+        );
+        expect(project).toMatchObject({
+          test: {
+            name: 'real-api',
+            pool: 'forks',
+            fileParallelism: mode.parallel,
+            maxWorkers: mode.workers,
+            include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
+            setupFiles: ['./tests/support/setup.real-api.ts'],
+            retry: mode.retry,
+            testTimeout: 300000,
+            hookTimeout: 300000,
+          },
+        });
+        expect(config.test?.isolate).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      }
+    }
+  );
+});
+
+describe('real API setup import boundary', () => {
+  it('preserves a caller-owned storage root when real API execution is disabled', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-bootstrap-owned-'));
+    tempRoots.push(root);
+    const cleanups: Array<() => void> = [];
+    vi.resetModules();
+    vi.stubEnv('REAL_API_TEST', '0');
+    vi.stubEnv('BLADE_STORAGE_ROOT', root);
+    vi.stubEnv('NODE_ENV', process.env.NODE_ENV);
+    vi.stubEnv('TEST_MODE', process.env.TEST_MODE);
+    vi.stubEnv('LOG_LEVEL', process.env.LOG_LEVEL);
+    vi.doMock('vitest', () => ({
+      afterAll: (cleanup: () => void) => cleanups.push(cleanup),
+    }));
+    try {
+      await import('../../support/setup.real-api.js');
+      expect(process.env.BLADE_STORAGE_ROOT).toBe(root);
+      expect(cleanups).toHaveLength(0);
+      await expect(access(root)).resolves.toBeUndefined();
+    } finally {
+      vi.doUnmock('vitest');
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it('loads configuration when real API execution is explicitly enabled', async () => {
+    const requested: string[] = [];
+    const cleanups: Array<() => void> = [];
+    vi.resetModules();
+    vi.stubEnv('REAL_API_TEST', '1');
+    vi.stubEnv('BLADE_STORAGE_ROOT', undefined);
+    vi.stubEnv('NODE_ENV', process.env.NODE_ENV);
+    vi.stubEnv('TEST_MODE', process.env.TEST_MODE);
+    vi.stubEnv('LOG_LEVEL', process.env.LOG_LEVEL);
+    vi.doMock('vitest', () => ({
+      afterAll: (cleanup: () => void) => cleanups.push(cleanup),
+    }));
+    vi.doMock('../../integration/real-api/testConfig.js', () => {
+      requested.push('config');
+      throw new Error('Enabled setup reached credential configuration');
+    });
+    try {
+      await expect(import('../../support/setup.real-api.js')).rejects.toThrow();
+      expect(requested).toEqual(['config']);
+      expect(cleanups).toHaveLength(1);
+    } finally {
+      for (const cleanup of cleanups) cleanup();
+      vi.doUnmock('vitest');
+      vi.doUnmock('../../integration/real-api/testConfig.js');
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it.each([undefined, '0', 'true'])(
+    'does not load provider or application modules when REAL_API_TEST=%s',
+    async (enabled) => {
+      const imported: string[] = [];
+      const cleanups: Array<() => void> = [];
+      vi.resetModules();
+      vi.stubEnv('REAL_API_TEST', enabled);
+      vi.stubEnv('BLADE_STORAGE_ROOT', undefined);
+      vi.stubEnv('NODE_ENV', process.env.NODE_ENV);
+      vi.stubEnv('TEST_MODE', process.env.TEST_MODE);
+      vi.stubEnv('LOG_LEVEL', process.env.LOG_LEVEL);
+      vi.doMock('vitest', () => ({
+        afterAll: (cleanup: () => void) => cleanups.push(cleanup),
+      }));
+      vi.doMock('../../../src/services/pi/PiModelCatalog.js', () => {
+        imported.push('catalog');
+        throw new Error('Disabled setup loaded the provider catalog');
+      });
+      vi.doMock('../../../src/store/vanilla.js', () => {
+        imported.push('store');
+        throw new Error('Disabled setup loaded the application store');
+      });
+      vi.doMock('../../integration/real-api/testConfig.js', () => {
+        imported.push('config');
+        throw new Error('Disabled setup loaded credential configuration');
+      });
+      try {
+        await import('../../support/setup.real-api.js');
+        expect(imported).toEqual([]);
+        expect(process.env.TEST_MODE).toBe('false');
+        expect(process.env.BLADE_STORAGE_ROOT).toContain('blade-real-api-');
+        expect(cleanups).toHaveLength(1);
+        cleanups[0]?.();
+        expect(process.env.BLADE_STORAGE_ROOT).toBeUndefined();
+      } finally {
+        for (const cleanup of cleanups) cleanup();
+        vi.doUnmock('vitest');
+        vi.doUnmock('../../../src/services/pi/PiModelCatalog.js');
+        vi.doUnmock('../../../src/store/vanilla.js');
+        vi.doUnmock('../../integration/real-api/testConfig.js');
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      }
+    }
+  );
+});
+
 describe.skipIf(process.platform === 'win32')('test runner process ownership', () => {
   it('allows the complete serial real API matrix to run for one hour', () => {
     expect(testTypes.realApi.timeout).toBe(60 * 60 * 1000);

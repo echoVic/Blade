@@ -31,6 +31,8 @@ Each step runs in an independent subprocess. A non-zero exit from the first step
 
 Vitest setup creates a unique temporary `BLADE_STORAGE_ROOT` for each test-file lifecycle, and deletes it synchronously during teardown. A `BLADE_STORAGE_ROOT` explicitly passed by the caller is always managed by the caller; the test harness does not delete it.
 
+The real-api setup loads credential configuration, the model catalog, and the application store only when `REAL_API_TEST=1`. With paid tests disabled, isolated storage is still created and reclaimed, and keyless regressions still run. Local keyless real-api files load in parallel within the existing four-worker ceiling, retaining process and file isolation. Paid matrices and CI remain serial with one worker. The test inventory, retry rules, and process timeout budgets are unchanged.
+
 The GitHub `Quality Gate` re-runs the full-repo format check and CLI lint before build, and the workflow source contract enforces the install → format → lint → build order. root, CLI, and Web use the same exact Biome version to avoid workspace binary resolution differences causing divergent results between the local gate and CI.
 
 V8 coverage is executed separately via `bun run --filter blade-code test:coverage`. The coverage orchestration covers unit, integration, CLI, E2E, snapshot, security, and real-api fixtures that do not require credentials, but explicitly excludes the wall-clock `performance` project; instrumentation and parallel project load make startup latency non-comparable. Performance regression remains a required item in `qualify:local` after the production build.

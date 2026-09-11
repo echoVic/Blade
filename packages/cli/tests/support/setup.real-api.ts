@@ -6,13 +6,6 @@
  */
 import { TextDecoder, TextEncoder } from 'node:util';
 import { afterAll } from 'vitest';
-import { getPiModelCatalog } from '../../src/services/pi/PiModelCatalog.js';
-import { ensureStoreInitialized, getState } from '../../src/store/vanilla.js';
-import {
-  buildRealApiRuntimeConfig,
-  getEnabledModelConfigs,
-  isRealApiTestEnabled,
-} from '../integration/real-api/testConfig.js';
 import { configureOwnedTestStorageRoot } from './ownedTestStorageRoot.js';
 
 globalThis.TextEncoder = TextEncoder;
@@ -25,9 +18,17 @@ configureOwnedTestStorageRoot('blade-real-api', (cleanup) => {
   afterAll(cleanup);
 });
 
-if (isRealApiTestEnabled()) {
+if (process.env.REAL_API_TEST === '1') {
+  const { getEnabledModelConfigs, buildRealApiRuntimeConfig } = await import(
+    '../integration/real-api/testConfig.js'
+  );
   const [runtimeModel] = getEnabledModelConfigs();
   if (runtimeModel) {
+    const [{ ensureStoreInitialized, getState }, { getPiModelCatalog }] =
+      await Promise.all([
+        import('../../src/store/vanilla.js'),
+        import('../../src/services/pi/PiModelCatalog.js'),
+      ]);
     await ensureStoreInitialized();
     await getPiModelCatalog().setApiKey(runtimeModel.provider, runtimeModel.apiKey);
     getState().config.actions.setConfig(buildRealApiRuntimeConfig(runtimeModel));

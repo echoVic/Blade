@@ -2,18 +2,17 @@ import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
 const isCI = process.env.CI === 'true';
+const isRealApiEnabled = process.env.REAL_API_TEST === '1';
 const isReleaseRealApiMatrix = process.env.REAL_API_RELEASE_MATRIX === '1';
 const threadPool = {
   pool: 'threads' as const,
   fileParallelism: !isCI,
   maxWorkers: isCI ? 1 : 4,
-  minWorkers: 1,
 };
 const forkPool = {
   pool: 'forks' as const,
   fileParallelism: !isCI,
   maxWorkers: isCI ? 1 : 4,
-  minWorkers: 1,
 };
 
 export default defineConfig({
@@ -77,7 +76,6 @@ export default defineConfig({
           ...forkPool,
           fileParallelism: false,
           maxWorkers: 1,
-          minWorkers: 1,
           include: ['tests/integration/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           exclude: ['tests/integration/real-api/**', 'tests/integration/cli/**'],
           setupFiles: ['./tests/support/setup.ts'],
@@ -139,9 +137,8 @@ export default defineConfig({
         test: {
           name: 'real-api',
           ...forkPool,
-          fileParallelism: false,
-          maxWorkers: 1,
-          minWorkers: 1,
+          fileParallelism: !isCI && !isRealApiEnabled,
+          maxWorkers: isCI || isRealApiEnabled ? 1 : 4,
           include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.real-api.ts'],
           retry: isReleaseRealApiMatrix ? 0 : 1,

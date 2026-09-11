@@ -33,6 +33,11 @@ Vitest setup 为每个 test-file lifecycle 创建唯一的临时
 `BLADE_STORAGE_ROOT`，并在 teardown 时同步删除。调用方显式传入的
 `BLADE_STORAGE_ROOT` 始终由调用方管理，测试 harness 不会删除。
 
+real-api setup 仅在 `REAL_API_TEST=1` 时加载凭据配置、模型目录与应用 store；
+未启用付费测试时仍建立并回收隔离存储，免凭据回归仍运行。本地免凭据 real-api
+文件在现有四 worker 上限内并行加载，并保留独立进程及文件隔离；付费矩阵和 CI
+仍为单 worker 串行。测试集合、重试规则及进程超时预算不变。
+
 GitHub `Quality Gate` 在 build 前重复执行全仓 format check 与 CLI lint，并由 workflow
 source contract 固定 install → format → lint → build 顺序。root、CLI 与 Web 使用同一
 精确 Biome 版本，避免 workspace binary 解析差异让本地门禁和 CI 得到不同结果。
