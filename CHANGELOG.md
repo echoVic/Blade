@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.162] - 2026-09-11
+
+### Tests
+- Keep the Web turn-activity tool barrier closed until the reconnect snapshot has been asserted. Collect final evidence only after both independent SSE readers observe a valid terminal clear, instead of treating the browser activity strip disappearing as proof of probe delivery.
+- Add delayed-reader and mutation-checked regression coverage; retain the exact final response, request counts, and zero-retry DeepSeek Flash/Pro matrix across Headless, ACP, raw PTY, and Chromium.
+
 ## [0.10.161] - 2026-09-11
 
 ### Added
