@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import { resolveWorkspaceAgentResources } from '../../../../src/agent/resources/WorkspaceAgentResources.js';
+import { resolveWorkspaceModelResources } from '../../../../src/agent/resources/WorkspaceModelResources.js';
 import type {
   InputTurnPreparation,
   SteeringEnqueueResult,
@@ -489,7 +491,8 @@ vi.mock('../../../../src/agent/resources/WorkspaceModelResources.js', () => ({
 }));
 
 vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
-  resolveWorkspaceAgentResources: vi.fn(async () => ({
+  resolveWorkspaceAgentResources: vi.fn(async (workspaceRoot: string) => ({
+    workspaceRoot,
     communicationStyles: {
       resolve: (selection: string) => ({
         selection,
@@ -504,6 +507,10 @@ vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
         return this;
       },
     },
+  })),
+  snapshotWorkspaceAgentResources: vi.fn((resources: { workspaceRoot: string }) => ({
+    ...resources,
+    projectRoot: resources.workspaceRoot,
   })),
 }));
 
@@ -5926,6 +5933,37 @@ describe('SessionRoutes runtime reuse', () => {
       [{ type: 'image_url', image_url: { url: 'data:image/png;base64,image-only' } }],
       expect.any(Object),
       expect.any(Object)
+    );
+  });
+
+  it('persists selected conversation annotations as input metadata', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('annotated-session');
+    const annotations = [
+      {
+        id: 'annotation-1',
+        text: 'Quoted assistant response',
+        sourceMessageId: 'assistant-1',
+        sourceRole: 'assistant',
+        comment: 'Explain this invariant',
+      },
+    ];
+
+    const response = await SessionRoutes().request('/annotated-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Why does this matter?',
+        annotations,
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+      'Why does this matter?',
+      {
+        metadata: { selectedConversationAnnotations: annotations },
+      }
     );
   });
 
@@ -11508,6 +11546,170 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
     expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('uses the source project for a discarded worktree side conversation', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/removed-side-worktree';
+    const sourceProjectPath = '/tmp/source-project';
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+      makeSessionMetadata({
+        sessionId: 'discarded-side-session',
+        projectPath,
+        taskIsolation: 'worktree',
+        taskSourceProjectPath: sourceProjectPath,
+        taskDelivery: {
+          status: 'discarded',
+          updatedAt: '2026-09-11T00:00:00.000Z',
+          message: 'Task worktree removed',
+        },
+        messageCount: 2,
+      })
+    );
+    runtimeState.runtime.askSideQuestion.mockResolvedValueOnce({
+      response: 'The task wrote one file.',
+      durationMs: 11,
+    });
+
+    const response = await SessionRoutes().request(
+      '/discarded-side-session/side-question',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          question: 'What did this task do?',
+          projectPath,
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      response: 'The task wrote one file.',
+    });
+    expect(resolveWorkspaceModelResources).toHaveBeenCalledWith(
+      sourceProjectPath,
+      expect.any(Object)
+    );
+    expect(resolveWorkspaceAgentResources).toHaveBeenCalledWith(sourceProjectPath);
+    expect(SessionRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'discarded-side-session',
+        workspaceRoot: projectPath,
+        workspace: {
+          kind: 'local',
+          executionRoot: sourceProjectPath,
+          resourceRoot: sourceProjectPath,
+        },
+        modelResources: expect.objectContaining({
+          projectRoot: sourceProjectPath,
+        }),
+        agentResources: expect.objectContaining({
+          projectRoot: sourceProjectPath,
+        }),
+        lspResources: {
+          projectRoot: sourceProjectPath,
+          servers: {},
+        },
+        auxiliaryReadOnly: true,
+      })
+    );
+    expect(runtimeState.runtime.askSideQuestion).toHaveBeenCalledWith(
+      'What did this task do?',
+      { signal: expect.any(AbortSignal) }
+    );
+    expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
+  });
+
+  it('returns a clear conflict when a discarded worktree has no source project', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/removed-side-worktree';
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+      makeSessionMetadata({
+        sessionId: 'missing-side-source',
+        projectPath,
+        taskIsolation: 'worktree',
+        taskDelivery: {
+          status: 'discarded',
+          updatedAt: '2026-09-11T00:00:00.000Z',
+          message: 'Task worktree removed',
+        },
+        messageCount: 2,
+      })
+    );
+
+    const response = await SessionRoutes().request(
+      '/missing-side-source/side-question',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          question: 'What did this task do?',
+          projectPath,
+        }),
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'SESSION_WORKSPACE_UNAVAILABLE',
+        message: 'This session workspace is no longer available',
+        details: {
+          reason: 'task_source_project_missing',
+        },
+      },
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a clear conflict when the side conversation fallback path is missing', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/removed-side-worktree';
+    const sourceProjectPath = '/tmp/missing-source-project';
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+      makeSessionMetadata({
+        sessionId: 'missing-side-workspace',
+        projectPath,
+        taskIsolation: 'worktree',
+        taskSourceProjectPath: sourceProjectPath,
+        taskDelivery: {
+          status: 'discarded',
+          updatedAt: '2026-09-11T00:00:00.000Z',
+          message: 'Task worktree removed',
+        },
+        messageCount: 2,
+      })
+    );
+    vi.mocked(resolveWorkspaceModelResources).mockRejectedValueOnce(
+      Object.assign(new Error('missing workspace'), { code: 'ENOENT' })
+    );
+
+    const response = await SessionRoutes().request(
+      '/missing-side-workspace/side-question',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          question: 'What did this task do?',
+          projectPath,
+        }),
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'SESSION_WORKSPACE_UNAVAILABLE',
+        message: 'This session workspace is no longer available',
+        details: {
+          reason: 'workspace_missing',
+        },
+      },
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
   });
 
   it('terminates a Session SSE lease aborted before stream handoff', async () => {

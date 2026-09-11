@@ -419,6 +419,37 @@ describe('ChatMessage', () => {
     expect(container.textContent).toContain('README.md');
   });
 
+  test('keeps a folded assistant response streaming through its latest source id', () => {
+    useSessionStore.setState({
+      isStreaming: true,
+      currentAssistantMessageId: 'assistant-latest',
+    });
+    const message: Message = {
+      id: 'assistant-first',
+      role: 'assistant',
+      content: '',
+      timestamp: 1,
+      displaySourceMessageIds: ['assistant-first', 'assistant-latest'],
+      agentContent: {
+        timeline: [],
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        subagents: [],
+        confirmation: null,
+        question: null,
+        elicitation: null,
+      },
+    };
+
+    act(() => root.render(<ChatMessage message={message} />));
+
+    expect(container.textContent).toContain('Thinking...');
+  });
+
   test('renders user text and image previews from multimodal content', () => {
     const message: Message = {
       id: 'user-1',
@@ -437,6 +468,38 @@ describe('ChatMessage', () => {
     expect(container.textContent).toContain('look at this');
     const image = container.querySelector('img');
     expect(image?.getAttribute('src')).toBe('data:image/png;base64,abc');
+  });
+
+  test('renders selected conversation annotations separately from user text', () => {
+    const message: Message = {
+      id: 'user-annotation',
+      role: 'user',
+      content: 'Explain why this matters',
+      timestamp: 1700000000001,
+      metadata: {
+        selectedConversationAnnotations: [
+          {
+            id: 'annotation-1',
+            text: 'Selected assistant response',
+            sourceMessageId: 'assistant-source',
+            sourceRole: 'assistant',
+            comment: 'Focus on the invariant',
+          },
+        ],
+      },
+    };
+
+    act(() => root.render(<ChatMessage message={message} />));
+
+    expect(container.textContent).toContain('Explain why this matters');
+    expect(container.textContent).toContain('1 annotation');
+    const details = container.querySelector<HTMLDetailsElement>(
+      '[data-user-message-annotations]'
+    );
+    expect(details?.open).toBe(false);
+    act(() => details?.querySelector('summary')?.click());
+    expect(container.textContent).toContain('Selected assistant response');
+    expect(container.textContent).toContain('Focus on the invariant');
   });
 
   test('renders image-only user messages loaded from history', () => {

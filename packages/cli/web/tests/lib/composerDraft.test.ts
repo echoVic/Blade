@@ -2,9 +2,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  appendComposerDraftAnnotation,
   appendComposerDraftContext,
   clearComposerDraft,
   readComposerDraft,
+  removeComposerDraftAnnotation,
   subscribeComposerDraftAppend,
   writeComposerDraft,
 } from '../../src/lib/composerDraft';
@@ -55,5 +57,30 @@ describe('composerDraft context append', () => {
     expect(appendComposerDraftContext(undefined, 'element')).toBe(false);
     expect(appendComposerDraftContext(DRAFT_KEY, '   ')).toBe(false);
     expect(readComposerDraft(DRAFT_KEY).content).toBe('');
+  });
+
+  it('persists selected-text annotations outside the composer text', () => {
+    expect(
+      appendComposerDraftAnnotation(DRAFT_KEY, {
+        id: 'annotation-1',
+        text: 'Selected response',
+        sourceMessageId: 'assistant-1',
+        sourceRole: 'assistant',
+        comment: 'Check this claim',
+      })
+    ).toBe(true);
+
+    expect(readComposerDraft(DRAFT_KEY)).toMatchObject({
+      content: '',
+      annotations: [
+        {
+          id: 'annotation-1',
+          text: 'Selected response',
+          comment: 'Check this claim',
+        },
+      ],
+    });
+    expect(removeComposerDraftAnnotation(DRAFT_KEY, 'annotation-1')).toBe(true);
+    expect(readComposerDraft(DRAFT_KEY).annotations).toEqual([]);
   });
 });

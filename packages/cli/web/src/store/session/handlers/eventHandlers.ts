@@ -272,18 +272,24 @@ const handleMessageCreated: EventHandler = (props, get, set) => {
   const messageId = props.messageId as string;
   const role = (props.role as 'user' | 'assistant') || 'assistant';
   const existing = messages.find((m) => m.id === messageId);
+  const metadata =
+    props.metadata && typeof props.metadata === 'object'
+      ? (props.metadata as Record<string, unknown>)
+      : undefined;
 
   const message: Message = {
     id: messageId,
     role,
     content: (props.content as string) || '',
     timestamp: Date.now(),
+    ...(metadata ? { metadata } : {}),
     agentContent: role === 'assistant' ? createEmptyAgentContent() : undefined,
   };
   if (existing) {
     updateMessage(messageId, {
       role,
       content: message.content,
+      ...(metadata ? { metadata } : {}),
       agentContent:
         role === 'assistant'
           ? { ...(existing.agentContent || createEmptyAgentContent()) }

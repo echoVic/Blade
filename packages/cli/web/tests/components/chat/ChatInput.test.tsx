@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatInput } from '../../../src/components/chat/ChatInput';
 import {
+  appendComposerDraftAnnotation,
   appendComposerDraftContext,
   clearComposerDraft,
 } from '../../../src/lib/composerDraft';
@@ -126,6 +127,36 @@ describe('ChatInput', () => {
       await Promise.resolve();
     });
     expect(document.querySelector('[data-blade-yolo-confirm]')).toBeTruthy();
+  });
+
+  test('selects all composer text with Ctrl+A and Cmd+A', () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Select the entire draft');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    for (const modifier of ['ctrlKey', 'metaKey'] as const) {
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'a',
+          [modifier]: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      expect(textarea.selectionStart).toBe(0);
+      expect(textarea.selectionEnd).toBe(textarea.value.length);
+    }
   });
 
   test('adds pasted images as attachments and allows removal', async () => {
@@ -900,6 +931,51 @@ describe('ChatInput', () => {
         '<browser_element_context trust="untrusted">button</browser_element_context>'
     );
     expect(document.activeElement).toBe(textarea);
+  });
+
+  test('renders selected text as an annotation chip and submits it separately', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const draftKey = 'session:["/workspace/annotations","task"]';
+    clearComposerDraft(draftKey);
+    act(() => {
+      root.render(<ChatInput draftKey={draftKey} onSend={onSend} />);
+    });
+
+    await act(async () => {
+      appendComposerDraftAnnotation(draftKey, {
+        id: 'annotation-1',
+        text: 'Selected assistant text',
+        sourceMessageId: 'assistant-1',
+        sourceRole: 'assistant',
+        comment: 'Verify this statement',
+      });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    const textarea = container.querySelector(
+      'textarea[data-blade-composer]'
+    ) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('');
+    expect(container.textContent).toContain('1 annotation');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-blade-submit]')?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: '',
+        annotations: [
+          expect.objectContaining({
+            id: 'annotation-1',
+            text: 'Selected assistant text',
+            comment: 'Verify this statement',
+          }),
+        ],
+      })
+    );
+    expect(container.textContent).not.toContain('1 annotation');
   });
 
   test('clears only the accepted composer draft', async () => {

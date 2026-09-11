@@ -9,6 +9,7 @@ import type {
   ToolCall,
   TSchema,
 } from '@earendil-works/pi-ai';
+import { withSelectedConversationContext } from '../../context/selectedConversationContext.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
   ChatToolDefinition,
@@ -116,10 +117,14 @@ export async function createPiContext(
   for (const message of messages) {
     if (message.role === 'system') continue;
     if (message.role === 'user') {
+      const visibleContent = withSelectedConversationContext(
+        message.content,
+        message.metadata
+      );
       const content =
-        typeof message.content === 'string'
-          ? message.content
-          : await multimodalContent(message.content, supportsImages, signal);
+        typeof visibleContent === 'string'
+          ? visibleContent
+          : await multimodalContent(visibleContent, supportsImages, signal);
       contextMessages.push({ role: 'user', content, timestamp: Date.now() });
       continue;
     }

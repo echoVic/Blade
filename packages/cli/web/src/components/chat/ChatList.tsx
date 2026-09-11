@@ -5,7 +5,9 @@ import { ScrollArea } from '@/components/ui/ScrollArea';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/store/session';
+import { projectMessagesForDisplay } from '@/store/session/utils/displayMessages';
 import { ChatMessage } from './ChatMessage';
+import { ChatSelectionToolbar } from './ChatSelectionToolbar';
 import {
   anchoredScrollTop,
   collectUnreadMessageIds,
@@ -17,6 +19,9 @@ import { deriveChatTurns } from './turnNavigation';
 interface ChatListProps {
   messages: Message[];
   isLoading?: boolean;
+  selectionDraftKey?: string;
+  canAskSideConversation?: boolean;
+  onOpenSideConversation?: (selectedText: string) => boolean;
 }
 
 const INITIAL_RENDERED_MESSAGES = 120;
@@ -38,16 +43,26 @@ function unreadMessageRevision(message: Message): string {
   ]);
 }
 
-function ChatListComponent({ messages, isLoading }: ChatListProps) {
+function ChatListComponent({
+  messages,
+  isLoading,
+  selectionDraftKey,
+  canAskSideConversation = false,
+  onOpenSideConversation,
+}: ChatListProps) {
   const t = useT();
+  const displayMessages = useMemo(
+    () => projectMessagesForDisplay(messages),
+    [messages]
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
   const hasPinnedInitiallyRef = useRef(false);
-  const currentMessagesRef = useRef(messages);
-  const previousMessagesRef = useRef(messages);
+  const currentMessagesRef = useRef(displayMessages);
+  const previousMessagesRef = useRef(displayMessages);
   const unreadMessageIdsRef = useRef(new Set<string>());
-  const previousMessageCountRef = useRef(messages.length);
+  const previousMessageCountRef = useRef(displayMessages.length);
   const pendingHistoryAnchorRef = useRef<{
     element: HTMLElement | null;
     viewportTop: number;
@@ -57,8 +72,8 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDERED_MESSAGES);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const hasMessages = messages.length > 0;
-  currentMessagesRef.current = messages;
+  const hasMessages = displayMessages.length > 0;
+  currentMessagesRef.current = displayMessages;
 
   useEffect(() => {
     const viewport = findViewport(containerRef.current);
@@ -75,7 +90,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
       setShowJumpToLatest(false);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages]);
+  }, [displayMessages]);
 
   useEffect(() => {
     const viewport = findViewport(containerRef.current);
@@ -107,7 +122,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
 
   useEffect(() => {
     const previousMessages = previousMessagesRef.current;
-    previousMessagesRef.current = messages;
+    previousMessagesRef.current = displayMessages;
     if (isNearBottomRef.current) {
       if (unreadMessageIdsRef.current.size > 0) {
         unreadMessageIdsRef.current = new Set();
@@ -118,37 +133,40 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
 
     const nextUnreadIds = collectUnreadMessageIds(
       previousMessages,
-      messages,
+      displayMessages,
       unreadMessageIdsRef.current,
       unreadMessageRevision
     );
     unreadMessageIdsRef.current = nextUnreadIds;
     setUnreadCount(nextUnreadIds.size);
-  }, [messages]);
+  }, [displayMessages]);
 
   useEffect(() => {
     const previousMessageCount = previousMessageCountRef.current;
-    previousMessageCountRef.current = messages.length;
+    previousMessageCountRef.current = displayMessages.length;
 
     setVisibleCount((current) => {
-      if (current >= previousMessageCount && messages.length > previousMessageCount) {
-        return messages.length;
+      if (
+        current >= previousMessageCount &&
+        displayMessages.length > previousMessageCount
+      ) {
+        return displayMessages.length;
       }
 
       return Math.min(
         Math.max(current, INITIAL_RENDERED_MESSAGES),
-        messages.length || INITIAL_RENDERED_MESSAGES
+        displayMessages.length || INITIAL_RENDERED_MESSAGES
       );
     });
-  }, [messages.length]);
+  }, [displayMessages.length]);
 
-  const hiddenCount = Math.max(messages.length - visibleCount, 0);
+  const hiddenCount = Math.max(displayMessages.length - visibleCount, 0);
   const firstVisibleIndex = hiddenCount;
   const visibleMessages = useMemo(
-    () => messages.slice(firstVisibleIndex),
-    [messages, firstVisibleIndex]
+    () => displayMessages.slice(firstVisibleIndex),
+    [displayMessages, firstVisibleIndex]
   );
-  const turns = useMemo(() => deriveChatTurns(messages), [messages]);
+  const turns = useMemo(() => deriveChatTurns(displayMessages), [displayMessages]);
 
   useLayoutEffect(() => {
     const anchor = pendingHistoryAnchorRef.current;
@@ -219,7 +237,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
     );
   }
 
-  if (messages.length === 0 && !isLoading) {
+  if (displayMessages.length === 0 && !isLoading) {
     return (
       <div className="flex flex-1 justify-center items-center">
         <div className="flex flex-col gap-4 items-center text-center">
@@ -265,7 +283,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
       };
     }
     setVisibleCount((count) =>
-      nextVisibleMessageCount(count, messages.length, RENDER_MORE_MESSAGES)
+      nextVisibleMessageCount(count, displayMessages.length, RENDER_MORE_MESSAGES)
     );
   };
 
@@ -274,7 +292,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
   // already visible, so the caller can scroll immediately.
   const revealTurn = (turnIndex: number): boolean => {
     if (turnIndex >= firstVisibleIndex) return true;
-    setVisibleCount(messages.length);
+    setVisibleCount(displayMessages.length);
     return false;
   };
 
@@ -306,7 +324,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
           )}
           {visibleMessages.map((message, visibleIndex) => {
             const index = firstVisibleIndex + visibleIndex;
-            const prevMessage = index > 0 ? messages[index - 1] : null;
+            const prevMessage = index > 0 ? displayMessages[index - 1] : null;
             const showAvatar =
               !prevMessage ||
               prevMessage.role !== message.role ||
@@ -327,6 +345,14 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
         containerRef={containerRef}
         onRevealTurn={revealTurn}
       />
+      {selectionDraftKey && onOpenSideConversation && (
+        <ChatSelectionToolbar
+          rootRef={containerRef}
+          draftKey={selectionDraftKey}
+          canAskSideConversation={canAskSideConversation}
+          onOpenSideConversation={onOpenSideConversation}
+        />
+      )}
       {showJumpToLatest && (
         <button
           type="button"

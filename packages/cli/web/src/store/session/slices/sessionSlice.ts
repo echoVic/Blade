@@ -1,6 +1,10 @@
 import type { FollowUpQueueMutation } from '@api/schemas';
 import { deriveSessionTitle } from '@api/sessionTitle';
-import { parseSideConversationCommand } from '@api/sideConversation';
+import {
+  MAX_SIDE_QUESTION_CHARS,
+  parseSideConversationCommand,
+} from '@api/sideConversation';
+import { buildSelectedSideQuestionPrompt } from '@/lib/chatSelection';
 import { isHttpResponseError } from '@/lib/http';
 import { projectPathOf } from '@/lib/projectIdentity';
 import { isFollowUpQueueMutationHttpError, sessionService } from '@/services';
@@ -241,6 +245,169 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       unsubscribe();
     } catch (error) {
       console.warn('Failed to clean up stale event subscription', error);
+    }
+  };
+
+  const openSideConversation = (selectedText?: string): boolean => {
+    if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+      set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+      return false;
+    }
+    const state = get();
+    const sessionRef = state.currentSessionRef;
+    if (state.isTemporarySession || !sessionRef || !state.currentSessionId) {
+      set({ error: 'Start or select a Session before using /btw' });
+      return false;
+    }
+    sideConversationController?.abort('side-conversation-replaced');
+    sideConversationController = null;
+    const normalizedSelection = selectedText?.trim();
+    set({
+      sideConversation: {
+        requestId: `draft-${Date.now()}`,
+        sessionRef,
+        question: '',
+        ...(normalizedSelection ? { selectedText: normalizedSelection } : {}),
+        messages: [],
+        status: 'idle',
+      },
+      error: null,
+      errorContext: null,
+    });
+    return true;
+  };
+
+  const askSideConversation = async (
+    question: string,
+    selectedText?: string
+  ): Promise<boolean> => {
+    if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+      set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+      return false;
+    }
+
+    const normalizedQuestion = question.trim();
+    if (!normalizedQuestion) {
+      set({ error: 'Usage: /btw <question>' });
+      return false;
+    }
+
+    const state = get();
+    const sessionRef = state.currentSessionRef;
+    if (state.isTemporarySession || !sessionRef || !state.currentSessionId) {
+      set({ error: 'Start or select a Session before using /btw' });
+      return false;
+    }
+
+    const currentSideConversation =
+      state.sideConversation &&
+      sameSessionRef(state.sideConversation.sessionRef, sessionRef)
+        ? state.sideConversation
+        : null;
+    const priorMessages = currentSideConversation?.messages ?? [];
+    const selectedContext =
+      selectedText?.trim() || currentSideConversation?.selectedText?.trim();
+    const prompt = buildSelectedSideQuestionPrompt(
+      normalizedQuestion,
+      selectedContext,
+      priorMessages
+    );
+    if (prompt.length > MAX_SIDE_QUESTION_CHARS) {
+      set({ error: 'Side conversation question is too long' });
+      return false;
+    }
+
+    const generation = navigationGeneration;
+    const isCurrentRequest = (): boolean =>
+      isCurrentNavigation(generation) &&
+      sameSessionRef(get().currentSessionRef, sessionRef) &&
+      !isHistorySurfaceActive(get().historySurfaceSelection);
+
+    sideConversationController?.abort('side-conversation-replaced');
+    const controller = new AbortController();
+    sideConversationController = controller;
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userMessage = {
+      id: `${requestId}-user`,
+      role: 'user' as const,
+      content: normalizedQuestion,
+    };
+    const messages = [...priorMessages, userMessage];
+    set({
+      sideConversation: {
+        requestId,
+        sessionRef,
+        question: normalizedQuestion,
+        ...(selectedContext ? { selectedText: selectedContext } : {}),
+        messages,
+        status: 'loading',
+      },
+      error: null,
+      errorContext: null,
+    });
+
+    try {
+      const result = await sessionService.askSideQuestion(
+        sessionRef,
+        prompt,
+        controller.signal
+      );
+      if (
+        controller.signal.aborted ||
+        !isCurrentRequest() ||
+        get().sideConversation?.requestId !== requestId
+      ) {
+        return false;
+      }
+      set({
+        sideConversation: {
+          requestId,
+          sessionRef,
+          question: normalizedQuestion,
+          ...(selectedContext ? { selectedText: selectedContext } : {}),
+          messages: [
+            ...messages,
+            {
+              id: `${requestId}-assistant`,
+              role: 'assistant',
+              content: result.response,
+            },
+          ],
+          status: 'completed',
+          response: result.response,
+          durationMs: result.durationMs,
+          modelId: result.modelId,
+        },
+      });
+      if (result.usage) {
+        get().updateTokenUsage({
+          inputTokens: result.usage.promptTokens,
+          outputTokens: result.usage.completionTokens,
+          totalTokens: result.usage.totalTokens,
+          cacheReadTokens: result.usage.cacheReadInputTokens ?? 0,
+          cacheWriteTokens: result.usage.cacheCreationInputTokens ?? 0,
+          costUsd: result.usage.costUsd,
+        });
+      }
+      return true;
+    } catch (error) {
+      if (controller.signal.aborted || !isCurrentRequest()) return false;
+      set({
+        sideConversation: {
+          requestId,
+          sessionRef,
+          question: normalizedQuestion,
+          ...(selectedContext ? { selectedText: selectedContext } : {}),
+          messages,
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return false;
+    } finally {
+      if (sideConversationController === controller) {
+        sideConversationController = null;
+      }
     }
   };
 
@@ -1039,6 +1206,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       }
     },
 
+    openSideConversation,
+    askSideConversation,
+
     sendMessage: async (payload: SendMessagePayload) => {
       if (isHistorySurfaceActive(get().historySurfaceSelection)) {
         set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
@@ -1077,80 +1247,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           return false;
         }
         if (!sideCommand.question) {
-          set({ error: 'Usage: /btw <question>' });
-          return false;
+          return askSideConversation(sideCommand.question);
         }
-        if (isTemporarySession || !sessionRef || !sessionId) {
-          set({ error: 'Start or select a Session before using /btw' });
-          return false;
-        }
-
-        sideConversationController?.abort('side-conversation-replaced');
-        const controller = new AbortController();
-        sideConversationController = controller;
-        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        set({
-          sideConversation: {
-            requestId,
-            sessionRef,
-            question: sideCommand.question,
-            status: 'loading',
-          },
-          error: null,
-          errorContext: null,
-        });
-        try {
-          const result = await sessionService.askSideQuestion(
-            sessionRef,
-            sideCommand.question,
-            controller.signal
-          );
-          if (
-            controller.signal.aborted ||
-            !isCurrentSend() ||
-            get().sideConversation?.requestId !== requestId
-          ) {
-            return false;
-          }
-          set({
-            sideConversation: {
-              requestId,
-              sessionRef,
-              question: sideCommand.question,
-              status: 'completed',
-              response: result.response,
-              durationMs: result.durationMs,
-              modelId: result.modelId,
-            },
-          });
-          if (result.usage) {
-            get().updateTokenUsage({
-              inputTokens: result.usage.promptTokens,
-              outputTokens: result.usage.completionTokens,
-              totalTokens: result.usage.totalTokens,
-              cacheReadTokens: result.usage.cacheReadInputTokens ?? 0,
-              cacheWriteTokens: result.usage.cacheCreationInputTokens ?? 0,
-              costUsd: result.usage.costUsd,
-            });
-          }
-          return true;
-        } catch (error) {
-          if (controller.signal.aborted || !isCurrentSend()) return false;
-          set({
-            sideConversation: {
-              requestId,
-              sessionRef,
-              question: sideCommand.question,
-              status: 'error',
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-          return false;
-        } finally {
-          if (sideConversationController === controller) {
-            sideConversationController = null;
-          }
-        }
+        if (!openSideConversation()) return false;
+        return askSideConversation(sideCommand.question);
       }
 
       sideConversationController?.abort('main-conversation-submitted');
@@ -1325,6 +1425,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             role: 'user',
             content: buildOptimisticUserContent(payload),
             timestamp: Date.now(),
+            metadata:
+              payload.annotations && payload.annotations.length > 0
+                ? { selectedConversationAnnotations: payload.annotations }
+                : undefined,
           });
         }
 

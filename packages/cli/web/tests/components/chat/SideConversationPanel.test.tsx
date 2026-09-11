@@ -14,6 +14,9 @@ import { SideConversationPanel } from '../../../src/components/chat/SideConversa
 import { setLocale } from '../../../src/i18n';
 import { useSessionStore } from '../../../src/store/session';
 
+const actualAskSideConversation = useSessionStore.getState().askSideConversation;
+const actualOpenSideConversation = useSessionStore.getState().openSideConversation;
+
 describe('SideConversationPanel', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
@@ -30,6 +33,11 @@ describe('SideConversationPanel', () => {
     act(() => {
       root.unmount();
     });
+    useSessionStore.setState({
+      askSideConversation: actualAskSideConversation,
+      openSideConversation: actualOpenSideConversation,
+      sideConversation: null,
+    });
     container.remove();
   });
 
@@ -42,6 +50,7 @@ describe('SideConversationPanel', () => {
           projectPath: '/tmp/project',
         },
         question: 'What failed?',
+        selectedText: 'The request stopped after the timeout.',
         status: 'completed',
         response: 'The provider timed out.',
         durationMs: 1400,
@@ -55,6 +64,7 @@ describe('SideConversationPanel', () => {
     const panel = container.querySelector('[data-blade-side-conversation]');
     expect(panel?.getAttribute('data-status')).toBe('completed');
     expect(panel?.textContent).toContain('What failed?');
+    expect(panel?.textContent).toContain('The request stopped after the timeout.');
     expect(panel?.textContent).toContain('The provider timed out.');
     expect(panel?.textContent).toContain('1.4s');
 
@@ -109,5 +119,53 @@ describe('SideConversationPanel', () => {
       'Provider unavailable'
     );
     expect(useSessionStore.getState().messages).toBe(messages);
+  });
+
+  it('owns a side-chat composer with native select-all and follow-up submission', async () => {
+    const askSideConversation = vi.fn(async () => true);
+    useSessionStore.setState({
+      askSideConversation,
+      sideConversation: {
+        requestId: 'side-draft',
+        sessionRef: {
+          sessionId: 'session-1',
+          projectPath: '/tmp/project',
+        },
+        question: '',
+        selectedText: 'Selected assistant text',
+        messages: [],
+        status: 'idle',
+      },
+    });
+    await act(async () => {
+      root.render(<SideConversationPanel />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      setter?.call(textarea, 'Why does this matter?');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.setSelectionRange(4, 4);
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'a',
+          ctrlKey: true,
+          bubbles: true,
+        })
+      );
+    });
+    expect(textarea.selectionStart).toBe(0);
+    expect(textarea.selectionEnd).toBe('Why does this matter?'.length);
+
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      );
+    });
+    expect(askSideConversation).toHaveBeenCalledWith('Why does this matter?');
   });
 });

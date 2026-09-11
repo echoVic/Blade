@@ -484,6 +484,7 @@ export interface MessagePersistenceMetadata {
   userShellCommand?: JsonValue;
   backgroundSubagentCompletion?: JsonValue;
   teamMessage?: JsonValue;
+  selectedConversationAnnotations?: JsonValue;
   codeReview?: JsonValue;
   structuredOutput?: JsonValue;
   structuredOutputSchemaDigest?: string;

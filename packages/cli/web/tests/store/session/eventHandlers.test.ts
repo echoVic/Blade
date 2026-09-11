@@ -409,6 +409,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     prepareEventSubscription: vi.fn(async () => () => undefined),
     replaceEventSubscription: vi.fn(),
     unsubscribeFromEvents: vi.fn(),
+    openSideConversation: vi.fn(() => true),
+    askSideConversation: vi.fn(async () => true),
     dismissSideConversation: vi.fn(),
     unsubscribeFromTaskEvents: vi.fn(),
     handleEvent: vi.fn(),

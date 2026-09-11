@@ -4527,6 +4527,44 @@ describe('SessionRuntime', () => {
     }
   });
 
+  it('does not mutate task status when an auxiliary runtime fails to initialize', async () => {
+    const workspaceRoot = path.join(storageRoot, 'failed-auxiliary-runtime');
+    const sessionId = 'failed-auxiliary-task';
+    await SessionService.createSessionMetadata(sessionId, workspaceRoot);
+    const events: string[] = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.projectPath === workspaceRoot &&
+        event.type === 'task.status'
+      ) {
+        events.push(String(event.properties.taskStatus));
+      }
+    });
+    vi.mocked(createChatServiceAsync).mockRejectedValueOnce(
+      new Error('provider initialization failed')
+    );
+
+    try {
+      await expect(
+        SessionRuntime.create({
+          sessionId,
+          workspaceRoot,
+          auxiliaryReadOnly: true,
+        })
+      ).rejects.toThrow('provider initialization failed');
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceRoot)
+      ).resolves.toMatchObject({
+        taskStatus: 'queued',
+        taskStatusReason: undefined,
+      });
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('releases the session lease when initialization fails', async () => {
     vi.mocked(createChatServiceAsync).mockRejectedValueOnce(
       new Error('provider initialization failed')

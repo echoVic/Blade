@@ -555,6 +555,91 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it('opens an empty side conversation for selected text without a provider call', () => {
+    const ref = createRef('side-draft', '/tmp/side-workspace');
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+    });
+
+    expect(
+      useSessionStore.getState().openSideConversation('Selected assistant response')
+    ).toBe(true);
+    expect(sessionService.askSideQuestion).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().sideConversation).toMatchObject({
+      sessionRef: ref,
+      selectedText: 'Selected assistant response',
+      messages: [],
+      status: 'idle',
+    });
+  });
+
+  it('asks a side question with selected conversation text as quoted context', async () => {
+    const ref = createRef('side-selection', '/tmp/side-workspace');
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+    });
+    vi.mocked(sessionService.askSideQuestion).mockResolvedValue({
+      response: 'It matters because the state is durable.',
+      durationMs: 12,
+      modelId: 'model-1',
+    });
+
+    const accepted = await useSessionStore
+      .getState()
+      .askSideConversation('Why does this matter?', '<state>&history');
+
+    expect(accepted).toBe(true);
+    expect(sessionService.askSideQuestion).toHaveBeenCalledWith(
+      ref,
+      [
+        '<selected_conversation_text trust="untrusted">',
+        '&lt;state&gt;&amp;history',
+        '</selected_conversation_text>',
+        '',
+        'Why does this matter?',
+      ].join('\n'),
+      expect.any(AbortSignal)
+    );
+    expect(useSessionStore.getState().sideConversation).toMatchObject({
+      sessionRef: ref,
+      question: 'Why does this matter?',
+      selectedText: '<state>&history',
+      status: 'completed',
+      response: 'It matters because the state is durable.',
+    });
+
+    vi.mocked(sessionService.askSideQuestion).mockResolvedValueOnce({
+      response: 'The follow-up remains isolated.',
+      durationMs: 9,
+      modelId: 'model-1',
+    });
+    await useSessionStore
+      .getState()
+      .askSideConversation('Does this affect the main conversation?');
+
+    expect(sessionService.askSideQuestion).toHaveBeenLastCalledWith(
+      ref,
+      expect.stringContaining(
+        [
+          '<side_conversation_history>',
+          '<user>',
+          'Why does this matter?',
+          '</user>',
+          '<assistant>',
+          'It matters because the state is durable.',
+          '</assistant>',
+          '</side_conversation_history>',
+        ].join('\n')
+      ),
+      expect.any(AbortSignal)
+    );
+    expect(useSessionStore.getState().sideConversation?.messages).toHaveLength(4);
+  });
+
   it('cancels and removes an in-flight side conversation when dismissed', async () => {
     const ref = createRef('side-session', '/tmp/side-workspace');
     const started = deferred<AbortSignal>();

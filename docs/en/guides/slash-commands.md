@@ -242,6 +242,11 @@ included in later model context. ACP returns the same transient answer through
 `/btw`. Headless mode has no interactive Session runtime and rejects the command
 explicitly.
 
+On Web, the side conversation panel supports follow-up questions while it remains
+open. That temporary history is cleared when the panel closes and is never written
+to the main Session. Selecting text in the main conversation can also open the panel
+with that passage attached as quoted context.
+
 ### /compact
 
 Manually compact the context to generate a summary and save tokens:

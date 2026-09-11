@@ -288,6 +288,7 @@ export interface SessionRuntimeOptions {
   sessionId: string;
   workspaceRoot?: string;
   workspace?: SessionWorkspace;
+  auxiliaryReadOnly?: boolean;
   modelId?: string;
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
@@ -709,7 +710,11 @@ export class SessionRuntime {
       await runtime.initialize();
       return runtime;
     } catch (error) {
-      if (!options.subagentInfo && !(error instanceof SessionInUseError)) {
+      if (
+        !options.auxiliaryReadOnly &&
+        !options.subagentInfo &&
+        !(error instanceof SessionInUseError)
+      ) {
         const taskDiffStat = taskWorktree
           ? await worktreeManager
               .getChangeSummary(options.sessionId)
@@ -1094,7 +1099,7 @@ export class SessionRuntime {
         buildSystemPrompt({
           ...(this.isRemoteWorkspace()
             ? { workspaceAccess: 'none' as const }
-            : { projectPath: this.workspaceRoot }),
+            : { projectPath: this.resourceRoot }),
           replaceDefault: options.systemPrompt,
           append: options.appendSystemPrompt,
           ...(permissionMode === PermissionMode.PLAN
@@ -1122,7 +1127,7 @@ export class SessionRuntime {
       return await runSideConversation({
         question,
         sessionId: this.sessionId,
-        workspaceRoot: this.workspaceRoot,
+        workspaceRoot: this.executionRoot,
         systemPrompt,
         messages,
         tools: registry.getFunctionDeclarationsByMode(permissionMode),
@@ -1841,10 +1846,13 @@ export class SessionRuntime {
 
   async prepareInputTurn(
     content: UserMessageContent,
-    options?: { outputSchema?: JsonObject }
+    options?: {
+      outputSchema?: JsonObject;
+      metadata?: MessagePersistenceMetadata;
+    }
   ): Promise<InputTurnPreparation> {
     const mailbox = this.getActiveTurnMailbox();
-    const materialized = await this.materializeUserMessage(content);
+    const materialized = await this.materializeUserMessage(content, options?.metadata);
     const preparation = await mailbox.prepareInputTurn(materialized.content, {
       ...options,
       ...(materialized.metadata ? { metadata: materialized.metadata } : {}),
@@ -3215,6 +3223,7 @@ export class SessionRuntime {
   private async validateSystemPromptConfig(): Promise<void> {
     const staticProjectRules = this.getStaticProjectRules();
     if (
+      !this.options.auxiliaryReadOnly &&
       this.options.projectInstructionsDigest &&
       staticProjectRules.provenanceSha256 !== this.options.projectInstructionsDigest
     ) {
@@ -3222,6 +3231,7 @@ export class SessionRuntime {
     }
     if (
       !this.options.subagentInfo &&
+      !this.options.auxiliaryReadOnly &&
       staticProjectRules.files.length > 0 &&
       !this.options.projectInstructionsDigest
     ) {
@@ -3234,6 +3244,7 @@ export class SessionRuntime {
       this.selectedCommunicationStyle
     );
     if (
+      !this.options.auxiliaryReadOnly &&
       communicationStyle.source !== 'built-in' &&
       this.options.communicationStyleDigest &&
       communicationStyle.contentSha256 !== this.options.communicationStyleDigest
@@ -3243,6 +3254,7 @@ export class SessionRuntime {
       );
     }
     if (
+      !this.options.auxiliaryReadOnly &&
       communicationStyle.source !== 'built-in' &&
       communicationStyle.contentSha256 &&
       !this.options.communicationStyleDigest
@@ -3256,7 +3268,7 @@ export class SessionRuntime {
       await buildSystemPrompt({
         ...(this.isRemoteWorkspace()
           ? { workspaceAccess: 'none' as const }
-          : { projectPath: this.workspaceRoot }),
+          : { projectPath: this.resourceRoot }),
         includeEnvironment: false,
         language: this.config.language,
         availableSkills:

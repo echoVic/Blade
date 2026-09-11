@@ -2,6 +2,7 @@ import type {
   CommunicationStyle,
   ReasoningEffort,
   ResponseVerbosity,
+  SelectedConversationAnnotation,
   ServiceTier,
 } from '@api/schemas';
 import {
@@ -161,6 +162,7 @@ export function ChatView() {
   const errorContext = useSessionStore((state) => state.errorContext);
   const sessions = useSessionStore((state) => state.sessions);
   const sendMessage = useSessionStore((state) => state.sendMessage);
+  const openSideConversation = useSessionStore((state) => state.openSideConversation);
   const abortSession = useSessionStore((state) => state.abortSession);
   const retryTask = useSessionStore((state) => state.retryTask);
   const retryingTaskKeys = useSessionStore((state) => state.retryingTaskKeys);
@@ -231,6 +233,7 @@ export function ChatView() {
     responseVerbosity?: ResponseVerbosity;
     communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
+    annotations?: SelectedConversationAnnotation[];
     outputSchema?: Record<string, unknown>;
   }) => {
     if (rejectHistorySurfaceAction(useSessionStore.getState())) return false;
@@ -241,6 +244,7 @@ export function ChatView() {
       serviceTier: payload.serviceTier,
       responseVerbosity: payload.responseVerbosity,
       communicationStyle: payload.communicationStyle,
+      ...(payload.annotations ? { annotations: payload.annotations } : {}),
       ...(payload.outputSchema ? { outputSchema: payload.outputSchema } : {}),
       attachments: payload.attachments.map((attachment) => ({
         type: 'image' as const,
@@ -291,153 +295,161 @@ export function ChatView() {
           : null;
 
   return (
-    <div data-chat-view className="flex h-full flex-col bg-[hsl(var(--deck-canvas))]">
-      <div data-chat-history className="contents">
-        {errorIsVisible && (
-          <div
-            role="alert"
-            data-blade-session-error
-            className="flex min-h-11 flex-wrap items-center gap-2 border-b border-red-200/60 bg-red-50/80 px-4 py-2 font-mono text-[11px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300 sm:px-5"
-          >
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">
-              <span className="font-semibold">
-                {t(
-                  errorContext?.kind === 'submission'
-                    ? 'chat.error.title.submission'
-                    : errorContext?.kind === 'execution'
-                      ? 'chat.error.title.execution'
-                      : errorContext?.kind === 'navigation'
-                        ? 'chat.error.title.navigation'
-                        : 'chat.error.title.generic'
-                )}
-              </span>{' '}
-              {errorMessage}
-            </span>
-            {recoveryActionLabel && (
-              <button
-                type="button"
-                onClick={() => void recoverFromError()}
-                disabled={isRetryingTask}
-                className="inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-md border border-red-300/70 bg-white/65 px-2.5 font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 disabled:cursor-wait disabled:opacity-60 dark:border-red-800 dark:bg-red-950/45 dark:hover:bg-red-900/60"
-              >
-                {canRetryTask ? (
-                  isRetryingTask ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-3 w-3" />
-                  )
-                ) : (
-                  <Pencil className="h-3 w-3" />
-                )}
-                {recoveryActionLabel}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={clearError}
-              aria-label={t('chat.error.dismiss')}
-              className="p-1 text-red-500 rounded transition-colors hover:bg-red-100/60 hover:text-red-700 dark:hover:bg-red-950/60 dark:hover:text-red-100"
+    <div
+      data-chat-view
+      className="relative flex h-full min-h-0 overflow-hidden bg-[hsl(var(--deck-canvas))]"
+    >
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div data-chat-history className="contents">
+          {errorIsVisible && (
+            <div
+              role="alert"
+              data-blade-session-error
+              className="flex min-h-11 flex-wrap items-center gap-2 border-b border-red-200/60 bg-red-50/80 px-4 py-2 font-mono text-[11px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300 sm:px-5"
             >
-              ✕
-            </button>
-          </div>
-        )}
-        {(isReconnecting || sessionEventConnectionState === 'offline') && (
-          <div
-            role={sessionEventConnectionState === 'offline' ? 'alert' : 'status'}
-            aria-live="polite"
-            className="flex min-h-10 flex-wrap items-center gap-2 border-b border-amber-300/60 bg-amber-50/80 px-4 py-2 font-mono text-[11px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200 sm:px-5"
-          >
-            {isReconnecting ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-            ) : (
-              <WifiOff className="h-3.5 w-3.5 shrink-0" />
-            )}
-            <span className="min-w-0 flex-1">
-              {isReconnecting
-                ? t('chat.connection.reconnecting')
-                : t('chat.connection.offline')}
-            </span>
-            {sessionEventConnectionState === 'offline' && (
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">
+                <span className="font-semibold">
+                  {t(
+                    errorContext?.kind === 'submission'
+                      ? 'chat.error.title.submission'
+                      : errorContext?.kind === 'execution'
+                        ? 'chat.error.title.execution'
+                        : errorContext?.kind === 'navigation'
+                          ? 'chat.error.title.navigation'
+                          : 'chat.error.title.generic'
+                  )}
+                </span>{' '}
+                {errorMessage}
+              </span>
+              {recoveryActionLabel && (
+                <button
+                  type="button"
+                  onClick={() => void recoverFromError()}
+                  disabled={isRetryingTask}
+                  className="inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-md border border-red-300/70 bg-white/65 px-2.5 font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 disabled:cursor-wait disabled:opacity-60 dark:border-red-800 dark:bg-red-950/45 dark:hover:bg-red-900/60"
+                >
+                  {canRetryTask ? (
+                    isRetryingTask ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3 w-3" />
+                    )
+                  ) : (
+                    <Pencil className="h-3 w-3" />
+                  )}
+                  {recoveryActionLabel}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
-                  void reconnectSessionEvents().catch(() => undefined);
-                }}
-                className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-amber-400/70 bg-white/60 px-2.5 font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/50"
+                onClick={clearError}
+                aria-label={t('chat.error.dismiss')}
+                className="p-1 text-red-500 rounded transition-colors hover:bg-red-100/60 hover:text-red-700 dark:hover:bg-red-950/60 dark:hover:text-red-100"
               >
-                <RefreshCw className="h-3 w-3" />
-                {t('chat.connection.retry')}
+                ✕
               </button>
-            )}
+            </div>
+          )}
+          {(isReconnecting || sessionEventConnectionState === 'offline') && (
+            <div
+              role={sessionEventConnectionState === 'offline' ? 'alert' : 'status'}
+              aria-live="polite"
+              className="flex min-h-10 flex-wrap items-center gap-2 border-b border-amber-300/60 bg-amber-50/80 px-4 py-2 font-mono text-[11px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200 sm:px-5"
+            >
+              {isReconnecting ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              ) : (
+                <WifiOff className="h-3.5 w-3.5 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1">
+                {isReconnecting
+                  ? t('chat.connection.reconnecting')
+                  : t('chat.connection.offline')}
+              </span>
+              {sessionEventConnectionState === 'offline' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+                    void reconnectSessionEvents().catch(() => undefined);
+                  }}
+                  className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-amber-400/70 bg-white/60 px-2.5 font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/50"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  {t('chat.connection.retry')}
+                </button>
+              )}
+            </div>
+          )}
+          <TaskArtifactBar />
+          <ChatList
+            key={
+              currentSessionRef ? sessionRefKey(currentSessionRef) : 'temporary-session'
+            }
+            messages={messages}
+            isLoading={isLoading}
+            selectionDraftKey={historyOnly ? undefined : composerDraftKey}
+            canAskSideConversation={Boolean(currentSessionRef && !historyOnly)}
+            onOpenSideConversation={openSideConversation}
+          />
+          <TeamPanel />
+        </div>
+        <div data-chat-composer-dock className="contents">
+          <PreviewActivityDisclosure
+            key={currentSessionKey}
+            messages={messages}
+            isLoading={isLoading}
+            isStreaming={isStreaming}
+            isStopping={isStopping}
+            errorMessage={errorIsVisible ? errorMessage : null}
+          />
+          <PendingInteractionBar />
+          <GoalControlBar />
+          <FollowUpQueuePanel
+            queue={historyOnly ? null : followUpQueue}
+            mutation={followUpQueueMutation}
+            onMutate={mutateFollowUpQueue}
+            onRefresh={refreshFollowUpQueue}
+          />
+          <ProviderRecoveryBanner
+            recovery={historyOnly ? null : providerRecovery}
+            stopping={isStopping}
+            onStop={handleAbort}
+          />
+          <TurnActivityStrip
+            activity={
+              historyOnly ||
+              providerRecovery?.snapshot ||
+              actionStationarity ||
+              currentSession?.pendingInteraction
+                ? null
+                : turnActivity
+            }
+            memory={historyOnly ? null : memoryConsolidation}
+          />
+          <ChatInput
+            key={composerDraftKey}
+            draftKey={composerDraftKey}
+            draft={recoveryDraft?.content}
+            draftAttachments={recoveryDraft?.attachments}
+            draftRevision={recoveryDraft?.revision}
+            onSend={handleSend}
+            onAbort={handleAbort}
+            disabled={isLoading || liveUpdatesUnavailable}
+            isStreaming={isStreaming}
+            isStopping={isStopping}
+            pendingSteeringCount={pendingSteeringCount}
+            pendingInputDelivery={pendingInputDelivery}
+            recoveredSteeringCount={recoveredSteeringCount}
+            workspacePath={currentSessionRef?.projectPath}
+          />
+          <div data-chat-primary-status className="contents">
+            <StatusBar />
           </div>
-        )}
-        <TaskArtifactBar />
-        <ChatList
-          key={
-            currentSessionRef ? sessionRefKey(currentSessionRef) : 'temporary-session'
-          }
-          messages={messages}
-          isLoading={isLoading}
-        />
-        <TeamPanel />
-        <SideConversationPanel />
-      </div>
-      <div data-chat-composer-dock className="contents">
-        <PreviewActivityDisclosure
-          key={currentSessionKey}
-          messages={messages}
-          isLoading={isLoading}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
-          errorMessage={errorIsVisible ? errorMessage : null}
-        />
-        <PendingInteractionBar />
-        <GoalControlBar />
-        <FollowUpQueuePanel
-          queue={historyOnly ? null : followUpQueue}
-          mutation={followUpQueueMutation}
-          onMutate={mutateFollowUpQueue}
-          onRefresh={refreshFollowUpQueue}
-        />
-        <ProviderRecoveryBanner
-          recovery={historyOnly ? null : providerRecovery}
-          stopping={isStopping}
-          onStop={handleAbort}
-        />
-        <TurnActivityStrip
-          activity={
-            historyOnly ||
-            providerRecovery?.snapshot ||
-            actionStationarity ||
-            currentSession?.pendingInteraction
-              ? null
-              : turnActivity
-          }
-          memory={historyOnly ? null : memoryConsolidation}
-        />
-        <ChatInput
-          key={composerDraftKey}
-          draftKey={composerDraftKey}
-          draft={recoveryDraft?.content}
-          draftAttachments={recoveryDraft?.attachments}
-          draftRevision={recoveryDraft?.revision}
-          onSend={handleSend}
-          onAbort={handleAbort}
-          disabled={isLoading || liveUpdatesUnavailable}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
-          pendingSteeringCount={pendingSteeringCount}
-          pendingInputDelivery={pendingInputDelivery}
-          recoveredSteeringCount={recoveredSteeringCount}
-          workspacePath={currentSessionRef?.projectPath}
-        />
-        <div data-chat-primary-status className="contents">
-          <StatusBar />
         </div>
       </div>
+      <SideConversationPanel />
     </div>
   );
 }

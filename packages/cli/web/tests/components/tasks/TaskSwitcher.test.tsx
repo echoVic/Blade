@@ -283,6 +283,102 @@ describe('TaskSwitcher', () => {
     expect(highlightedTitle()).toContain(first.title);
   });
 
+  for (const mode of ['tasks', 'commands'] as const) {
+    for (const composition of ['native', 'legacy', 'lifecycle'] as const) {
+      it.each(['Enter', 'ArrowDown', 'ArrowUp', 'Escape'])(
+        `leaves %s to the IME in ${mode} mode with ${composition} composition`,
+        async (key) => {
+          useAppStore.setState({ taskSwitcherMode: mode });
+          useSessionStore.setState({
+            sessions: [
+              createSession({ sessionId: 'first', title: 'First task' }),
+              createSession({ sessionId: 'second', title: 'Second task' }),
+            ],
+          });
+          await renderSwitcher();
+          const input = document.body.querySelector<HTMLInputElement>(
+            'input[role="combobox"]'
+          );
+          if (!input) throw new Error('Task switcher input is missing');
+          const highlighted = highlightedTitle();
+          expect(highlighted).not.toBeNull();
+          if (composition === 'lifecycle') {
+            await act(async () => {
+              input.dispatchEvent(
+                new CompositionEvent('compositionstart', { bubbles: true })
+              );
+            });
+          }
+          const event = new KeyboardEvent('keydown', {
+            key,
+            bubbles: true,
+            cancelable: true,
+            isComposing: composition === 'native',
+            keyCode: composition === 'legacy' ? 229 : 0,
+          });
+          await act(async () => {
+            input.dispatchEvent(event);
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          });
+
+          expect(useAppStore.getState().isTaskSwitcherOpen).toBe(true);
+          expect(highlightedTitle()).toBe(highlighted);
+          expect(selectSession).not.toHaveBeenCalled();
+          if (key !== 'Escape') expect(event.defaultPrevented).toBe(false);
+        }
+      );
+    }
+  }
+
+  it('resumes task navigation after composition ends without consuming the 229 confirmation', async () => {
+    const first = createSession({ sessionId: 'first', title: 'First task' });
+    const second = createSession({ sessionId: 'second', title: 'Second task' });
+    useSessionStore.setState({ sessions: [first, second] });
+    await renderSwitcher();
+    const input = document.body.querySelector<HTMLInputElement>(
+      'input[role="combobox"]'
+    );
+    if (!input) throw new Error('Task switcher input is missing');
+    await act(async () => {
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          keyCode: 229,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    });
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(useAppStore.getState().isTaskSwitcherOpen).toBe(true);
+    await pressKey('ArrowDown');
+    expect(highlightedTitle()).toContain(second.title);
+    await pressKey('Enter');
+    expect(selectSession).toHaveBeenCalledExactlyOnceWith({
+      sessionId: second.sessionId,
+      projectPath: second.projectPath,
+    });
+  });
+
+  it('clears an unfinished composition when the switcher is reopened', async () => {
+    await renderSwitcher();
+    const input = document.body.querySelector<HTMLInputElement>(
+      'input[role="combobox"]'
+    );
+    if (!input) throw new Error('Task switcher input is missing');
+    await act(async () => {
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      useAppStore.getState().setTaskSwitcherOpen(false);
+    });
+    await act(async () => {
+      useAppStore.getState().setTaskSwitcherOpen(true);
+    });
+    await pressKey('Escape');
+    expect(useAppStore.getState().isTaskSwitcherOpen).toBe(false);
+  });
+
   it('shows exact queue position and stops a task without closing the switcher', async () => {
     await renderSwitcher();
 

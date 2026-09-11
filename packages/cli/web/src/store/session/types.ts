@@ -298,6 +298,8 @@ export interface ElicitationInfo {
 export interface Message extends Omit<BaseMessage, 'metadata'> {
   metadata?: Record<string, unknown>;
   agentContent?: AgentResponseContent;
+  /** Durable assistant message IDs folded into this display-only projection. */
+  displaySourceMessageIds?: string[];
 }
 
 export type CatalogLoadState = 'idle' | 'loading' | 'hydrating' | 'ready' | 'error';
@@ -363,11 +365,19 @@ export interface SessionErrorContext {
   failureCode?: NonNullable<Session['taskFailure']>['code'];
 }
 
+export interface SideConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface SideConversationState {
   requestId: string;
   sessionRef: SessionRef;
   question: string;
-  status: 'loading' | 'completed' | 'error';
+  selectedText?: string;
+  messages?: SideConversationMessage[];
+  status: 'idle' | 'loading' | 'completed' | 'error';
   response?: string;
   error?: string;
   durationMs?: number;
@@ -431,6 +441,8 @@ export interface SessionSlice {
   resumeGoal: () => Promise<void>;
   editGoal: (objective: string) => Promise<void>;
   clearGoal: () => Promise<void>;
+  openSideConversation: (selectedText?: string) => boolean;
+  askSideConversation: (question: string, selectedText?: string) => Promise<boolean>;
   refreshFollowUpQueue: () => Promise<void>;
   mutateFollowUpQueue: (operation: FollowUpQueueMutation) => Promise<boolean>;
   dismissSideConversation: () => void;

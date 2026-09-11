@@ -6,7 +6,10 @@ import { nanoid } from 'nanoid';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
-import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
+import {
+  resolveWorkspaceAgentResources,
+  snapshotWorkspaceAgentResources,
+} from '../../agent/resources/WorkspaceAgentResources.js';
 import { resolveWorkspaceModelResources } from '../../agent/resources/WorkspaceModelResources.js';
 import {
   ActiveOperationGate,
@@ -20,15 +23,18 @@ import {
   PENDING_RESUME_RECOVERY_BUDGET_MS,
   type PendingResumeFailureEvidence,
 } from '../../agent/runtime/PendingResumeRecoveryPolicy.js';
+import { SessionInUseError } from '../../agent/runtime/SessionLease.js';
 import {
   type ResumedSubagent,
   SessionRuntime,
+  type SessionRuntimeOptions,
 } from '../../agent/runtime/SessionRuntime.js';
 import {
   SessionRuntimeCapacityError,
   SessionRuntimeResidency,
   type SessionRuntimeResidencyLease,
 } from '../../agent/runtime/SessionRuntimeResidency.js';
+import { createLocalSessionWorkspace } from '../../agent/runtime/SessionWorkspace.js';
 import {
   type TaskAdmissionHandle,
   TaskAdmissionQueueFullError,
@@ -2177,6 +2183,46 @@ export const createSessionRouteController = (): SessionRouteController => {
     await disposal;
   };
 
+  const runtimeOptionsForSession = (
+    session: SessionInfo,
+    overrides: {
+      communicationStyle?: CommunicationStyleSelection;
+      permissionMode?: PermissionMode;
+    } = {}
+  ): SessionRuntimeOptions => {
+    const communicationStyle =
+      overrides.communicationStyle ?? session.communicationStyle;
+    return {
+      sessionId: session.id,
+      workspaceRoot: session.projectPath,
+      permissionMode:
+        overrides.permissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT,
+      ...(session.reasoningEffort ? { reasoningEffort: session.reasoningEffort } : {}),
+      ...(session.serviceTier ? { serviceTier: session.serviceTier } : {}),
+      ...(session.responseVerbosity
+        ? { responseVerbosity: session.responseVerbosity }
+        : {}),
+      ...(communicationStyle ? { communicationStyle } : {}),
+      ...(communicationStyle === session.communicationStyle &&
+      session.communicationStyleDigest
+        ? { communicationStyleDigest: session.communicationStyleDigest }
+        : {}),
+      ...(session.projectInstructionsDigest
+        ? { projectInstructionsDigest: session.projectInstructionsDigest }
+        : {}),
+      ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
+      ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
+      ...(session.messageCount > 0
+        ? {
+            sessionStart: {
+              isResume: true,
+              resumeSessionId: session.id,
+            },
+          }
+        : {}),
+    };
+  };
+
   const acquireRuntime = async (
     session: SessionInfo,
     overrides: {
@@ -2201,8 +2247,6 @@ export const createSessionRouteController = (): SessionRouteController => {
 
     let initialization = runtimeInitializations.get(key);
     if (!initialization) {
-      const runtimeCommunicationStyle =
-        overrides.communicationStyle ?? session.communicationStyle;
       initialization = (async () => {
         const reservation = await runtimeResidency.reserve(key, {
           surface: 'web',
@@ -2210,41 +2254,9 @@ export const createSessionRouteController = (): SessionRouteController => {
         });
         let uncommittedRuntime: SessionRuntime | undefined;
         try {
-          uncommittedRuntime = await SessionRuntime.create({
-            sessionId: session.id,
-            workspaceRoot: session.projectPath,
-            permissionMode:
-              overrides.permissionMode ??
-              session.permissionMode ??
-              PermissionMode.DEFAULT,
-            ...(session.reasoningEffort
-              ? { reasoningEffort: session.reasoningEffort }
-              : {}),
-            ...(session.serviceTier ? { serviceTier: session.serviceTier } : {}),
-            ...(session.responseVerbosity
-              ? { responseVerbosity: session.responseVerbosity }
-              : {}),
-            ...(runtimeCommunicationStyle
-              ? { communicationStyle: runtimeCommunicationStyle }
-              : {}),
-            ...(runtimeCommunicationStyle === session.communicationStyle &&
-            session.communicationStyleDigest
-              ? { communicationStyleDigest: session.communicationStyleDigest }
-              : {}),
-            ...(session.projectInstructionsDigest
-              ? { projectInstructionsDigest: session.projectInstructionsDigest }
-              : {}),
-            ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
-            ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
-            ...(session.messageCount > 0
-              ? {
-                  sessionStart: {
-                    isResume: true,
-                    resumeSessionId: session.id,
-                  },
-                }
-              : {}),
-          });
+          uncommittedRuntime = await SessionRuntime.create(
+            runtimeOptionsForSession(session, overrides)
+          );
           const resolvedModelId = uncommittedRuntime.getCurrentModelId();
           if (
             resolvedModelId &&
@@ -2340,6 +2352,84 @@ export const createSessionRouteController = (): SessionRouteController => {
       return await operation(lease.value);
     } finally {
       lease.release();
+    }
+  };
+
+  const sideConversationRuntimeError = (error: unknown): Error => {
+    if (
+      error instanceof SessionWorkspaceUnavailableError ||
+      error instanceof BladeServerError
+    ) {
+      return error;
+    }
+    if (error instanceof WorktreeUnavailableError) {
+      return new SessionWorkspaceUnavailableError(error.reason);
+    }
+    if (error instanceof SessionInUseError) {
+      return new ConflictError(error.message);
+    }
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      ((error as NodeJS.ErrnoException).code === 'ENOENT' ||
+        (error as NodeJS.ErrnoException).code === 'ENOTDIR')
+    ) {
+      return new SessionWorkspaceUnavailableError('workspace_missing');
+    }
+    return error instanceof Error ? error : new Error(String(error));
+  };
+
+  const sideConversationFallbackRoot = (session: SessionInfo): string | undefined => {
+    if (session.taskIsolation !== 'worktree' || session.taskWorktree) {
+      return undefined;
+    }
+    if (!session.taskSourceProjectPath) {
+      throw new SessionWorkspaceUnavailableError('task_source_project_missing');
+    }
+    return normalizeProjectPathInput(session.taskSourceProjectPath);
+  };
+
+  const withSideConversationRuntime = async <T>(
+    session: SessionInfo,
+    operation: (runtime: SessionRuntime) => Promise<T>
+  ): Promise<T> => {
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+    const fallbackRoot = sideConversationFallbackRoot(session);
+    if (!fallbackRoot || runtimes.has(key) || runtimeInitializations.has(key)) {
+      try {
+        return await withRuntime(session, operation);
+      } catch (error) {
+        throw sideConversationRuntimeError(error);
+      }
+    }
+
+    const startupConfig = getConfig();
+    if (!startupConfig) {
+      throw new ServiceUnavailableError('Configuration is not initialized');
+    }
+    let runtime: SessionRuntime | undefined;
+    try {
+      const [modelResources, agentResources] = await Promise.all([
+        resolveWorkspaceModelResources(fallbackRoot, startupConfig),
+        resolveWorkspaceAgentResources(fallbackRoot),
+      ]);
+      runtime = await SessionRuntime.create({
+        ...runtimeOptionsForSession(session),
+        workspace: createLocalSessionWorkspace(fallbackRoot),
+        modelResources,
+        agentResources: snapshotWorkspaceAgentResources(agentResources),
+        lspResources: {
+          projectRoot: fallbackRoot,
+          servers: {},
+        },
+        auxiliaryReadOnly: true,
+      });
+      return await operation(runtime);
+    } catch (error) {
+      throw sideConversationRuntimeError(error);
+    } finally {
+      await runtime?.dispose();
     }
   };
 
@@ -5181,6 +5271,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       communicationStyle: rawRequestedCommunicationStyle,
       permissionMode: requestedMode,
       projectPath,
+      annotations,
       outputSchema: rawOutputSchema,
     } = parsed.data;
     let outputSchema: SessionTaskDispatch['outputSchema'];
@@ -5215,6 +5306,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
     const requestedPermissionMode = requestedMode as PermissionMode | undefined;
     const userContent = buildUserMessageContent(content, attachments);
+    const inputMetadata =
+      annotations && annotations.length > 0
+        ? { selectedConversationAnnotations: annotations }
+        : undefined;
 
     const sessionLease = await acquireSessionForWrite(
       sessionId,
@@ -5287,6 +5382,7 @@ export const createSessionRouteController = (): SessionRouteController => {
             }
             const steering = await runtime.enqueueSteering(userContent, {
               allowBeforeTurn: true,
+              ...(inputMetadata ? { metadata: inputMetadata } : {}),
             });
             if (!steering.accepted) {
               return c.json(
@@ -5525,9 +5621,13 @@ export const createSessionRouteController = (): SessionRouteController => {
               throw error;
             }
           }
-          const preparation = outputSchema
-            ? await runtime.prepareInputTurn(userContent, { outputSchema })
-            : await runtime.prepareInputTurn(userContent);
+          const preparation =
+            outputSchema || inputMetadata
+              ? await runtime.prepareInputTurn(userContent, {
+                  ...(outputSchema ? { outputSchema } : {}),
+                  ...(inputMetadata ? { metadata: inputMetadata } : {}),
+                })
+              : await runtime.prepareInputTurn(userContent);
           if (!preparation.accepted) {
             return c.json(
               { status: 'rejected', reason: preparation.reason },
@@ -5576,7 +5676,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       sessionId,
       parsed.data.projectPath ?? c.req.query('projectPath'),
       (session) =>
-        withRuntime(session, async (runtime) => {
+        withSideConversationRuntime(session, async (runtime) => {
           const result = await runtime.askSideQuestion(parsed.data.question, {
             signal: c.req.raw.signal,
           });
@@ -5970,6 +6070,9 @@ async function executeRunAsync(
         messageId: userMessageId,
         role: 'user',
         content: getDisplayContent(content),
+        ...(options.preparedInputTurn?.metadata
+          ? { metadata: options.preparedInputTurn.metadata }
+          : {}),
       });
     }
     emit('session.status', { status: 'running' });
@@ -6350,6 +6453,7 @@ async function executeRunAsync(
               messageId: message.id,
               role: 'user',
               content: getDisplayContent(message.content),
+              ...(message.metadata ? { metadata: message.metadata } : {}),
               ...(message.recovered ? { recovered: true } : {}),
             });
             rememberProjectedInboxMessageId(message.id);

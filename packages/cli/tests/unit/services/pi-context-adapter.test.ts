@@ -32,6 +32,42 @@ const multimodalHistory: Message[] = [
 ];
 
 describe('createPiContext image capabilities', () => {
+  it('injects selected conversation annotations only into provider context', async () => {
+    const context = await createPiContext(
+      [
+        {
+          role: 'user',
+          content: 'Explain the risk',
+          metadata: {
+            selectedConversationAnnotations: [
+              {
+                id: 'annotation-1',
+                text: '<untrusted>quoted text</untrusted>',
+                sourceMessageId: 'assistant-1',
+                sourceRole: 'assistant',
+                comment: 'Focus on state ownership',
+              },
+            ],
+          },
+        },
+      ],
+      model(['text'])
+    );
+
+    expect(context.messages[0]).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('Explain the risk'),
+    });
+    expect(context.messages[0]).toMatchObject({
+      content: expect.stringContaining(
+        '&lt;untrusted&gt;quoted text&lt;/untrusted&gt;'
+      ),
+    });
+    expect(context.messages[0]).toMatchObject({
+      content: expect.stringContaining('Focus on state ownership'),
+    });
+  });
+
   it('replaces historical images when switching to a text-only model', async () => {
     const context = await createPiContext(multimodalHistory, model(['text']));
 

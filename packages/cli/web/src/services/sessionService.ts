@@ -32,6 +32,7 @@ import {
   type ScheduleListResponse,
   ScheduleListResponseSchema,
   ScheduleSchema,
+  type SelectedConversationAnnotation,
   type ServiceTier,
   type Session,
   type SessionArchiveResponse,
@@ -168,6 +169,7 @@ export interface SendMessagePayload {
   responseVerbosity?: ResponseVerbosity;
   communicationStyle?: CommunicationStyle;
   attachments?: ImageAttachmentInput[];
+  annotations?: SelectedConversationAnnotation[];
   outputSchema?: Record<string, unknown>;
 }
 

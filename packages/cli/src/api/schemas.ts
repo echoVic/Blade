@@ -617,6 +617,26 @@ export const TaskAttachmentSchema = Type.Object({
   name: Type.Optional(Type.String()),
 });
 
+export const MAX_SELECTED_CONVERSATION_ANNOTATIONS = 20;
+export const MAX_SELECTED_CONVERSATION_TEXT_CHARS = 12 * 1024;
+export const MAX_SELECTED_CONVERSATION_COMMENT_CHARS = 4 * 1024;
+
+export const SelectedConversationAnnotationSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 200 }),
+  text: Type.String({
+    minLength: 1,
+    maxLength: MAX_SELECTED_CONVERSATION_TEXT_CHARS,
+  }),
+  sourceMessageId: Type.String({ minLength: 1, maxLength: 500 }),
+  sourceRole: StringEnum(['user', 'assistant']),
+  comment: Type.Optional(
+    Type.String({ maxLength: MAX_SELECTED_CONVERSATION_COMMENT_CHARS })
+  ),
+});
+export type SelectedConversationAnnotation = Static<
+  typeof SelectedConversationAnnotationSchema
+>;
+
 export const OutputSchemaSchema = Type.Record(Type.String(), Type.Unknown());
 
 export const CreateTaskRequestSchema = Runtime(
@@ -804,6 +824,11 @@ export const SendMessageRequestSchema = Runtime(
     permissionMode: Type.Optional(PermissionModeSchema),
     attachments: Type.Optional(
       Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
+    ),
+    annotations: Type.Optional(
+      Type.Array(SelectedConversationAnnotationSchema, {
+        maxItems: MAX_SELECTED_CONVERSATION_ANNOTATIONS,
+      })
     ),
     outputSchema: Type.Optional(OutputSchemaSchema),
   })

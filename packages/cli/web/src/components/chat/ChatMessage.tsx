@@ -1,5 +1,17 @@
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  MessageSquareQuote,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
+import { selectedConversationAnnotationsFromMetadata } from '@/lib/chatSelection';
 import { cn } from '@/lib/utils';
 import { type SubagentSession, sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
@@ -21,16 +33,6 @@ import {
   projectTimelineForDisplay,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { CodeReviewReport, parseCodeReviewReport } from './CodeReviewReport';
 import { McpElicitationSection } from './McpElicitationSection';
 import {
@@ -1277,7 +1279,13 @@ function QuestionSection({
 function AgentMessageContent({ message }: { message: Message }) {
   const agentContent = message.agentContent;
   const isCurrentStreamingMessage = useSessionStore(
-    (state) => state.isStreaming && state.currentAssistantMessageId === message.id
+    (state) =>
+      state.isStreaming &&
+      Boolean(
+        state.currentAssistantMessageId &&
+          (message.displaySourceMessageIds?.includes(state.currentAssistantMessageId) ??
+            state.currentAssistantMessageId === message.id)
+      )
   );
 
   if (!agentContent) {
@@ -1354,6 +1362,7 @@ function AgentMessageContent({ message }: { message: Message }) {
 }
 
 function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) {
+  const t = useT();
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
@@ -1432,6 +1441,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
       );
     }
     const { text, images } = getUserMessageParts(message.content);
+    const annotations = selectedConversationAnnotationsFromMetadata(message.metadata);
     return (
       <div
         data-chat-message-id={message.id}
@@ -1442,6 +1452,39 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
           <CopyButton text={text} label="Copy message" />
         </div>
         <div className="bg-[hsl(var(--deck-surface-2))] rounded-lg px-4 py-3 max-w-[85%]">
+          {annotations.length > 0 && (
+            <details data-user-message-annotations className="mb-2">
+              <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md border border-[hsl(var(--deck-border-strong))] bg-[hsl(var(--deck-surface))] px-2.5 font-mono text-[10.5px] text-[hsl(var(--deck-ink-muted))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]">
+                <MessageSquareQuote aria-hidden className="h-3.5 w-3.5" />
+                {t(
+                  annotations.length === 1
+                    ? 'chat.input.annotation.one'
+                    : 'chat.input.annotation.many',
+                  { count: annotations.length }
+                )}
+              </summary>
+              <div className="mt-2 space-y-2">
+                {annotations.map((annotation, index) => (
+                  <div
+                    key={annotation.id}
+                    className="border-l-2 border-[hsl(var(--deck-accent)/0.45)] pl-2"
+                  >
+                    <div className="font-mono text-[9.5px] uppercase text-[hsl(var(--deck-ink-faint))]">
+                      {t('chat.input.annotation.item', { index: index + 1 })}
+                    </div>
+                    <blockquote className="mt-0.5 whitespace-pre-wrap text-[11px] leading-4 text-[hsl(var(--deck-ink-muted))]">
+                      {annotation.text}
+                    </blockquote>
+                    {annotation.comment && (
+                      <p className="mt-1 text-[11px] leading-4 text-[hsl(var(--deck-ink))]">
+                        {annotation.comment}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {text && (
             <p className="text-[14px] text-[hsl(var(--deck-ink))] font-mono leading-relaxed whitespace-pre-wrap">
               {text}

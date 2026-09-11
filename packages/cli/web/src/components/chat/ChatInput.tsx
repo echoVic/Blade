@@ -6,6 +6,7 @@ import type {
   CommunicationStyle,
   ReasoningEffort,
   ResponseVerbosity,
+  SelectedConversationAnnotation,
   ServiceTier,
 } from '@api/schemas';
 import {
@@ -17,6 +18,7 @@ import {
   Hand,
   Info,
   Loader2,
+  MessageSquareQuote,
   Paperclip,
   Send,
   ShieldAlert,
@@ -41,6 +43,7 @@ import { type TranslationKey, useT } from '@/i18n';
 import {
   clearComposerDraft,
   readComposerDraft,
+  removeComposerDraftAnnotation,
   subscribeComposerDraftAppend,
   writeComposerDraft,
 } from '@/lib/composerDraft';
@@ -82,6 +85,7 @@ interface ChatInputProps {
     responseVerbosity?: ResponseVerbosity;
     communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
+    annotations?: SelectedConversationAnnotation[];
     outputSchema?: Record<string, unknown>;
   }) => boolean | void | Promise<boolean | void>;
   onAbort?: () => void | Promise<unknown>;
@@ -190,8 +194,13 @@ export function ChatInput({
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>(
     initialDraft.current.attachments
   );
+  const [annotations, setAnnotations] = useState<SelectedConversationAnnotation[]>(
+    initialDraft.current.annotations ?? []
+  );
   const inputRef = useRef(input);
   const attachmentsRef = useRef(attachments);
+  const annotationsRef = useRef(annotations);
+  const [annotationsOpen, setAnnotationsOpen] = useState(false);
   const [outputSchemaText, setOutputSchemaText] = useState(
     initialDraft.current.outputSchema ?? ''
   );
@@ -208,7 +217,7 @@ export function ChatInput({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
-  const isShellMode = input.trimStart().startsWith('!');
+  const isShellMode = annotations.length === 0 && input.trimStart().startsWith('!');
   const effectiveSubmitDisabled = isShellMode ? shellSubmitDisabled : submitDisabled;
   const attachmentCapabilityErrorRef = useRef<string | null>(null);
   const isSubmittingRef = useRef(false);
@@ -405,6 +414,7 @@ export function ChatInput({
       writeComposerDraft(draftKey, {
         content: draft,
         attachments: nextAttachments,
+        annotations: annotationsRef.current,
       });
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
@@ -415,6 +425,7 @@ export function ChatInput({
       writeComposerDraft(draftKey, {
         content: inputRef.current,
         attachments: attachmentsRef.current,
+        annotations: annotationsRef.current,
         outputSchema: outputSchemaRef.current,
       });
     };
@@ -425,10 +436,13 @@ export function ChatInput({
       subscribeComposerDraftAppend((event) => {
         if (event.key !== draftKey) return;
         const nextAttachments = event.draft.attachments;
+        const nextAnnotations = event.draft.annotations ?? [];
         inputRef.current = event.draft.content;
         attachmentsRef.current = nextAttachments;
+        annotationsRef.current = nextAnnotations;
         setInput(event.draft.content);
         setAttachments(nextAttachments);
+        setAnnotations(nextAnnotations);
         setCursorPosition(event.draft.content.length);
         requestAnimationFrame(() => {
           textareaRef.current?.focus();
@@ -459,7 +473,7 @@ export function ChatInput({
   const handleSend = useCallback(async () => {
     if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (
-      (!input.trim() && attachments.length === 0) ||
+      (!input.trim() && attachments.length === 0 && annotations.length === 0) ||
       disabled ||
       effectiveSubmitDisabled ||
       attachmentsIncompatible ||
@@ -501,15 +515,19 @@ export function ChatInput({
         responseVerbosity: effectiveResponseVerbosity,
         communicationStyle: effectiveCommunicationStyle,
         attachments,
+        ...(annotations.length > 0 ? { annotations } : {}),
         ...(outputSchema ? { outputSchema } : {}),
       });
       if (accepted === false) return;
       clearComposerDraft(submittedDraftKey);
       inputRef.current = '';
       attachmentsRef.current = [];
+      annotationsRef.current = [];
       outputSchemaRef.current = '';
       setInput('');
       setAttachments([]);
+      setAnnotations([]);
+      setAnnotationsOpen(false);
       setOutputSchemaText('');
       setOutputSchemaError(null);
       setAttachmentError(null);
@@ -524,6 +542,7 @@ export function ChatInput({
     }
   }, [
     attachments,
+    annotations,
     attachmentsIncompatible,
     draftKey,
     input,
@@ -560,6 +579,14 @@ export function ChatInput({
         });
         return next;
       });
+    },
+    [draftKey]
+  );
+
+  const removeAnnotation = useCallback(
+    (id: string) => {
+      removeComposerDraftAnnotation(draftKey, id);
+      if (annotationsRef.current.length <= 1) setAnnotationsOpen(false);
     },
     [draftKey]
   );
@@ -738,7 +765,14 @@ export function ChatInput({
   );
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLocaleLowerCase() === 'a') {
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.select();
+        return;
+      }
+
       if (showSlashSuggestions) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -885,7 +919,7 @@ export function ChatInput({
   const currentModeConfig = MODES.find((m) => m.value === currentMode) ?? MODES[1];
   const currentModeLabel = t(currentModeConfig.labelKey);
   const CurrentModeIcon = currentModeConfig.icon;
-  const canSend = !!input.trim() || attachments.length > 0;
+  const canSend = !!input.trim() || attachments.length > 0 || annotations.length > 0;
   const attachmentLimitReached = attachments.length >= MAX_INLINE_ATTACHMENT_COUNT;
   const attachmentBytes = inlineImageBytes(attachments);
   const visibleAttachmentError =
@@ -961,6 +995,66 @@ export function ChatInput({
             onHover={atMention.setSelectedIndex}
             visible={showAtSuggestions && !showSlashSuggestions}
           />
+
+          {annotations.length > 0 && (
+            <div className="px-3 pt-3">
+              <Popover open={annotationsOpen} onOpenChange={setAnnotationsOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t('chat.input.annotation.show', {
+                      count: annotations.length,
+                    })}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[hsl(var(--deck-border-strong))] bg-[hsl(var(--deck-surface-2))] px-2.5 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:text-[hsl(var(--deck-ink))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                  >
+                    <MessageSquareQuote aria-hidden className="h-3.5 w-3.5" />
+                    {t(
+                      annotations.length === 1
+                        ? 'chat.input.annotation.one'
+                        : 'chat.input.annotation.many',
+                      { count: annotations.length }
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  side="top"
+                  className="w-[min(360px,calc(100vw-1rem))] space-y-2 p-2"
+                >
+                  {annotations.map((annotation, index) => (
+                    <div
+                      key={annotation.id}
+                      className="flex items-start gap-2 rounded-md bg-[hsl(var(--deck-surface-2))] px-2.5 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-[9.5px] uppercase text-[hsl(var(--deck-ink-faint))]">
+                          {t('chat.input.annotation.item', { index: index + 1 })}
+                        </div>
+                        <blockquote className="mt-1 line-clamp-3 whitespace-pre-wrap border-l-2 border-[hsl(var(--deck-accent)/0.45)] pl-2 text-[11px] leading-4 text-[hsl(var(--deck-ink-muted))]">
+                          {annotation.text}
+                        </blockquote>
+                        {annotation.comment && (
+                          <p className="mt-1.5 text-[11px] leading-4 text-[hsl(var(--deck-ink))]">
+                            {annotation.comment}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={t('chat.input.annotation.remove', {
+                          index: index + 1,
+                        })}
+                        onClick={() => removeAnnotation(annotation.id)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[hsl(var(--deck-ink-faint))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                      >
+                        <X aria-hidden className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
 
           <Textarea
             ref={textareaRef}
