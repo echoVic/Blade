@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.165] - 2026-09-12
+
+### Fixed
+- Let main loops and side questions cancel while waiting for MCP catalog refresh without cancelling the shared refresh. Remove waiter listeners on settlement and observe late refresh failures.
+- Reject side questions cancelled before preparation or during context preparation before they reach the Provider, while retaining ownership until context reads settle.
+
+### Tests
+- Cover pre-abort, independent waiters, success/failure listener cleanup, late rejection, Runtime disposal, and main-loop interruption.
+- Verify real MCP stdio continuity and DeepSeek Flash/Pro Chromium panel dismissal, server shutdown, and main-turn stop with bounded cancellation, exact follow-up responses, durable abort checks, and zero retries.
+
 ## [0.10.164] - 2026-09-12
 
 ### Fixed
