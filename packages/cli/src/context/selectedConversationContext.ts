@@ -26,10 +26,7 @@ export function selectedConversationAnnotationsFromMetadata(
 }
 
 function escapeXmlText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function annotationsPrompt(annotations: readonly SelectedConversationAnnotation[]) {
@@ -42,11 +39,7 @@ function annotationsPrompt(annotations: readonly SelectedConversationAnnotation[
       escapeXmlText(annotation.text),
       '</selected_text>',
       ...(annotation.comment
-        ? [
-            '<user_comment>',
-            escapeXmlText(annotation.comment),
-            '</user_comment>',
-          ]
+        ? ['<user_comment>', escapeXmlText(annotation.comment), '</user_comment>']
         : []),
       '</annotation>',
     ]),
