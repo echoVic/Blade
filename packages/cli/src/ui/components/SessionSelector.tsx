@@ -4,7 +4,6 @@
  */
 
 import { Box, Text } from 'ink';
-import SelectInput from 'ink-select-input';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
@@ -81,7 +80,10 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   onSelect,
   onCancel,
 }) => {
-  const [currentPage, setCurrentPage] = useState(0);
+  const [selection, setSelection] = useState<{
+    intent: SessionSelectionIntent;
+    key: string | null;
+  } | null>(null);
   const [isActivating, setIsActivating] = useState(false);
   const isActivatingRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -119,20 +121,36 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         return;
       }
 
-      // 翻页：左箭头或 h 键 - 上一页
+      if (sessions.length === 0) return;
       if (key.leftArrow || input === 'h' || input === 'H') {
-        if (currentPage > 0) {
-          setCurrentPage((prev) => prev - 1);
-        }
+        if (currentPage > 0) selectIndex((currentPage - 1) * PAGE_SIZE);
         return;
       }
-
-      // 翻页：右箭头或 l 键 - 下一页
       if (key.rightArrow || input === 'l' || input === 'L') {
-        if (currentPage < totalPages - 1) {
-          setCurrentPage((prev) => prev + 1);
-        }
+        if (currentPage < totalPages - 1) selectIndex((currentPage + 1) * PAGE_SIZE);
         return;
+      }
+      if (key.upArrow || input === 'k') {
+        selectIndex(
+          currentPage * PAGE_SIZE +
+            (((selectedIndex % PAGE_SIZE) - 1 + items.length) % items.length)
+        );
+        return;
+      }
+      if (key.downArrow || input === 'j') {
+        selectIndex(
+          currentPage * PAGE_SIZE + (((selectedIndex % PAGE_SIZE) + 1) % items.length)
+        );
+        return;
+      }
+      if (/^[1-9]$/.test(input)) {
+        const item = items[Number(input) - 1];
+        if (item) handleSelect(item);
+        return;
+      }
+      if (key.return) {
+        const item = items[selectedIndex % PAGE_SIZE];
+        if (item) handleSelect(item);
       }
     },
     { isActive: isFocused } // 只在有焦点时激活
@@ -147,6 +165,18 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     () => new Set(taskAttentionUnreadKeys),
     [taskAttentionUnreadKeys]
   );
+  const candidateKeys = useMemo(() => sessions.map(getSessionCandidateKey), [sessions]);
+  const selectedIndex = Math.max(
+    0,
+    selection?.intent === intent && selection.key !== null
+      ? candidateKeys.indexOf(selection.key)
+      : -1
+  );
+  const selectedKey = candidateKeys[selectedIndex] ?? null;
+  const currentPage = Math.floor(selectedIndex / PAGE_SIZE);
+  const selectIndex = (index: number) => {
+    setSelection({ intent, key: candidateKeys[index] ?? null });
+  };
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(sessions.length / PAGE_SIZE)),
     [sessions.length]
@@ -182,10 +212,9 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     [currentPage, sessions.length]
   );
 
-  // 会话变化时重置页码
-  useEffect(() => {
-    setCurrentPage(0);
-  }, [sessions.length]);
+  if (selection?.intent !== intent || selection.key !== selectedKey) {
+    setSelection({ intent, key: selectedKey });
+  }
 
   const handleSelect = (item: { label: string; value: SessionSurfaceSummary }) => {
     if (isActivatingRef.current) {
@@ -229,13 +258,14 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         {'\n'}
       </Text>
 
-      <SelectInput
-        items={items}
-        onSelect={handleSelect}
-        isFocused={isFocused && !isActivating}
-        indicatorComponent={Indicator}
-        itemComponent={Item}
-      />
+      <Box flexDirection="column">
+        {items.map((item) => (
+          <Box key={item.key}>
+            <Indicator isSelected={item.key === selectedKey} />
+            <Item label={item.label} isSelected={item.key === selectedKey} />
+          </Box>
+        ))}
+      </Box>
 
       {isActivating && (
         <Text color="cyan">{intent === 'fork' ? 'Forking…' : 'Resuming…'}</Text>

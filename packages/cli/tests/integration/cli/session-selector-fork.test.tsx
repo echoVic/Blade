@@ -488,6 +488,329 @@ describe('session selector fork integration', () => {
     expect(attention.setVisibleLocator).toHaveBeenCalledWith(childLocator);
   });
 
+  it.each(['resume', 'fork'] as const)(
+    'refreshes an open %s selector from a complete attention catalog',
+    (intent) => {
+      const initial = createLocalSurfaceSummary(createSessionMetadata());
+      const updated = { ...initial, taskStatus: 'failed' as const };
+      const actions = getState().app.actions;
+      actions.showSessionSelector([initial], intent);
+      actions.projectTaskAttentionState('ready', ['unread-task'], [updated]);
+
+      expect(getState().app.sessionSelectorData).toEqual({
+        intent,
+        sessions: [updated],
+      });
+      expect(getState().app.activeModal).toBe('sessionSelector');
+      expect(getState().app.taskAttentionUnreadKeys).toEqual(['unread-task']);
+    }
+  );
+
+  it('retains selector candidates during incomplete refreshes without reopening a closed selector', () => {
+    const session = createLocalSurfaceSummary(createSessionMetadata());
+    const actions = getState().app.actions;
+    actions.showSessionSelector([session], 'resume');
+    const previous = getState().app.sessionSelectorData;
+    actions.projectTaskAttentionState('loading', [], []);
+    expect(getState().app.sessionSelectorData).toBe(previous);
+    actions.projectTaskAttentionState('error', [], []);
+    expect(getState().app.sessionSelectorData).toBe(previous);
+    actions.closeModal();
+    actions.projectTaskAttentionState('ready', [], [session]);
+    expect(getState().app.activeModal).toBe('none');
+    expect(getState().app.sessionSelectorData).toBeUndefined();
+  });
+
+  it.each(['metadata', 'reorder', 'insert'])(
+    'preserves the selected locator after a %s catalog update',
+    async (change) => {
+      const first = createLocalSurfaceSummary(
+        createSessionMetadata({
+          sessionId: 'shared-session',
+          projectPath: `${getCwd()}/first`,
+          title: 'First candidate',
+        })
+      );
+      const selected = createLocalSurfaceSummary(
+        createSessionMetadata({
+          sessionId: 'shared-session',
+          projectPath: `${getCwd()}/selected`,
+          title: 'Selected candidate',
+        })
+      );
+      const updated = { ...selected, title: 'Updated selected candidate' };
+      const incoming =
+        change === 'metadata'
+          ? [first, updated]
+          : change === 'reorder'
+            ? [updated, first]
+            : [createRemoteSurfaceSummary(), first, updated];
+      const onSelect = vi.fn<(session: SessionSurfaceSummary) => void>();
+      const stdin = new TestInputStream();
+      const stdout = new TestOutputStream();
+      const stderr = new TestOutputStream();
+      getState().focus.actions.setFocus(FocusId.SESSION_SELECTOR);
+      const app = render(
+        <SessionSelector
+          intent="resume"
+          sessions={[first, selected]}
+          onSelect={onSelect}
+        />,
+        { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false }
+      );
+      const exit = app.waitUntilExit();
+      try {
+        await waitForAssertion(() =>
+          expect(stdout.output).toContain('First candidate')
+        );
+        const movedAt = stdout.output.length;
+        stdin.write('\u001b[B');
+        await waitForAssertion(() =>
+          expect(stdout.output.slice(movedAt)).toContain('> [DONE] Selected candidate')
+        );
+        app.rerender(
+          <SessionSelector intent="resume" sessions={incoming} onSelect={onSelect} />
+        );
+        await waitForAssertion(() => expect(stdout.output).toContain(updated.title));
+        await waitForNextTick();
+        stdin.write('\r');
+        await waitForAssertion(() => expect(onSelect).toHaveBeenCalledOnce());
+        expect(onSelect).toHaveBeenCalledWith(updated);
+      } finally {
+        app.unmount();
+        await exit;
+        app.cleanup();
+        stdin.end();
+        stdout.end();
+        stderr.end();
+      }
+    }
+  );
+
+  it('keeps a selected session on its new page after catalog insertion', async () => {
+    const sessions = Array.from({ length: 21 }, (_, index) =>
+      createLocalSurfaceSummary(
+        createSessionMetadata({
+          sessionId: `page-session-${index}`,
+          title: `Page candidate ${index}`,
+        })
+      )
+    );
+    const target = sessions[20];
+    if (!target) throw new Error('Missing page candidate');
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    const onSelect = vi.fn<(session: SessionSurfaceSummary) => void>();
+    getState().focus.actions.setFocus(FocusId.SESSION_SELECTOR);
+    const app = render(
+      <SessionSelector intent="resume" sessions={sessions} onSelect={onSelect} />,
+      { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false }
+    );
+    const exit = app.waitUntilExit();
+    try {
+      await waitForAssertion(() => expect(stdout.output).toContain('第 1/2 页'));
+      stdin.write('\u001b[C');
+      await waitForAssertion(() =>
+        expect(stdout.output).toContain('> [DONE] Page candidate 20')
+      );
+      const updated = { ...target, title: 'Updated page candidate' };
+      const outputAt = stdout.output.length;
+      app.rerender(
+        <SessionSelector
+          intent="resume"
+          sessions={[createRemoteSurfaceSummary(), ...sessions.slice(0, 20), updated]}
+          onSelect={onSelect}
+        />
+      );
+      await waitForAssertion(() =>
+        expect(stdout.output.slice(outputAt)).toContain('共 22 个会话')
+      );
+      await waitForNextTick();
+      stdin.write('\r');
+      await waitForAssertion(() => expect(onSelect).toHaveBeenCalledOnce());
+      expect(onSelect).toHaveBeenCalledWith(updated);
+    } finally {
+      app.unmount();
+      await exit;
+      app.cleanup();
+      stdin.end();
+      stdout.end();
+      stderr.end();
+    }
+  });
+
+  it.each(['removed', 'empty'])(
+    'keeps selection safe when the current catalog becomes %s',
+    async (change) => {
+      const first = createLocalSurfaceSummary(
+        createSessionMetadata({ title: 'Remaining candidate' })
+      );
+      const selected = createRemoteSurfaceSummary();
+      const onSelect = vi.fn<(session: SessionSurfaceSummary) => void>();
+      const onCancel = vi.fn();
+      const stdin = new TestInputStream();
+      const stdout = new TestOutputStream();
+      const stderr = new TestOutputStream();
+      getState().focus.actions.setFocus(FocusId.SESSION_SELECTOR);
+      const app = render(
+        <SessionSelector
+          intent="resume"
+          sessions={[first, selected]}
+          onSelect={onSelect}
+          onCancel={onCancel}
+        />,
+        { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false }
+      );
+      const exit = app.waitUntilExit();
+      try {
+        await waitForAssertion(() =>
+          expect(stdout.output).toContain('Remaining candidate')
+        );
+        stdin.write('j');
+        await waitForAssertion(() => expect(stdout.output).toContain('> [remote'));
+        const outputAt = stdout.output.length;
+        app.rerender(
+          <SessionSelector
+            intent="resume"
+            sessions={change === 'empty' ? [] : [first]}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        );
+        await waitForAssertion(() =>
+          expect(stdout.output.slice(outputAt)).toContain(
+            change === 'empty' ? '没有找到历史会话' : '> [DONE] Remaining candidate'
+          )
+        );
+        stdin.write('\r');
+        await waitForNextTick();
+        if (change === 'empty') {
+          expect(onSelect).not.toHaveBeenCalled();
+          stdin.write('\u001b');
+          await waitForAssertion(() => expect(onCancel).toHaveBeenCalledOnce());
+        } else {
+          await waitForAssertion(() => expect(onSelect).toHaveBeenCalledWith(first));
+        }
+      } finally {
+        app.unmount();
+        await exit;
+        app.cleanup();
+        stdin.end();
+        stdout.end();
+        stderr.end();
+      }
+    }
+  );
+
+  it('retains page shortcuts, in-page wraparound, and numeric activation', async () => {
+    const sessions = Array.from({ length: 22 }, (_, index) =>
+      createLocalSurfaceSummary(
+        createSessionMetadata({
+          sessionId: `shortcut-${index}`,
+          title: `Shortcut candidate ${index}`,
+        })
+      )
+    );
+    const onSelect = vi.fn<(session: SessionSurfaceSummary) => void>();
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    getState().focus.actions.setFocus(FocusId.SESSION_SELECTOR);
+    const app = render(
+      <SessionSelector intent="resume" sessions={sessions} onSelect={onSelect} />,
+      { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false }
+    );
+    const exit = app.waitUntilExit();
+    try {
+      await waitForAssertion(() => expect(stdout.output).toContain('第 1/2 页'));
+      for (const [key, title] of [
+        ['l', 'Shortcut candidate 20'],
+        ['k', 'Shortcut candidate 21'],
+        ['j', 'Shortcut candidate 20'],
+        ['h', 'Shortcut candidate 0'],
+        ['k', 'Shortcut candidate 19'],
+        ['j', 'Shortcut candidate 0'],
+        ['L', 'Shortcut candidate 20'],
+      ]) {
+        const outputAt = stdout.output.length;
+        stdin.write(key);
+        await waitForAssertion(
+          () => expect(stdout.output.slice(outputAt)).toContain(`> [DONE] ${title}`),
+          () => `key=${key} output=${JSON.stringify(stdout.output.slice(outputAt))}`
+        );
+      }
+      stdin.write('9');
+      await waitForNextTick();
+      expect(onSelect).not.toHaveBeenCalled();
+      stdin.write('2');
+      await waitForAssertion(() => expect(onSelect).toHaveBeenCalledWith(sessions[21]));
+    } finally {
+      app.unmount();
+      await exit;
+      app.cleanup();
+      stdin.end();
+      stdout.end();
+      stderr.end();
+    }
+  });
+
+  it('retains a remote locator rather than another workspace sharing its session id', async () => {
+    const selected = createRemoteSurfaceSummary();
+    const other = {
+      ...selected,
+      locator: {
+        ...selected.locator,
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'S'.repeat(43)}`,
+        },
+      },
+      title: 'Other remote workspace',
+    };
+    const updated = { ...selected, title: 'Updated remote workspace' };
+    const onSelect = vi.fn<(session: SessionSurfaceSummary) => void>();
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    getState().focus.actions.setFocus(FocusId.SESSION_SELECTOR);
+    const app = render(
+      <SessionSelector
+        intent="resume"
+        sessions={[selected, other]}
+        onSelect={onSelect}
+      />,
+      { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false }
+    );
+    const exit = app.waitUntilExit();
+    try {
+      await waitForAssertion(() =>
+        expect(stdout.output).toContain('> [remote · offline · history] Remote Session')
+      );
+      app.rerender(
+        <SessionSelector
+          intent="resume"
+          sessions={[other, updated]}
+          onSelect={onSelect}
+        />
+      );
+      await waitForAssertion(() =>
+        expect(stdout.output).toContain(
+          '> [remote · offline · history] Updated remote workspace'
+        )
+      );
+      stdin.write('\r');
+      await waitForAssertion(() => expect(onSelect).toHaveBeenCalledWith(updated));
+    } finally {
+      app.unmount();
+      await exit;
+      app.cleanup();
+      stdin.end();
+      stdout.end();
+      stderr.end();
+    }
+  });
+
   it('locks selection synchronously while activation is pending and ignores Escape', async () => {
     const session = createSessionMetadata();
     const activation = createDeferred();

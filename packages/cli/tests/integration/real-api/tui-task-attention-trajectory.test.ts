@@ -263,219 +263,228 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
 
   for (const model of models) {
-    it(`${model.model} surfaces one missed terminal task exactly once`, async (context) => {
-      const retry = frameworkRetryBudget(context);
-      expect(retry).toBe(0);
-      if (!model.baseURL)
-        throw new Error(`Missing Provider base URL for ${model.model}`);
-      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-real-'));
-      const workspace = path.join(root, 'workspace');
-      const storageRoot = path.join(root, 'storage');
-      const home = path.join(root, 'home');
-      const proxy = await startRecordingProviderProxy(model.baseURL, {
-        holdRequestNumber: 1,
-        holdMs: 240_000,
-      });
-      let server: TestServer | undefined;
-      const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
-      let primaryError: unknown;
-      let cleanupError: unknown;
-      try {
-        await Promise.all([
-          mkdir(workspace, { recursive: true }),
-          mkdir(storageRoot, { recursive: true }),
-          mkdir(path.join(home, '.blade'), { recursive: true }),
-        ]);
-        await writeFile(path.join(workspace, 'README.md'), '# TUI attention\n');
-        const runtime = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
-        const baseConfigured = runtime.models[0];
-        if (!baseConfigured) throw new Error('Real API runtime model is missing');
-        const configured = {
-          ...baseConfigured,
-          overrides: { ...baseConfigured.overrides, maxRetries: 0 },
-        };
-        expect(configured.overrides?.maxRetries).toBe(0);
-        await writeFile(
-          path.join(home, '.blade', 'config.json'),
-          `${JSON.stringify(
-            {
-              currentModelId: runtime.currentModelId,
-              models: [configured],
-              modelProviders: runtime.modelProviders,
-              permissionMode: PermissionMode.YOLO,
-              maxTurns: 2,
-              hooks: { enabled: false },
-              disableAllHooks: true,
-              mcpServers: {},
-            },
-            null,
-            2
-          )}\n`,
-          { mode: 0o600 }
-        );
-        process.env.BLADE_STORAGE_ROOT = storageRoot;
-        resetProjectionDbCache();
-        const startedServer = await startProductionServer({
-          workspace,
-          storageRoot,
-          home,
-          secrets: [model.apiKey],
+    it.for([false, true])(
+      `${model.model} surfaces one terminal task exactly once (live selector: %s)`,
+      { timeout: 360_000 },
+      async (observeLiveSelector, context) => {
+        const retry = frameworkRetryBudget(context);
+        expect(retry).toBe(0);
+        if (!model.baseURL)
+          throw new Error(`Missing Provider base URL for ${model.model}`);
+        const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-real-'));
+        const workspace = path.join(root, 'workspace');
+        const storageRoot = path.join(root, 'storage');
+        const home = path.join(root, 'home');
+        const proxy = await startRecordingProviderProxy(model.baseURL, {
+          holdRequestNumber: 1,
+          holdMs: 240_000,
         });
-        server = startedServer;
-        const marker = `TUI_ATTENTION_${model.model
-          .toUpperCase()
-          .replaceAll(/[^A-Z0-9]+/g, '_')}_${Date.now()}`;
-        const title = `TUI attention ${model.model}`;
-        const response = await fetch(`${startedServer.origin}/tasks`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          signal: AbortSignal.timeout(TASK_DISPATCH_TIMEOUT_MS),
-          body: JSON.stringify({
-            prompt: `Do not use tools. Reply with exactly ${marker}`,
+        let server: TestServer | undefined;
+        const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+        let primaryError: unknown;
+        let cleanupError: unknown;
+        try {
+          await Promise.all([
+            mkdir(workspace, { recursive: true }),
+            mkdir(storageRoot, { recursive: true }),
+            mkdir(path.join(home, '.blade'), { recursive: true }),
+          ]);
+          await writeFile(path.join(workspace, 'README.md'), '# TUI attention\n');
+          const runtime = buildRealApiRuntimeConfig({
+            ...model,
+            baseURL: proxy.baseUrl,
+          });
+          const baseConfigured = runtime.models[0];
+          if (!baseConfigured) throw new Error('Real API runtime model is missing');
+          const configured = {
+            ...baseConfigured,
+            overrides: { ...baseConfigured.overrides, maxRetries: 0 },
+          };
+          expect(configured.overrides?.maxRetries).toBe(0);
+          await writeFile(
+            path.join(home, '.blade', 'config.json'),
+            `${JSON.stringify(
+              {
+                currentModelId: runtime.currentModelId,
+                models: [configured],
+                modelProviders: runtime.modelProviders,
+                permissionMode: PermissionMode.YOLO,
+                maxTurns: 2,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {},
+              },
+              null,
+              2
+            )}\n`,
+            { mode: 0o600 }
+          );
+          process.env.BLADE_STORAGE_ROOT = storageRoot;
+          resetProjectionDbCache();
+          const startedServer = await startProductionServer({
+            workspace,
+            storageRoot,
+            home,
+            secrets: [model.apiKey],
+          });
+          server = startedServer;
+          const marker = `TUI_ATTENTION_${model.model
+            .toUpperCase()
+            .replaceAll(/[^A-Z0-9]+/g, '_')}_${Date.now()}`;
+          const title = `TUI attention ${model.model}`;
+          const response = await fetch(`${startedServer.origin}/tasks`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            signal: AbortSignal.timeout(TASK_DISPATCH_TIMEOUT_MS),
+            body: JSON.stringify({
+              prompt: `Do not use tools. Reply with exactly ${marker}`,
+              title,
+              projectPath: workspace,
+              modelId: runtime.currentModelId,
+              isolation: 'local',
+              permissionMode: 'yolo',
+            }),
+          });
+          expect(response.status).toBe(202);
+          const accepted = CreateTaskResponseSchema.parse(await response.json());
+          expect(accepted.status).toBe('running');
+          const statusSequence: string[] = [accepted.status];
+
+          const evidence = await runTuiTaskAttentionPtyDriver({
+            workspace,
+            storageRoot,
+            home,
+            sessionId: accepted.session.sessionId,
             title,
-            projectPath: workspace,
-            modelId: runtime.currentModelId,
-            isolation: 'local',
-            permissionMode: 'yolo',
-          }),
-        });
-        expect(response.status).toBe(202);
-        const accepted = CreateTaskResponseSchema.parse(await response.json());
-        expect(accepted.status).toBe('running');
-        const statusSequence: string[] = [accepted.status];
+            terminalContent: marker,
+            observeLiveSelector,
+            secrets: [model.apiKey],
+            completionTimeoutMs: 190_000,
+            timeoutMs: 300_000,
+            completeTask: async () => {
+              proxy.releaseHeld();
+              const terminal = await waitForTerminal(
+                startedServer.origin,
+                accepted.session.sessionId,
+                workspace,
+                180_000
+              );
+              if (terminal.taskStatus !== 'completed') {
+                throw new Error(`Real TUI attention task ended ${terminal.taskStatus}`);
+              }
+              statusSequence.push(terminal.taskStatus);
+              expect(terminal.taskCompletedAt).toEqual(expect.any(String));
+              const messages = await SessionService.loadSession(
+                accepted.session.sessionId,
+                workspace
+              );
+              const assistant = messages.findLast(
+                (message) => message.role === 'assistant'
+              );
+              const terminalText =
+                typeof assistant?.content === 'string'
+                  ? assistant.content
+                  : (assistant?.content ?? [])
+                      .filter((part) => part.type === 'text')
+                      .map((part) => part.text)
+                      .join('');
+              expect(terminalText.trim()).toBe(marker);
+            },
+          });
 
-        const evidence = await runTuiTaskAttentionPtyDriver({
-          workspace,
-          storageRoot,
-          home,
-          sessionId: accepted.session.sessionId,
-          title,
-          terminalContent: marker,
-          secrets: [model.apiKey],
-          completionTimeoutMs: 190_000,
-          timeoutMs: 300_000,
-          completeTask: async () => {
-            proxy.releaseHeld();
-            const terminal = await waitForTerminal(
-              startedServer.origin,
-              accepted.session.sessionId,
-              workspace,
-              180_000
-            );
-            if (terminal.taskStatus !== 'completed') {
-              throw new Error(`Real TUI attention task ended ${terminal.taskStatus}`);
-            }
-            statusSequence.push(terminal.taskStatus);
-            expect(terminal.taskCompletedAt).toEqual(expect.any(String));
-            const messages = await SessionService.loadSession(
-              accepted.session.sessionId,
-              workspace
-            );
-            const assistant = messages.findLast(
-              (message) => message.role === 'assistant'
-            );
-            const terminalText =
-              typeof assistant?.content === 'string'
-                ? assistant.content
-                : (assistant?.content ?? [])
-                    .filter((part) => part.type === 'text')
-                    .map((part) => part.text)
-                    .join('');
-            expect(terminalText.trim()).toBe(marker);
-          },
-        });
-
-        expect(models.map((candidate) => candidate.model)).toEqual([
-          'deepseek-v4-flash',
-          'deepseek-v4-pro',
-        ]);
-        expect(proxy.forwardedRequestNumbers).toEqual([1]);
-        expect(proxy.injectedRequestNumbers).toEqual([]);
-        expect(proxy.requestLifecycle).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ requestNumber: 1, phase: 'upstream_started' }),
-            expect.objectContaining({ requestNumber: 1, phase: 'headers_received' }),
-            expect.objectContaining({ requestNumber: 1, phase: 'body_completed' }),
-          ])
-        );
-        expect(evidence).toMatchObject({
-          baselinePersisted: true,
-          firstMarkerAbsent: true,
-          newMarkerSeen: true,
-          exactSessionSelected: true,
-          terminalContentSeen: true,
-          markerCleared: true,
-          faults: [],
-          leakedSecrets: [],
-        });
-        const serverOutput = startedServer.output();
-        const faults = serverFaults(serverOutput);
-        const leakedSecrets = startedServer.leakedSecretLabels();
-        expect(faults).toEqual([]);
-        expect(leakedSecrets).toEqual([]);
-        expect(evidence.output.length).toBeLessThanOrEqual(12_000);
-        expect(statusSequence).toEqual(['running', 'completed']);
-        assertNoSecrets(
-          {
-            evidence,
-            faults,
-            leakedSecrets,
-            requestCount: proxy.forwardedRequestNumbers.length,
-            injectionCount: proxy.injectedRequestNumbers.length,
-            frameworkRetries: retry,
-            modelMaxRetries: configured.overrides?.maxRetries,
-            statusSequence,
-          },
-          [model.apiKey]
-        );
-      } catch (error) {
-        primaryError = error;
-      } finally {
-        proxy.releaseHeld();
-        try {
-          if (server) await stopStartedServer(server.child, server.identity);
+          expect(models.map((candidate) => candidate.model)).toEqual([
+            'deepseek-v4-flash',
+            'deepseek-v4-pro',
+          ]);
+          expect(proxy.forwardedRequestNumbers).toEqual([1]);
+          expect(proxy.injectedRequestNumbers).toEqual([]);
+          expect(proxy.requestLifecycle).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ requestNumber: 1, phase: 'upstream_started' }),
+              expect.objectContaining({ requestNumber: 1, phase: 'headers_received' }),
+              expect.objectContaining({ requestNumber: 1, phase: 'body_completed' }),
+            ])
+          );
+          expect(evidence).toMatchObject({
+            baselinePersisted: true,
+            liveSelectorUpdated: observeLiveSelector,
+            firstMarkerAbsent: true,
+            newMarkerSeen: true,
+            exactSessionSelected: true,
+            terminalContentSeen: true,
+            markerCleared: true,
+            faults: [],
+            leakedSecrets: [],
+          });
+          const serverOutput = startedServer.output();
+          const faults = serverFaults(serverOutput);
+          const leakedSecrets = startedServer.leakedSecretLabels();
+          expect(faults).toEqual([]);
+          expect(leakedSecrets).toEqual([]);
+          expect(evidence.output.length).toBeLessThanOrEqual(12_000);
+          expect(statusSequence).toEqual(['running', 'completed']);
+          assertNoSecrets(
+            {
+              evidence,
+              faults,
+              leakedSecrets,
+              requestCount: proxy.forwardedRequestNumbers.length,
+              injectionCount: proxy.injectedRequestNumbers.length,
+              frameworkRetries: retry,
+              modelMaxRetries: configured.overrides?.maxRetries,
+              statusSequence,
+            },
+            [model.apiKey]
+          );
         } catch (error) {
-          cleanupError = error;
+          primaryError = error;
+        } finally {
+          proxy.releaseHeld();
+          try {
+            if (server) await stopStartedServer(server.child, server.identity);
+          } catch (error) {
+            cleanupError = error;
+          }
+          try {
+            await proxy.close();
+          } catch (error) {
+            cleanupError = cleanupError
+              ? new AggregateError(
+                  [cleanupError, error],
+                  'TUI task attention cleanup failed'
+                )
+              : error;
+          }
+          resetProjectionDbCache();
+          if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+          else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+          try {
+            await rm(root, { recursive: true, force: true });
+          } catch (error) {
+            cleanupError = cleanupError
+              ? new AggregateError(
+                  [cleanupError, error],
+                  'TUI task attention cleanup failed'
+                )
+              : error;
+          }
         }
-        try {
-          await proxy.close();
-        } catch (error) {
-          cleanupError = cleanupError
-            ? new AggregateError(
-                [cleanupError, error],
-                'TUI task attention cleanup failed'
-              )
-            : error;
+        if (primaryError && cleanupError) {
+          throw new AggregateError(
+            [
+              sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]),
+              sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]),
+            ],
+            'TUI task attention trajectory and cleanup failed'
+          );
         }
-        resetProjectionDbCache();
-        if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
-        else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
-        try {
-          await rm(root, { recursive: true, force: true });
-        } catch (error) {
-          cleanupError = cleanupError
-            ? new AggregateError(
-                [cleanupError, error],
-                'TUI task attention cleanup failed'
-              )
-            : error;
+        if (primaryError) {
+          throw sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]);
+        }
+        if (cleanupError) {
+          throw sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]);
         }
       }
-      if (primaryError && cleanupError) {
-        throw new AggregateError(
-          [
-            sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]),
-            sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]),
-          ],
-          'TUI task attention trajectory and cleanup failed'
-        );
-      }
-      if (primaryError) {
-        throw sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]);
-      }
-      if (cleanupError) {
-        throw sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]);
-      }
-    }, 360_000);
+    );
   }
 });

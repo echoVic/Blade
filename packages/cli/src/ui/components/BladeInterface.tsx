@@ -230,7 +230,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     });
   });
   const projectTaskAttention = useMemoizedFn((state) => {
-    appActions.projectTaskAttentionState(state.status, state.unreadKeys);
+    appActions.projectTaskAttentionState(
+      state.status,
+      state.unreadKeys,
+      state.sessions
+    );
   });
   const reportTaskAttentionLifecycle = useMemoizedFn(
     (phase: 'startup' | 'shutdown') => {

@@ -77,6 +77,8 @@ attention. If the catalog or local ledger is temporarily unavailable, the status
 bar shows `Task sync unavailable`; existing markers are retained and are not
 falsely acknowledged.
 
+Open `/resume` and `/fork` lists follow complete catalog refreshes for task status and membership. Same-process events can trigger a refresh; the existing 30-second poll discovers changes from other processes without reopening the selector. Highlighting follows the full local or remote locator across insertions, reordering, and page changes, so Enter keeps targeting the same Session. Removing the selected item falls back to the first result; an empty list cannot activate a Session. Loading and failed refreshes retain the last complete list rather than treating partial results as deletions.
+
 This ledger belongs only to the TUI and does not read or write the Web GUI's
 acknowledgement state. It stores only bounded terminal signatures, acknowledgement
 state, and irreversible locator digests. It stores no prompts, model output,

@@ -177,12 +177,18 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    projectTaskAttentionState: (status, unreadKeys) => {
+    projectTaskAttentionState: (status, unreadKeys, sessions) => {
       set((state) => ({
         app: {
           ...state.app,
           taskAttentionStatus: status,
           taskAttentionUnreadKeys: [...unreadKeys],
+          sessionSelectorData:
+            status === 'ready' &&
+            state.app.activeModal === 'sessionSelector' &&
+            state.app.sessionSelectorData
+              ? { ...state.app.sessionSelectorData, sessions: [...sessions] }
+              : state.app.sessionSelectorData,
         },
       }));
     },

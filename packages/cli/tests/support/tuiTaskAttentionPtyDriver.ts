@@ -12,6 +12,7 @@ const RUNNER_SETTLE_TIMEOUT_MS = 250;
 export interface TuiTaskAttentionPtyEvidence {
   success: true;
   baselinePersisted: true;
+  liveSelectorUpdated: boolean;
   firstMarkerAbsent: true;
   newMarkerSeen: true;
   exactSessionSelected: true;
@@ -19,7 +20,7 @@ export interface TuiTaskAttentionPtyEvidence {
   markerCleared: true;
   faults: string[];
   leakedSecrets: string[];
-  stageOutput: { baseline: string; resume: string; cleared: string };
+  stageOutput: { baseline: string; live: string; resume: string; cleared: string };
   output: string;
 }
 
@@ -197,6 +198,7 @@ interface RunnerResult {
 
 interface TuiTaskAttentionStageOutput {
   baseline: string;
+  live: string;
   resume: string;
   cleared: string;
 }
@@ -207,6 +209,8 @@ function parseStageOutput(value: unknown): TuiTaskAttentionStageOutput | undefin
     value === null ||
     !('baseline' in value) ||
     typeof value.baseline !== 'string' ||
+    !('live' in value) ||
+    typeof value.live !== 'string' ||
     !('resume' in value) ||
     typeof value.resume !== 'string' ||
     !('cleared' in value) ||
@@ -216,6 +220,7 @@ function parseStageOutput(value: unknown): TuiTaskAttentionStageOutput | undefin
   }
   return {
     baseline: value.baseline,
+    live: value.live,
     resume: value.resume,
     cleared: value.cleared,
   };
@@ -269,6 +274,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
   sessionId: string;
   title: string;
   terminalContent: string;
+  observeLiveSelector?: boolean;
   completeTask(): Promise<void>;
   completionTimeoutMs?: number;
   secrets?: readonly string[];
@@ -303,6 +309,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
         sessionId: input.sessionId,
         title: input.title,
         terminalContent: input.terminalContent,
+        observeLiveSelector: input.observeLiveSelector === true,
         completionFile,
         completionTimeoutMs,
       })
@@ -481,6 +488,9 @@ export async function runTuiTaskAttentionPtyDriver(input: {
     'markerCleared',
   ] as const;
   const incomplete: string[] = flags.filter((flag) => parsed[flag] !== true);
+  if (parsed.liveSelectorUpdated !== (input.observeLiveSelector === true)) {
+    incomplete.push('liveSelectorUpdated');
+  }
   const output = typeof parsed.output === 'string' ? parsed.output : '';
   const stageOutput = parseStageOutput(parsed.stageOutput);
   if (!stageOutput) incomplete.push('stageOutput');
@@ -512,6 +522,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
   return {
     success: true,
     baselinePersisted: true,
+    liveSelectorUpdated: parsed.liveSelectorUpdated === true,
     firstMarkerAbsent: true,
     newMarkerSeen: true,
     exactSessionSelected: true,

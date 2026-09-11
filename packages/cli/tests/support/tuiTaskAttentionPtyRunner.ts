@@ -18,6 +18,7 @@ interface RunnerInput {
   terminalContent: string;
   completionFile: string;
   completionTimeoutMs: number;
+  observeLiveSelector: boolean;
 }
 
 interface LaunchResult {
@@ -78,6 +79,9 @@ function loadInput(): RunnerInput {
     throw new Error('Invalid task attention PTY input');
   }
   const candidate = value as Record<string, unknown>;
+  if (typeof candidate.observeLiveSelector !== 'boolean') {
+    throw new Error('Invalid live selector mode');
+  }
   return {
     cliEntry: readBoundedString(candidate.cliEntry, 'CLI entry'),
     nodeExecutable: readBoundedString(candidate.nodeExecutable, 'Node executable'),
@@ -87,6 +91,7 @@ function loadInput(): RunnerInput {
     terminalContent: readBoundedString(candidate.terminalContent, 'terminal content'),
     completionFile: readBoundedString(candidate.completionFile, 'completion file'),
     completionTimeoutMs: readBoundedTimeout(candidate.completionTimeoutMs),
+    observeLiveSelector: candidate.observeLiveSelector,
   };
 }
 
@@ -278,7 +283,9 @@ process.once('SIGTERM', () => void stopForSignal());
 async function main(): Promise<void> {
   const input = loadInput();
   let output = '';
-  const stageOutput: Partial<Record<'baseline' | 'resume' | 'cleared', string>> = {};
+  const stageOutput: Partial<
+    Record<'baseline' | 'live' | 'resume' | 'cleared', string>
+  > = {};
   try {
     const first = await launch(input, {
       resume: false,
@@ -310,19 +317,48 @@ async function main(): Promise<void> {
       'Production TUI did not persist the running task baseline',
       10_000
     );
-    await writeFile(input.completionFile, 'baseline\n', { mode: 0o600 });
-    await waitFor(
-      async () => {
-        try {
-          await access(`${input.completionFile}.done`);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      'Timed out waiting for task completion after TUI exit',
-      input.completionTimeoutMs
-    );
+    const completeTask = async () => {
+      await writeFile(input.completionFile, 'baseline\n', { mode: 0o600 });
+      await waitFor(
+        async () => {
+          try {
+            await access(`${input.completionFile}.done`);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        'Timed out waiting for task completion',
+        input.completionTimeoutMs
+      );
+    };
+    let liveSelectorUpdated = false;
+    stageOutput.live = '';
+    if (input.observeLiveSelector) {
+      const live = await launch(input, {
+        resume: true,
+        capture: (value) => {
+          stageOutput.live = value;
+        },
+        act: async (_terminal, capture) => {
+          await waitFor(
+            () => capture().plain.includes(`[RUNNING] ${input.title}`),
+            'Open resume selector did not render the running task',
+            30_000
+          );
+          await completeTask();
+          await waitFor(
+            () => capture().plain.includes(`> [NEW] [DONE] ${input.title}`),
+            'Open resume selector did not refresh the completed task and preserve selection',
+            40_000
+          );
+          liveSelectorUpdated = true;
+        },
+      });
+      output = appendBoundedPtyEvidence(output, live.output, 48_000);
+    } else {
+      await completeTask();
+    }
 
     let newMarkerSeen = false;
     let exactSessionSelected = false;
@@ -380,6 +416,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         success: true,
         baselinePersisted: true,
+        liveSelectorUpdated,
         firstMarkerAbsent,
         newMarkerSeen,
         exactSessionSelected,

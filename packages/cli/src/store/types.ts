@@ -341,7 +341,8 @@ export interface AppActions {
   setAwaitingSecondCtrlC: (awaiting: boolean) => void;
   projectTaskAttentionState: (
     status: AppState['taskAttentionStatus'],
-    unreadKeys: readonly string[]
+    unreadKeys: readonly string[],
+    sessions: readonly SessionSurfaceSummary[]
   ) => void;
   projectFollowUpQueue: (snapshot: FollowUpQueueSnapshot, owner?: string) => void;
   claimFollowUpQueueOwner: (owner: string) => void;
