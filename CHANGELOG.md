@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.164] - 2026-09-12
+
+### Fixed
+- Cancel in-flight Web side questions when server shutdown begins, instead of waiting for the request before releasing its Runtime. Preserve client dismissal, Runtime-initialization cancellation, and listener cleanup after settlement.
+- Keep main runs server-owned when their submitting client disconnects; side conversations remain isolated from the main session transcript.
+
+### Tests
+- Cover side-question shutdown, discarded-worktree fallback, client cancellation, initialization, listener release, and main-run ownership boundaries.
+- Add real DeepSeek Flash/Pro Chromium dismissal and shutdown trajectories with a three-second cancellation bound, normal-stop log checks, exact follow-up responses, unchanged JSONL, and zero framework or model retries.
+
 ## [0.10.163] - 2026-09-12
 
 ### Tests
