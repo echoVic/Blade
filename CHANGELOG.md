@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.160] - 2026-09-11
+
+### Fixed
+- Refresh open TUI resume and fork selectors from complete task catalogs, so completed tasks do not remain labeled running while their unread markers update. Loading or failed refreshes retain the last complete list, and background updates do not reopen closed selectors.
+- Keep highlighting bound to the full local or remote locator across metadata changes, insertions, reordering, and page changes. Preserve page shortcuts, in-page navigation, numeric activation, and the activation lock; empty lists cannot select a Session.
+- Reconcile the selected identity before committing a render instead of letting a delayed effect overwrite the next keyboard action.
+
+### Tests
+- Add failing-first catalog, identity, and pagination regressions, plus empty-list, remote identity, and rapid keyboard controls.
+- Verify separate real DeepSeek Flash/Pro raw-PTY trajectories for offline completion recovery and completion while the selector remains open; retain remote history, production Chromium, and development GUI checks without framework or model retries.
+
 ## [0.10.159] - 2026-09-11
 
 ### Fixed
