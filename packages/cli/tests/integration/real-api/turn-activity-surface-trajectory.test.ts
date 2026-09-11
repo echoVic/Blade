@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { describe, expect, it, type TestContext } from 'vitest';
+import { describe, expect, it, type TestContext, vi } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
 import { TurnActivityProjectionSchema } from '../../../src/api/turnActivitySchemas.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
@@ -235,6 +235,30 @@ function activityEvidence(
     ),
     terminalClearSeen: projections.at(-1)?.snapshot === null,
   };
+}
+
+async function collectWebActivityEvidence(
+  probes: readonly SessionEventProbe[],
+  sessionId: string
+): Promise<ActivityEvidence> {
+  await waitFor(
+    () =>
+      probes.every((probe) => {
+        const event = probe.events.findLast((entry) => entry.type === 'turn.activity');
+        const parsed = TurnActivityProjectionSchema.safeParse(
+          event?.properties.activity
+        );
+        return parsed.success && parsed.data.snapshot === null;
+      }),
+    'Web SSE readers did not observe terminal activity clear',
+    20_000
+  );
+  const values = probes.flatMap((probe) =>
+    probe.events
+      .filter((event) => event.type === 'turn.activity')
+      .map((event) => event.properties.activity)
+  );
+  return activityEvidence(values, sessionId);
 }
 
 async function writeRuntimeConfig(
@@ -580,7 +604,6 @@ async function runWeb(input: {
       undefined,
       { timeout: 20_000 }
     );
-    await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     reconnectProbe = await openEventProbe(origin, created.sessionId, input.workspace);
     expect(reconnectProbe.events[0]).toMatchObject({
       type: 'connected',
@@ -590,6 +613,7 @@ async function runWeb(input: {
         }),
       },
     });
+    await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     await page.getByText(input.marker, { exact: true }).waitFor({
       state: 'visible',
       timeout: 180_000,
@@ -598,10 +622,10 @@ async function runWeb(input: {
       .locator('[data-turn-activity-strip]')
       .waitFor({ state: 'detached', timeout: 20_000 });
     expect(faults).toEqual([]);
-    const values = [...probe.events, ...reconnectProbe.events]
-      .filter((event) => event.type === 'turn.activity')
-      .map((event) => event.properties.activity);
-    const evidence = activityEvidence(values, created.sessionId);
+    const evidence = await collectWebActivityEvidence(
+      [probe, reconnectProbe],
+      created.sessionId
+    );
     evidence.output = `${output}\n${await page.content()}`;
     return evidence;
   } finally {
@@ -627,6 +651,69 @@ function toolCallNames(events: ReturnType<typeof readSessionEvents>): string[] {
       : [];
   });
 }
+
+describe('turn activity Web evidence synchronization', () => {
+  it('waits for both independent SSE readers to observe terminal clear', async () => {
+    const snapshot = {
+      phase: 'executing_tools',
+      startedAt: 1_780_000_000_000,
+      updatedAt: 1_780_000_001_000,
+      turn: 1,
+      maxTurns: 4,
+      outputStarted: true,
+      toolCallsStarted: 1,
+      toolCallsCompleted: 0,
+      activeTools: [{ name: 'Bash', kind: 'execute', startedAt: 1_780_000_001_000 }],
+      activeToolOverflow: 0,
+    };
+    const active = TurnActivityProjectionSchema.parse({
+      version: 1,
+      generation: 'sync-generation',
+      revision: 1,
+      snapshot,
+    });
+    const clear = TurnActivityProjectionSchema.parse({
+      version: 1,
+      generation: active.generation,
+      revision: 2,
+      snapshot: null,
+    });
+    const probe: SessionEventProbe = {
+      events: [{ type: 'turn.activity', properties: { activity: active } }],
+      close: async () => undefined,
+    };
+    const reconnect: SessionEventProbe = {
+      events: [{ type: 'turn.activity', properties: { activity: active } }],
+      close: async () => undefined,
+    };
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const result = collectWebActivityEvidence(
+        [probe, reconnect],
+        'session-sync'
+      ).then((evidence) => {
+        settled = true;
+        return evidence;
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(settled).toBe(false);
+      probe.events.push({ type: 'turn.activity', properties: { activity: clear } });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(settled).toBe(false);
+      reconnect.events.push({ type: 'turn.activity', properties: { activity: clear } });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await result).toMatchObject({
+        sessionId: 'session-sync',
+        generationCount: 1,
+        sawBash: true,
+        terminalClearSeen: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describeTrajectory('turn activity surface matrix (real API)', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);

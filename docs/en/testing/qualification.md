@@ -490,6 +490,9 @@ ACP stdio, raw PTY TUI, and production Chromium Web for eight cells. Every cell
 requires framework retry `0`, model `maxRetries=0`, one Bash call, ordered
 thinking/tool/responding/clear activity, and an exact final response. Web must reload
 while a host barrier keeps the tool active and restore activity from SSE
-`connected.turnActivity`; PTY must observe the state in a real terminal capture rather
-than reading an internal store. Commands, per-cell timings, privacy, and cleanup are in
+`connected.turnActivity`. Release the tool only after asserting that reconnect snapshot,
+and collect evidence only after both independent SSE probes receive terminal clear;
+the activity strip disappearing does not prove delivery to the probes. PTY must observe
+the state in a real terminal capture rather than reading an internal store. Commands,
+per-cell timings, privacy, and cleanup are in
 [Active Turn Activity Qualification Evidence](./turn-activity-surface-evidence.md).
