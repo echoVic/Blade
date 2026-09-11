@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.163] - 2026-09-12
+
+### Tests
+- Avoid loading real-API credential configuration, the model catalog, and the application store from test setup when paid tests are disabled; retain isolated storage setup and cleanup.
+- Load local keyless real-API test files in isolated processes within the existing four-worker ceiling. Paid matrices and CI remain serial, with unchanged test inventory, retry rules, and process budgets.
+- Remove unsupported `minWorkers` configuration and add scheduling, import-boundary, and caller-owned storage regressions. Retain real DeepSeek Flash/Pro verification across Headless, ACP, raw PTY, and Chromium; native Node worker crashes are not claimed fixed.
+
 ## [0.10.162] - 2026-09-11
 
 ### Tests
