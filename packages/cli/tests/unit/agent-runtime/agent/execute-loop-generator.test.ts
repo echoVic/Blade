@@ -8663,6 +8663,57 @@ describe('executeLoopGenerator', () => {
     expect(executeMock.mock.calls.map(([name]) => name)).toEqual(['ToolSearch', 'LSP']);
   });
 
+  it('cancels the main loop while its shared MCP catalog refresh remains pending', async () => {
+    const deps = createMockDeps();
+    const registry = new ToolRegistry();
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalWaiting!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalWaiting = resolve;
+    });
+    registry.setMcpCatalogBarrier(() => {
+      signalWaiting();
+      return barrier;
+    });
+    vi.spyOn(deps.toolExecutor, 'getRegistry').mockReturnValue(registry);
+    const client = new AbortController();
+    const context = createMockContext();
+    let result: LoopResult | undefined;
+    const running = drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Cancel before requesting the model',
+        context,
+        { stream: false, signal: client.signal },
+        undefined
+      )
+    ).then((completion) => {
+      result = completion.result;
+    });
+    try {
+      await entered;
+      client.abort('user-cancel');
+      await vi.waitFor(() => expect(result).toBeDefined());
+      expect(result).toMatchObject({ success: false, error: { type: 'aborted' } });
+      expect(deps.chatService.chat).not.toHaveBeenCalled();
+      expect(deps.chatService.streamChat).not.toHaveBeenCalled();
+      expect(
+        context.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            typeof message.content === 'string' &&
+            message.content.includes('interrupted')
+        )
+      ).toBe(true);
+    } finally {
+      release();
+      await running;
+    }
+  });
+
   it('waits for an MCP catalog barrier before the next provider boundary', async () => {
     const deps = createMockDeps();
     const registry = deps.toolExecutor.getRegistry();

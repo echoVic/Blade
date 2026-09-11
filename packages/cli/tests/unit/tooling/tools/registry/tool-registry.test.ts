@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../../src/tools/types/ExecutionTypes.js';
@@ -62,6 +63,111 @@ describe('ToolRegistry', () => {
 
   beforeEach(() => {
     registry = new ToolRegistry();
+  });
+
+  it('cancels one MCP catalog waiter without completing the shared refresh', async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    registry.setMcpCatalogBarrier(() => barrier);
+    const client = new AbortController();
+    const cancelled = registry.waitForMcpCatalogIdle(client.signal).then(
+      () => 'completed',
+      (error: unknown) => error
+    );
+    let otherSettled = false;
+    const other = registry.waitForMcpCatalogIdle().then(() => {
+      otherSettled = true;
+    });
+    try {
+      client.abort('client-dismissed');
+      let cancellation: unknown;
+      void cancelled.then((result) => {
+        cancellation = result;
+      });
+      await vi.waitFor(() => expect(cancellation).toBeInstanceOf(DOMException));
+      expect(cancellation).toMatchObject({ name: 'AbortError' });
+      expect(otherSettled).toBe(false);
+      expect(getEventListeners(client.signal, 'abort')).toEqual([]);
+      release();
+      await other;
+      await expect(registry.waitForMcpCatalogIdle()).resolves.toBeUndefined();
+    } finally {
+      release();
+      await Promise.all([cancelled, other]);
+    }
+  });
+
+  it('does not enter the MCP catalog barrier for a pre-aborted waiter', async () => {
+    const barrier = vi.fn(async () => undefined);
+    registry.setMcpCatalogBarrier(barrier);
+    const client = new AbortController();
+    client.abort('already-cancelled');
+    await expect(registry.waitForMcpCatalogIdle(client.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(barrier).not.toHaveBeenCalled();
+    expect(getEventListeners(client.signal, 'abort')).toEqual([]);
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'releases the MCP catalog abort listener on %s',
+    async (outcome) => {
+      const failure = new Error('catalog refresh failed');
+      let settle!: () => void;
+      const barrier = new Promise<void>((resolve, reject) => {
+        settle = () => (outcome === 'success' ? resolve() : reject(failure));
+      });
+      registry.setMcpCatalogBarrier(() => barrier);
+      const client = new AbortController();
+      const waiting = registry.waitForMcpCatalogIdle(client.signal).then(
+        () => 'completed',
+        (error: unknown) => error
+      );
+      try {
+        expect(getEventListeners(client.signal, 'abort')).toHaveLength(1);
+        settle();
+        await expect(waiting).resolves.toBe(
+          outcome === 'success' ? 'completed' : failure
+        );
+        expect(getEventListeners(client.signal, 'abort')).toEqual([]);
+        client.abort('late-abort');
+        await expect(waiting).resolves.toBe(
+          outcome === 'success' ? 'completed' : failure
+        );
+      } finally {
+        settle();
+        await waiting;
+      }
+    }
+  );
+
+  it('observes a late MCP catalog rejection after the waiter cancels', async () => {
+    let fail!: (error: Error) => void;
+    const barrier = new Promise<void>((_resolve, reject) => {
+      fail = reject;
+    });
+    registry.setMcpCatalogBarrier(() => barrier);
+    const client = new AbortController();
+    const waiting = registry.waitForMcpCatalogIdle(client.signal).then(
+      () => 'completed',
+      (error: unknown) => error
+    );
+    try {
+      client.abort();
+      let cancellation: unknown;
+      void waiting.then((result) => {
+        cancellation = result;
+      });
+      await vi.waitFor(() => expect(cancellation).toBeInstanceOf(DOMException));
+      fail(new Error('late catalog failure'));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(getEventListeners(client.signal, 'abort')).toEqual([]);
+    } finally {
+      fail(new Error('fixture cleanup'));
+      await waiting;
+    }
   });
 
   it('注册内置工具后应可查询、分类和打标签', () => {

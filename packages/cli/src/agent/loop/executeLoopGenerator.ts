@@ -2015,7 +2015,7 @@ validates the object and may return a bounded corrective error.`;
           };
         }
 
-        await registry.waitForMcpCatalogIdle();
+        await registry.waitForMcpCatalogIdle(options?.signal);
         if (options?.signal?.aborted) {
           return makeInterruptedResult(
             turnsCount,

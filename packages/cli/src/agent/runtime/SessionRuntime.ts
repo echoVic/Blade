@@ -1091,9 +1091,12 @@ export class SessionRuntime {
     let toolExecutor: ToolExecutor | undefined;
 
     try {
+      if (operation.signal.aborted) {
+        throw new DOMException('Side conversation aborted', 'AbortError');
+      }
       toolExecutor = this.createToolExecutor({ permissionMode });
       const registry = toolExecutor.getRegistry();
-      await registry.waitForMcpCatalogIdle();
+      await registry.waitForMcpCatalogIdle(operation.signal);
       const [messages, builtPrompt] = await Promise.all([
         this.loadModelContext(),
         buildSystemPrompt({
@@ -1121,6 +1124,9 @@ export class SessionRuntime {
             : { projectInstructionSourcePath: this.projectRoot }),
         }),
       ]);
+      if (operation.signal.aborted) {
+        throw new DOMException('Side conversation aborted', 'AbortError');
+      }
       const systemPrompt = composeProviderSystemPrompt(builtPrompt.prompt, registry);
       if (!systemPrompt) throw new Error('Side conversation system prompt is empty');
 

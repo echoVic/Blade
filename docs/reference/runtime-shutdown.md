@@ -29,6 +29,17 @@ lease，并将组合后的 `AbortSignal` 传入 Provider streaming、工具、co
 Durable inbox 在 aborted turn 后保持可恢复；后续 `--resume`、TUI、Web 或 ACP
 `session/load` 可以继续原始输入。
 
+## MCP 目录等待
+
+主循环和侧边提问在进入 Provider 前等待 MCP 目录刷新。取消只结束当前等待者，
+不取消其他任务共享的刷新；成功、失败或取消后都会移除等待者的 signal listener，
+取消后迟到的刷新失败也会被接收，不产生未处理拒绝。
+
+侧边提问在准备前及上下文准备完成后检查取消，不会把已经取消的请求送入 Provider。
+上下文文件读取仍等待自身结束，再释放 Runtime 所有权；本修复不承诺中断任意阻塞的
+文件系统调用或 Runtime 初始化。服务器关闭时，目录等待者先退出，随后按原顺序
+断开 Session-owned MCP transport。
+
 ## TUI 与 Headless
 
 TUI 的进程级 shutdown 会先同步调用 active command 的 abort controller，再执行
@@ -107,3 +118,8 @@ raw PTY TUI 不计入该门禁，需另行验证，且不等同于原生桌面 C
 测试先收到真实 Provider 内容，再暂停投递，要求取消在 3 秒内完成；服务器关闭必须出现
 正常停止日志，不能仅以退出码为零判定成功。后续提问精确返回预期答案，主 JSONL
 字节不变；框架及模型均不重试。主运行活动轨迹另行覆盖浏览器刷新后继续执行。
+
+MCP 目录取消另有 DeepSeek Flash/Pro × 关闭侧边面板、服务器关闭、停止主轮次六格
+Chromium 验证：使用真实 stdio MCP transport 暂停目录刷新，要求等待者在 3 秒内结束，
+被取消的操作不发 Provider 请求。面板关闭和主轮次停止不会关闭共享 MCP，释放刷新后
+可继续真实提问；服务器关闭则验证 MCP 进程被回收。主轮次必须仅提交一条 aborted 终态。

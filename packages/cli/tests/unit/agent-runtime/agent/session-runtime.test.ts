@@ -631,6 +631,139 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it.each(['client', 'runtime'] as const)(
+    'cancels a side question waiting for MCP catalog refresh from %s',
+    async (owner) => {
+      const chatService = createDisposableChatService(vi.fn(async () => undefined));
+      vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+      const runtime = await SessionRuntime.create({
+        sessionId: `side-catalog-${owner}`,
+        workspaceRoot: storageRoot,
+      });
+      const executor = runtime.createToolExecutor();
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let signalWaiting!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        signalWaiting = resolve;
+      });
+      executor.getRegistry().setMcpCatalogBarrier(() => {
+        signalWaiting();
+        return barrier;
+      });
+      vi.spyOn(runtime, 'createToolExecutor').mockReturnValueOnce(executor);
+      const dispose = vi.spyOn(executor, 'dispose');
+      const loadContext = vi.spyOn(runtime, 'loadModelContext');
+      const client = new AbortController();
+      let result: unknown;
+      const question = runtime
+        .askSideQuestion('Explain this task', {
+          signal: client.signal,
+        })
+        .then(
+          (response) => {
+            result = response;
+          },
+          (error: unknown) => {
+            result = error;
+          }
+        );
+      let shutdown: Promise<void> | undefined;
+      try {
+        await entered;
+        if (owner === 'client') client.abort('client-dismissed');
+        else shutdown = runtime.dispose();
+        await vi.waitFor(() => expect(result).toBeInstanceOf(DOMException));
+        expect(result).toMatchObject({ name: 'AbortError' });
+        expect(loadContext).not.toHaveBeenCalled();
+        expect(chatService.chat).not.toHaveBeenCalled();
+        expect(dispose).toHaveBeenCalledOnce();
+        if (shutdown) await shutdown;
+        else expect(runtime.isIdleForResidency()).toBe(true);
+      } finally {
+        release();
+        await question;
+        await (shutdown ?? runtime.dispose());
+      }
+    }
+  );
+
+  it('does not prepare a side question whose client already cancelled', async () => {
+    const chatService = createDisposableChatService(vi.fn(async () => undefined));
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'side-already-cancelled',
+      workspaceRoot: storageRoot,
+    });
+    chatService.chat.mockResolvedValueOnce({ content: 'Should not be generated' });
+    vi.mocked(buildSystemPrompt).mockResolvedValueOnce({
+      prompt: 'Valid side prompt',
+      sources: [],
+    });
+    const createExecutor = vi.spyOn(runtime, 'createToolExecutor');
+    const loadContext = vi.spyOn(runtime, 'loadModelContext');
+    const client = new AbortController();
+    client.abort();
+    try {
+      await expect(
+        runtime.askSideQuestion('Do not start', {
+          signal: client.signal,
+        })
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(createExecutor).not.toHaveBeenCalled();
+      expect(loadContext).not.toHaveBeenCalled();
+      expect(chatService.chat).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('does not call the Provider after cancellation during side context preparation', async () => {
+    const chatService = createDisposableChatService(vi.fn(async () => undefined));
+    chatService.chat.mockResolvedValue({ content: 'Should not be generated' });
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'side-context-cancelled',
+      workspaceRoot: storageRoot,
+    });
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalWaiting!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalWaiting = resolve;
+    });
+    vi.mocked(buildSystemPrompt).mockImplementationOnce(async () => {
+      signalWaiting();
+      await barrier;
+      return { prompt: 'Prepared side prompt', sources: [] };
+    });
+    const client = new AbortController();
+    const question = runtime
+      .askSideQuestion('Do not generate after cancel', {
+        signal: client.signal,
+      })
+      .then(
+        (response) => response,
+        (error: unknown) => error
+      );
+    try {
+      await entered;
+      client.abort();
+      release();
+      await expect(question).resolves.toMatchObject({ name: 'AbortError' });
+      expect(chatService.chat).not.toHaveBeenCalled();
+      expect(runtime.isIdleForResidency()).toBe(true);
+    } finally {
+      release();
+      await question;
+      await runtime.dispose();
+    }
+  });
+
   it('isolates session-provided MCP servers and releases them on dispose', async () => {
     const isolatedRegistry = {
       registerServer: vi.fn().mockResolvedValue(undefined),

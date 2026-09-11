@@ -135,8 +135,30 @@ export class ToolRegistry extends EventEmitter {
     this.mcpCatalogBarrier = barrier;
   }
 
-  waitForMcpCatalogIdle(): Promise<void> {
-    return this.mcpCatalogBarrier();
+  async waitForMcpCatalogIdle(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      throw new DOMException('MCP catalog wait aborted', 'AbortError');
+    }
+    const barrier = this.mcpCatalogBarrier();
+    if (!signal) return barrier;
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener('abort', onAbort);
+        reject(new DOMException('MCP catalog wait aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      void barrier.then(
+        () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
   }
 
   /**

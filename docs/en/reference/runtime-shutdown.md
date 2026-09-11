@@ -24,6 +24,12 @@ Each Agent holds an active-operation gate. `chatStream()` obtains a lease before
 
 Normal shutdown reuses the existing `turn_aborted(cause="cancelled")` and does not add new JSONL events. The durable inbox remains recoverable after an aborted turn; subsequent `--resume`, TUI, Web, or ACP `session/load` can continue the original input.
 
+## MCP Catalog Waits
+
+Main loops and side questions wait for MCP catalog refresh before entering the Provider. Cancellation ends only the current waiter, not the refresh shared with other tasks. Success, failure, and cancellation remove the waiter's signal listener; a refresh failure arriving after cancellation is still observed rather than becoming an unhandled rejection.
+
+Side questions check cancellation before preparation and after context preparation, so cancelled requests do not reach the Provider. Context file reads still settle before Runtime ownership is released. This does not promise interruption of arbitrary blocked filesystem calls or Runtime initialization. During server shutdown, catalog waiters exit before the Session-owned MCP transport is disconnected in the existing cleanup order.
+
 ## TUI and Headless
 
 TUI process-level shutdown first synchronously calls the active command's abort controller, then performs React/Agent cleanup. This way, even if the terminal host begins UI unload after the signal, the Agent generator can still first submit the terminal turn record.
@@ -79,3 +85,5 @@ Deterministic tests cover operation admission, abort reason, idle barrier, concu
 The main-run shutdown trajectory uses real DeepSeek Flash/Pro, sends production `SIGTERM` while a real foreground Bash is active, and verifies durable abort, turn recovery, resource reclamation, delayed side effects, and credential absence. The current release matrix runs six cells across Headless, real ACP stdio, and production Chromium. Raw PTY TUI is excluded from that gate and requires separate verification; it is not native desktop Computer Use.
 
 Side conversations have a separate four-cell Chromium matrix: DeepSeek Flash/Pro × panel dismissal and server `SIGTERM`. Tests receive real Provider content before pausing delivery, then require cancellation within three seconds. Server shutdown must emit the normal stopped log; exit code zero alone is insufficient. A subsequent question must return the exact expected answer, with unchanged main JSONL bytes and no framework or model retries. The separate main-run activity trajectory checks continued execution after browser reload.
+
+MCP catalog cancellation has six additional Chromium cells: DeepSeek Flash/Pro × panel dismissal, server shutdown, and stopping the main turn. A real stdio MCP transport holds catalog refresh while each waiter must settle within three seconds without a Provider request from the cancelled operation. Dismissal and main-turn stop leave shared MCP alive; releasing refresh permits a subsequent real question. Server shutdown verifies MCP process reclamation, and the main turn must commit exactly one aborted terminal record.

@@ -19,6 +19,7 @@ import { createSessionRouteController } from '../../../src/server/routes/session
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -28,6 +29,7 @@ import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import {
   assertNoSecrets,
   findSessionTranscript,
+  readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -586,6 +588,383 @@ describe.skipIf(!isRealApiTestEnabled())(
           const retry = context.task.retry;
           expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
           await runSideCancellationTrajectory(model, action);
+        }
+      );
+    }
+  }
+);
+
+describe.skipIf(!isRealApiTestEnabled())(
+  'MCP catalog cancellation production Chromium',
+  () => {
+    for (const model of cancellationModels) {
+      it.for(['client', 'shutdown', 'main-stop'] as const)(
+        `${model.model} cancels a catalog waiter on %s`,
+        { timeout: 240_000 },
+        async (action, context) => {
+          const retry = context.task.retry;
+          expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+          if (!model.baseURL) throw new Error('Missing real catalog Provider');
+          const root = await realpath(
+            await mkdtemp(path.join(os.tmpdir(), 'blade-side-catalog-'))
+          );
+          const workspace = path.join(root, 'workspace');
+          const home = path.join(root, 'home');
+          const storage = path.join(root, 'storage');
+          const holdFile = path.join(root, 'hold');
+          const releaseFile = path.join(root, 'release');
+          const traceFile = path.join(root, 'catalog.jsonl');
+          const pidFile = path.join(root, 'mcp.pid');
+          const proxy = await startRecordingProviderProxy(model.baseURL);
+          let child: ChildProcess | undefined;
+          let identity:
+            | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+            | undefined;
+          let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+          let output = '';
+          let closing = false;
+          const faults: string[] = [];
+          const errors: unknown[] = [];
+          let cancelling = false;
+          try {
+            await mkdir(workspace, { recursive: true });
+            await mkdir(path.join(home, '.blade'), { recursive: true });
+            const config = buildRealApiRuntimeConfig({
+              ...model,
+              baseURL: proxy.baseUrl,
+            });
+            await writeFile(
+              path.join(home, '.blade', 'config.json'),
+              JSON.stringify({
+                ...config,
+                models: config.models.map((entry) => ({
+                  ...entry,
+                  overrides: { ...entry.overrides, maxRetries: 0 },
+                })),
+                providerForegroundRecoveryMs: 0,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {
+                  dynamic: {
+                    type: 'stdio',
+                    command: process.execPath,
+                    args: [
+                      path.resolve(
+                        import.meta.dirname,
+                        '../../support/fake-mcp-dynamic-catalog-server.mjs'
+                      ),
+                    ],
+                    env: {
+                      MCP_DYNAMIC_PID_FILE: pidFile,
+                      MCP_DYNAMIC_TRACE_FILE: traceFile,
+                      MCP_DYNAMIC_HOLD_FILE: holdFile,
+                      MCP_DYNAMIC_RELEASE_FILE: releaseFile,
+                    },
+                  },
+                },
+              }),
+              { mode: 0o600 }
+            );
+            const port = await reserveSidePort();
+            const origin = `http://127.0.0.1:${port}`;
+            child = spawn(
+              process.execPath,
+              [
+                path.resolve(import.meta.dirname, '../../../dist/blade.js'),
+                '--debug',
+                'Service',
+                '--trust-workspace',
+                'serve',
+                '--hostname',
+                '127.0.0.1',
+                '--port',
+                String(port),
+              ],
+              {
+                cwd: workspace,
+                detached: true,
+                env: {
+                  ...process.env,
+                  HOME: home,
+                  BLADE_STORAGE_ROOT: storage,
+                  BLADE_AUTO_MEMORY: '0',
+                  BLADE_TELEMETRY_DISABLED: '1',
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+              }
+            );
+            child.stdout?.on('data', (chunk: Buffer) => {
+              output = (output + chunk.toString()).slice(-64_000);
+            });
+            child.stderr?.on('data', (chunk: Buffer) => {
+              output = (output + chunk.toString()).slice(-64_000);
+            });
+            if (!child.pid) throw new Error('Missing catalog GUI PID');
+            identity = await captureForegroundGuiLauncherIdentity(child.pid);
+            await waitForSideCondition(async () => {
+              if (child?.exitCode !== null || child?.signalCode !== null)
+                throw new Error('Catalog server exited before ready');
+              try {
+                return (
+                  await fetch(`${origin}/health`, {
+                    signal: AbortSignal.timeout(1_000),
+                  })
+                ).ok;
+              } catch {
+                return false;
+              }
+            }, 'Catalog server did not start');
+            const created = await fetch(`${origin}/sessions`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                projectPath: workspace,
+                title: 'MCP CATALOG CANCELLATION',
+              }),
+            });
+            expect(created.status).toBe(200);
+            const session = SessionSchema.parse(await created.json());
+            const endpoint = `/sessions/${session.sessionId}/side-question`;
+            browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ locale: 'en-US' });
+            page.on('pageerror', (error) => faults.push(error.name));
+            page.on('console', (message) => {
+              if (message.type() !== 'error') return;
+              const source = message.location().url;
+              const pathname = source.startsWith(origin)
+                ? new URL(source).pathname
+                : '';
+              if (
+                closing &&
+                (pathname === '/events' ||
+                  pathname === `/sessions/${session.sessionId}/events` ||
+                  pathname === endpoint) &&
+                /^Failed to load resource:/.test(message.text())
+              )
+                return;
+              faults.push(message.text());
+            });
+            page.on('requestfailed', (request) => {
+              const pathname = new URL(request.url()).pathname;
+              if (
+                cancelling &&
+                pathname === endpoint &&
+                (closing || request.failure()?.errorText.includes('ERR_ABORTED'))
+              )
+                return;
+              if (
+                closing &&
+                (pathname === '/events' ||
+                  pathname === `/sessions/${session.sessionId}/events`)
+              )
+                return;
+              if (
+                !isExpectedBrowserRequestFailure({
+                  url: request.url(),
+                  resourceType: request.resourceType(),
+                  errorText: request.failure()?.errorText ?? 'unknown',
+                  closing,
+                  refreshing: false,
+                })
+              )
+                faults.push(`request:${pathname}`);
+            });
+            const url = new URL(origin);
+            url.searchParams.set('session', session.sessionId);
+            url.searchParams.set('project', workspace);
+            await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+            const composer = page.locator('textarea[data-blade-composer]');
+            await composer.waitFor({ state: 'visible' });
+            await page.keyboard.press('Control+k');
+            await page
+              .getByRole('combobox', { name: 'Search tasks', exact: true })
+              .waitFor({ state: 'visible' });
+            await page.keyboard.press('Escape');
+            await page.getByRole('dialog').waitFor({ state: 'hidden' });
+            const readyResponse = page.waitForResponse(
+              (response) =>
+                new URL(response.url()).pathname === endpoint &&
+                response.request().method() === 'POST'
+            );
+            await composer.fill(
+              '/btw Reply with exactly CATALOG_SIDE_READY and do not use tools.'
+            );
+            await page.locator('[data-blade-submit]').click();
+            const ready = await readyResponse;
+            expect(ready.status()).toBe(200);
+            expect(
+              SideConversationResponseSchema.parse(await ready.json()).response.trim()
+            ).toBe('CATALOG_SIDE_READY');
+            expect(proxy.forwardedRequestNumbers).toEqual([1]);
+            const transcript = findSessionTranscript(storage, session.sessionId);
+            const before = await readFile(transcript);
+            await writeFile(holdFile, 'hold');
+            await waitForSideCondition(
+              async () => (await readFile(traceFile, 'utf8')).includes('catalog_held'),
+              'Real MCP refresh did not hold'
+            );
+            const mcpPid = Number(await readFile(pidFile, 'utf8'));
+            const requestEndpoint =
+              action === 'main-stop'
+                ? `/sessions/${session.sessionId}/message`
+                : endpoint;
+            const requestsBefore = output.split(`POST ${requestEndpoint}`).length;
+            const completionsBefore = output.split(`POST ${endpoint} -`).length;
+            await composer.fill(
+              action === 'main-stop'
+                ? 'Reply with exactly MAIN_MUST_NOT_RUN and do not use tools.'
+                : '/btw Explain the current task without using tools.'
+            );
+            await page.locator('[data-blade-submit]').click();
+            if (action === 'main-stop') {
+              await page
+                .getByRole('button', { name: 'Stop active turn', exact: true })
+                .waitFor({ state: 'visible' });
+              await waitForSideCondition(
+                () =>
+                  readSessionEvents(transcript).some(
+                    (event) => event.type === 'turn_started'
+                  ),
+                'Main turn did not start'
+              );
+            } else {
+              await page
+                .locator('[data-blade-side-conversation] [role="status"]')
+                .waitFor({ state: 'visible' });
+            }
+            await waitForSideCondition(
+              () => output.split(`POST ${requestEndpoint}`).length > requestsBefore,
+              'Server did not admit the catalog waiter'
+            );
+            expect(proxy.forwardedRequestNumbers).toEqual([1]);
+            const startedAt = Date.now();
+            cancelling = true;
+            if (action === 'client') {
+              await page
+                .getByRole('button', { name: 'Dismiss side conversation', exact: true })
+                .click();
+              await page
+                .locator('[data-blade-side-conversation]')
+                .waitFor({ state: 'detached' });
+            } else if (action === 'main-stop') {
+              await page
+                .getByRole('button', { name: 'Stop active turn', exact: true })
+                .click();
+            } else {
+              closing = true;
+              child.kill('SIGTERM');
+            }
+            let cancellationMs: number;
+            if (action === 'shutdown') {
+              await waitForSideCondition(
+                () => child?.exitCode !== null || child?.signalCode !== null,
+                'MCP side wait blocked graceful shutdown',
+                3_000
+              );
+              expect(child.exitCode).toBe(0);
+              expect(output).toContain('Blade server stopped');
+              expect(output).not.toContain('清理超时');
+              expect(() => process.kill(mcpPid, 0)).toThrow();
+              cancellationMs = Date.now() - startedAt;
+            } else {
+              await waitForSideCondition(
+                () =>
+                  action === 'main-stop'
+                    ? readSessionEvents(transcript).some(
+                        (event) => event.type === 'turn_aborted'
+                      )
+                    : output.split(`POST ${endpoint} -`).length > completionsBefore,
+                'Cancelled request did not settle while the MCP refresh remained held',
+                3_000
+              );
+              cancellationMs = Date.now() - startedAt;
+              expect(() => process.kill(mcpPid, 0)).not.toThrow();
+              expect(await readFile(traceFile, 'utf8')).not.toContain(
+                'catalog_released'
+              );
+              cancelling = false;
+              await writeFile(releaseFile, 'release');
+              await waitForSideCondition(
+                async () =>
+                  (await readFile(traceFile, 'utf8')).includes('catalog_released'),
+                'Shared catalog did not complete after cancellation'
+              );
+              const followupResponse = page.waitForResponse(
+                (response) =>
+                  new URL(response.url()).pathname === endpoint &&
+                  response.request().method() === 'POST'
+              );
+              await composer.fill(
+                '/btw Reply with exactly CATALOG_SIDE_FOLLOWUP and do not use tools.'
+              );
+              await page.locator('[data-blade-submit]').click();
+              const followup = await followupResponse;
+              expect(followup.status()).toBe(200);
+              expect(
+                SideConversationResponseSchema.parse(
+                  await followup.json()
+                ).response.trim()
+              ).toBe('CATALOG_SIDE_FOLLOWUP');
+              expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+            }
+            if (action === 'shutdown')
+              expect(proxy.forwardedRequestNumbers).toEqual([1]);
+            if (action === 'main-stop') {
+              const events = readSessionEvents(transcript);
+              expect(
+                events.filter((event) => event.type === 'turn_aborted')
+              ).toHaveLength(1);
+              expect(
+                events.filter((event) => event.type === 'turn_completed')
+              ).toHaveLength(0);
+            } else {
+              expect(await readFile(transcript)).toEqual(before);
+            }
+            expect(faults).toEqual([]);
+            const evidence = {
+              model: model.model,
+              action,
+              cancellationMs,
+              providerRequests: proxy.forwardedRequestNumbers,
+              transcriptUnchanged: action !== 'main-stop',
+              mainAbortCommitted: action === 'main-stop',
+              faults,
+            };
+            assertNoSecrets(
+              {
+                evidence,
+                output,
+                trace: await readFile(traceFile, 'utf8'),
+                html: await page.content(),
+              },
+              [model.apiKey]
+            );
+            console.log(`[side-catalog-cancellation] ${JSON.stringify(evidence)}`);
+          } catch (error) {
+            errors.push(error);
+          } finally {
+            closing = true;
+            cancelling = true;
+            const cleanup = await Promise.allSettled([
+              browser?.close(),
+              child ? stopForegroundGuiLauncher(child, identity) : undefined,
+              proxy.close(),
+            ]);
+            for (const result of cleanup)
+              if (result.status === 'rejected') errors.push(result.reason);
+            if (cleanup.every((result) => result.status === 'fulfilled'))
+              await rm(root, { recursive: true, force: true }).catch(
+                (error: unknown) => {
+                  errors.push(error);
+                }
+              );
+          }
+          if (errors.length === 1) throw errors[0];
+          if (errors.length > 1)
+            throw new AggregateError(
+              errors,
+              'MCP catalog trajectory and cleanup failed'
+            );
         }
       );
     }

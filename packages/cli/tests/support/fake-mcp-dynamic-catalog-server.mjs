@@ -1,3 +1,4 @@
+import { existsSync, unwatchFile, watchFile } from 'node:fs';
 import { appendFile, writeFile } from 'node:fs/promises';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -8,6 +9,8 @@ import {
 
 const pidFile = process.env.MCP_DYNAMIC_PID_FILE;
 const traceFile = process.env.MCP_DYNAMIC_TRACE_FILE;
+const holdFile = process.env.MCP_DYNAMIC_HOLD_FILE;
+const releaseFile = process.env.MCP_DYNAMIC_RELEASE_FILE;
 if (pidFile) {
   await writeFile(pidFile, `${process.pid}\n`, { mode: 0o600 });
 }
@@ -116,6 +119,20 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
     cursor: request.params?.cursor ?? null,
     listRequests,
   });
+  if (phase === 'held') {
+    await trace('catalog_held');
+    await new Promise((resolve) => {
+      const check = () => {
+        if (!releaseFile || !existsSync(releaseFile)) return;
+        unwatchFile(releaseFile, check);
+        phase = 'initial';
+        resolve();
+      };
+      if (releaseFile) watchFile(releaseFile, { interval: 25 }, check);
+      check();
+    });
+    await trace('catalog_released');
+  }
   if (phase === 'poisoned') {
     return {
       tools: [
@@ -169,3 +186,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 await server.connect(new StdioServerTransport());
+if (holdFile && releaseFile) {
+  const hold = () => {
+    if (!existsSync(holdFile)) return;
+    unwatchFile(holdFile, hold);
+    phase = 'held';
+    void server.sendToolListChanged();
+  };
+  watchFile(holdFile, { interval: 25 }, hold);
+  hold();
+}

@@ -1,9 +1,10 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type McpCatalogChange, McpRegistry } from '../../src/mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../../src/mcp/types.js';
+import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
 
 vi.unmock('child_process');
 vi.unmock('node:child_process');
@@ -29,6 +30,58 @@ describe('dynamic MCP tool catalog over real stdio transport', () => {
   afterEach(async () => {
     await registry.disconnectAll();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('cancels a waiter without closing a real shared MCP catalog refresh', async () => {
+    const holdFile = path.join(root, 'hold');
+    const releaseFile = path.join(root, 'release');
+    await registry.registerServer('dynamic', {
+      type: 'stdio',
+      command: process.execPath,
+      args: [serverEntry],
+      env: {
+        MCP_DYNAMIC_PID_FILE: pidFile,
+        MCP_DYNAMIC_TRACE_FILE: traceFile,
+        MCP_DYNAMIC_HOLD_FILE: holdFile,
+        MCP_DYNAMIC_RELEASE_FILE: releaseFile,
+      },
+    });
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.setMcpCatalogBarrier(() => registry.waitForCatalogIdle());
+    await writeFile(holdFile, 'hold');
+    await expect
+      .poll(async () => (await readFile(traceFile, 'utf8')).includes('catalog_held'))
+      .toBe(true);
+    const client = new AbortController();
+    const waiting = toolRegistry.waitForMcpCatalogIdle(client.signal).then(
+      () => 'completed',
+      (error: unknown) => error
+    );
+    let otherSettled = false;
+    const other = toolRegistry.waitForMcpCatalogIdle().then(() => {
+      otherSettled = true;
+    });
+    try {
+      client.abort('caller-cancelled');
+      await expect(waiting).resolves.toMatchObject({ name: 'AbortError' });
+      expect(otherSettled).toBe(false);
+      expect(registry.getServerStatus('dynamic')?.status).toBe(
+        McpConnectionStatus.CONNECTED
+      );
+      expect(await readFile(traceFile, 'utf8')).not.toContain('catalog_released');
+      await writeFile(releaseFile, 'release');
+      await other;
+      expect(registry.getCatalogSnapshot().tools.map((tool) => tool.name)).toContain(
+        'mcp__dynamic__stable_marker'
+      );
+      const response = await registry
+        .getServerStatus('dynamic')!
+        .client.callTool('stable_marker', { marker: 'AFTER_CANCEL' });
+      expect(response.content[0]?.text).toBe('DYNAMIC_MCP_OK:AFTER_CANCEL');
+    } finally {
+      await writeFile(releaseFile, 'release');
+      await Promise.all([waiting, other]);
+    }
   });
 
   it('publishes bounded revisions and retains the last valid catalog', async () => {
