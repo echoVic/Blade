@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.161] - 2026-09-11
+
+### Added
+- Add Web transcript selection actions for structured annotations and temporary multi-turn side conversations.
+- Show selected excerpts as removable annotation chips in the composer and as expandable quoted context after sending.
+
+### Fixed
+- Keep selected excerpts out of composer text and inject them into Provider context as untrusted quoted metadata.
+- Keep side conversations isolated from the main transcript, fall back to the source project after a task worktree is removed, and return an explicit workspace-unavailable error when no fallback exists.
+- Fold consecutive model-loop assistant records into one display response so command groups and thinking blocks collapse within prose phases instead of stacking at the bottom.
+- Preserve Ctrl/Cmd+A in the main composer, annotation editor, and side-conversation composer.
+- Keep task-switcher keyboard selection stable during IME composition and while results move beneath a stationary pointer.
+
+### Tests
+- Add component, Store, route, Provider-context, and production Chromium coverage for annotations, side conversations, timeline folding, and task-switcher IME behavior.
+
 ## [0.10.160] - 2026-09-11
 
 ### Fixed
