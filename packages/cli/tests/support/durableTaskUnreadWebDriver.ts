@@ -46,6 +46,11 @@ export interface DurableTaskUnreadWebEvidence {
     archiveEnabled: true;
     selectionPreserved: true;
   };
+  switcherPointer: Array<{
+    mode: 'tasks' | 'commands';
+    stationaryPointerPreserved: true;
+    movedPointerSelected: true;
+  }>;
   switcherIme: Array<{
     mode: 'tasks' | 'commands';
     trustedComposition: true;
@@ -204,6 +209,64 @@ async function openTaskSwitcher(page: Page): Promise<void> {
     state: 'visible',
     timeout: 30_000,
   });
+}
+
+async function verifySwitcherPointer(
+  page: Page
+): Promise<DurableTaskUnreadWebEvidence['switcherPointer']> {
+  const selectedUrl = page.url();
+  const evidence: DurableTaskUnreadWebEvidence['switcherPointer'] = [];
+  for (const mode of ['tasks', 'commands'] as const) {
+    await openTaskSwitcher(page);
+    await page
+      .getByRole('tab', { name: mode === 'tasks' ? 'Tasks' : 'Actions', exact: true })
+      .click();
+    const search = page.getByRole('combobox');
+    const results = page.getByRole('option');
+    await results.nth(1).waitFor({ state: 'visible' });
+    await results.nth(1).hover();
+    await search.press('ArrowUp');
+    const expected = await results.first().getAttribute('id');
+    if (!expected || (await search.getAttribute('aria-activedescendant')) !== expected)
+      throw new Error('Keyboard did not highlight the first result');
+    await search.fill(mode === 'tasks' ? 'Unread background' : 'new task');
+    await waitForCondition(
+      async () => (await results.count()) === 1,
+      'filtered pointer control',
+      10_000
+    );
+    await search.fill('');
+    await results.nth(1).waitFor({ state: 'visible' });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    );
+    if ((await search.getAttribute('aria-activedescendant')) !== expected)
+      throw new Error(`Stationary mouse took over the ${mode} keyboard selection`);
+    const second = results.nth(1);
+    const box = await second.boundingBox();
+    if (!box) throw new Error('Second result has no pointer target');
+    await page.mouse.move(box.x + box.width / 2 + 2, box.y + box.height / 2);
+    await waitForCondition(
+      async () =>
+        (await search.getAttribute('aria-activedescendant')) ===
+        (await second.getAttribute('id')),
+      'intentional pointer selection',
+      10_000
+    );
+    await search.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    if (page.url() !== selectedUrl)
+      throw new Error('Pointer selection changed the active Session');
+    evidence.push({
+      mode,
+      stationaryPointerPreserved: true,
+      movedPointerSelected: true,
+    });
+  }
+  return evidence;
 }
 
 async function verifySwitcherIme(
@@ -660,6 +723,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
         'TaskSwitcher Enter opened a task other than the highlighted session'
       );
     }
+    const switcherPointer = await verifySwitcherPointer(livePage);
     const switcherIme = await verifySwitcherIme(livePage);
     const siblingRef = await input.seedSibling(backgroundTask);
     if (siblingRef.sessionId !== backgroundTask.sessionId) {
@@ -908,6 +972,7 @@ export async function runDurableTaskUnreadWebDriver(input: {
         archiveEnabled: true,
         selectionPreserved: true,
       },
+      switcherPointer,
       switcherIme,
       unreadAfterMissedCompletion,
       unreadAfterReload,

@@ -91,6 +91,7 @@ Web:
 - After restoration, Session returns to project-level navigation and can continue the original transcript.
 - The task switcher preserves keyboard focus by the full workspace and session identity while its live results reorder. Background task insertion or status changes cannot redirect Enter to another task; archiving, deleting, or filtering out the highlighted result selects the first remaining item, and empty results perform no selection.
 - Task and action searches leave Enter, arrow keys, and Escape to the input method during composition. Confirming a candidate does not open a task or execute an action, and cancelling a candidate does not dismiss the dialog. Normal keyboard actions resume after composition ends.
+- Results moving under a stationary mouse during updates or filtering do not change the keyboard highlight. Moving the mouse still selects the corresponding task or action, and clicking works as before.
 
 ACP:
 

@@ -181,6 +181,36 @@ describe('TaskSwitcher', () => {
     });
   });
 
+  it.each(['tasks', 'commands'] as const)(
+    'keeps keyboard highlighting when %s results move under a stationary mouse',
+    async (mode) => {
+      useAppStore.setState({ taskSwitcherMode: mode });
+      useSessionStore.setState({
+        sessions: [
+          createSession({ sessionId: 'first', title: 'First task' }),
+          createSession({ sessionId: 'second', title: 'Second task' }),
+        ],
+      });
+      await renderSwitcher();
+      await pressKey('ArrowDown');
+      const selected = highlightedTitle();
+      const first = document.body.querySelector<HTMLElement>('[role="option"]');
+      if (!first) throw new Error('First switcher result is missing');
+      await act(async () => {
+        first.dispatchEvent(
+          new MouseEvent('mouseover', { bubbles: true, clientX: 400, clientY: 260 })
+        );
+      });
+      expect(highlightedTitle()).toBe(selected);
+      await act(async () => {
+        first.dispatchEvent(
+          new MouseEvent('mousemove', { bubbles: true, clientX: 402, clientY: 261 })
+        );
+      });
+      expect(highlightedTitle()).toBe(first.textContent);
+    }
+  );
+
   it('keeps keyboard selection when a running task completes and moves down', async () => {
     const first = createSession({
       sessionId: 'first',

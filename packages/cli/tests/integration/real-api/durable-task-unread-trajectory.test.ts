@@ -151,6 +151,18 @@ describeDurableUnread('Durable task unread Web trajectory (real API)', () => {
             archiveEnabled: true,
             selectionPreserved: true,
           },
+          switcherPointer: [
+            {
+              mode: 'tasks',
+              stationaryPointerPreserved: true,
+              movedPointerSelected: true,
+            },
+            {
+              mode: 'commands',
+              stationaryPointerPreserved: true,
+              movedPointerSelected: true,
+            },
+          ],
           switcherIme: [
             {
               mode: 'tasks',

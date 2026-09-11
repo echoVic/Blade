@@ -526,7 +526,9 @@ export function TaskSwitcher() {
                   key={key}
                   role="option"
                   aria-selected={highlighted}
-                  onMouseEnter={() => setSelectedIndex(index)}
+                  onMouseMove={() => {
+                    if (!highlighted) setSelectedIndex(index);
+                  }}
                   className={cn(
                     'group flex min-h-[68px] w-full items-center rounded-lg border border-transparent text-left transition-colors',
                     highlighted

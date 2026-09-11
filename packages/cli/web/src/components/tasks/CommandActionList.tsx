@@ -48,7 +48,9 @@ export function CommandActionList({
         key={action.id}
         role="option"
         aria-selected={highlighted}
-        onMouseEnter={() => onSelect(index)}
+        onMouseMove={() => {
+          if (!highlighted) onSelect(index);
+        }}
         className={cn(
           'group flex min-h-[58px] w-full items-center rounded-lg border border-transparent text-left transition-colors',
           highlighted
