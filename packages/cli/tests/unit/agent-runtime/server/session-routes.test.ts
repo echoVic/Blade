@@ -298,7 +298,7 @@ const runtimeState = vi.hoisted(() => ({
     rewindSession: vi.fn(),
     listSubagents: vi.fn(() => []),
     resumeSubagent: vi.fn(),
-    askSideQuestion: vi.fn().mockResolvedValue({
+    askSideQuestion: vi.fn<SessionRuntime['askSideQuestion']>().mockResolvedValue({
       response: 'Side answer',
       durationMs: 9,
     }),
@@ -11546,6 +11546,311 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
     expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'aborts an active side question before waiting for shutdown (fallback: %s)',
+    async (fallback) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = 'shutdown-side-question';
+      const projectPath = '/tmp/shutdown-side-question';
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+        makeSessionMetadata({
+          sessionId,
+          projectPath,
+          ...(fallback
+            ? {
+                taskIsolation: 'worktree' as const,
+                taskSourceProjectPath: '/tmp/source-project',
+              }
+            : {}),
+        })
+      );
+      let releaseCompletion!: () => void;
+      const completion = new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+      let resolveStarted!: (signal: AbortSignal) => void;
+      const started = new Promise<AbortSignal>((resolve) => {
+        resolveStarted = resolve;
+      });
+      runtimeState.runtime.askSideQuestion.mockImplementationOnce(
+        async (_question, options) => {
+          if (!options?.signal) throw new Error('Missing side-question signal');
+          resolveStarted(options.signal);
+          await completion;
+          return { response: 'Settled side question', durationMs: 1 };
+        }
+      );
+      const controller = createSessionRouteController();
+      const pending = controller.app.request(`/${sessionId}/side-question`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: 'Explain the current work', projectPath }),
+      });
+      let shutdown: Promise<void> | undefined;
+      try {
+        const signal = await started;
+        expect(signal.aborted).toBe(false);
+        shutdown = controller.shutdown('side-question-shutdown');
+        expect(signal.aborted).toBe(true);
+        expect(signal.reason).toBe('side-question-shutdown');
+        expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
+        let settled = false;
+        void shutdown.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        releaseCompletion();
+        await pending;
+        await shutdown;
+        expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+        expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+        expect(agentState.chatStream).not.toHaveBeenCalled();
+      } finally {
+        releaseCompletion();
+        await pending;
+        await (shutdown ?? controller.shutdown());
+      }
+    }
+  );
+
+  it('forwards client cancellation to the side question without shutting down the controller', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'client-cancel-side-question';
+    const projectPath = '/tmp/client-cancel-side-question';
+    mockResolvedSession(sessionId, { projectPath });
+    let releaseCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    let resolveStarted!: (signal: AbortSignal) => void;
+    const started = new Promise<AbortSignal>((resolve) => {
+      resolveStarted = resolve;
+    });
+    runtimeState.runtime.askSideQuestion.mockImplementationOnce(
+      async (_question, options) => {
+        if (!options?.signal) throw new Error('Missing side-question signal');
+        resolveStarted(options.signal);
+        await completion;
+        return { response: 'Settled side question', durationMs: 1 };
+      }
+    );
+    const controller = createSessionRouteController();
+    const client = new AbortController();
+    const pending = controller.app.request(`/${sessionId}/side-question`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'Explain the current work', projectPath }),
+      signal: client.signal,
+    });
+    try {
+      const signal = await started;
+      client.abort('client-dismissed');
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe('client-dismissed');
+      releaseCompletion();
+      await pending;
+      const next = await controller.app.request(`/${sessionId}/side-question`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: 'Try another side question', projectPath }),
+      });
+      expect(next.status).toBe(200);
+    } finally {
+      releaseCompletion();
+      await pending;
+      await controller.shutdown();
+    }
+  });
+
+  it.each(['during preparation', 'after acceptance'] as const)(
+    'keeps a server-owned main run alive when its submitting client aborts %s',
+    async (abortPhase) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = 'client-independent-main-run';
+      const projectPath = '/tmp/client-independent-main-run';
+      mockResolvedSession(sessionId, { projectPath });
+      let releasePreparation!: () => void;
+      const preparation = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      let resolvePreparing!: () => void;
+      const preparing = new Promise<void>((resolve) => {
+        resolvePreparing = resolve;
+      });
+      runtimeState.runtime.prepareInputTurn.mockImplementationOnce(async () => {
+        resolvePreparing();
+        await preparation;
+        return makePreparedInputTurn();
+      });
+      let releaseRun!: () => void;
+      const completion = new Promise<void>((resolve) => {
+        releaseRun = resolve;
+      });
+      let resolveStarted!: (signal: AbortSignal) => void;
+      const started = new Promise<AbortSignal>((resolve) => {
+        resolveStarted = resolve;
+      });
+      agentState.chatStream.mockImplementationOnce(async function* (
+        _content,
+        context: { signal: AbortSignal }
+      ) {
+        resolveStarted(context.signal);
+        yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+        await waitForGateOrAbort(completion, context.signal);
+        return {
+          success: true,
+          finalMessage: 'Main run completed independently',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+      const controller = createSessionRouteController();
+      const client = new AbortController();
+      const pending = controller.app.request(
+        `/${sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'Keep the main run alive' }),
+          signal: client.signal,
+        }
+      );
+      try {
+        await preparing;
+        if (abortPhase === 'during preparation') client.abort('client-disconnected');
+        releasePreparation();
+        expect((await pending).status).toBe(202);
+        const signal = await started;
+        if (abortPhase === 'after acceptance') client.abort('client-disconnected');
+        expect(signal.aborted).toBe(false);
+        const status = await controller.app.request(
+          `/${sessionId}/status?projectPath=${encodeURIComponent(projectPath)}`
+        );
+        await expect(status.json()).resolves.toMatchObject({ status: 'running' });
+        expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+        releaseRun();
+        await vi.waitFor(() => {
+          expect(busState.publish).toHaveBeenCalledWith(
+            { sessionId, projectPath },
+            'session.completed',
+            expect.objectContaining({
+              runId: expect.any(String),
+              outputTruncated: false,
+            })
+          );
+        });
+        expect(signal.aborted).toBe(false);
+        expect(agentState.chatStream).toHaveBeenCalledOnce();
+      } finally {
+        releasePreparation();
+        releaseRun();
+        client.abort();
+        await pending;
+        await controller.shutdown();
+      }
+    }
+  );
+
+  it('preserves shutdown cancellation while a side-question runtime initializes', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'initializing-side-question';
+    const projectPath = '/tmp/initializing-side-question';
+    mockResolvedSession(sessionId, { projectPath });
+    let releaseInitialization!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    vi.mocked(SessionRuntime.create).mockImplementationOnce(async () => {
+      resolveStarted();
+      await initialization;
+      return createRuntimeDouble({ sessionId, workspaceRoot: projectPath });
+    });
+    let sideSignal: AbortSignal | undefined;
+    runtimeState.runtime.askSideQuestion.mockImplementationOnce(
+      async (_question, options) => {
+        sideSignal = options?.signal;
+        throw new DOMException('Aborted', 'AbortError');
+      }
+    );
+    const controller = createSessionRouteController();
+    const pending = controller.app.request(`/${sessionId}/side-question`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'Explain the current work', projectPath }),
+    });
+    let shutdown: Promise<void> | undefined;
+    try {
+      await started;
+      shutdown = controller.shutdown('initialization-shutdown');
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
+      const rejected = await controller.app.request(`/${sessionId}/side-question`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: 'Do not admit this request', projectPath }),
+      });
+      expect(rejected.status).toBe(503);
+      releaseInitialization();
+      await pending;
+      await shutdown;
+      expect(runtimeState.runtime.askSideQuestion).toHaveBeenCalledOnce();
+      expect(sideSignal?.aborted).toBe(true);
+      expect(sideSignal?.reason).toBe('initialization-shutdown');
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+      expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    } finally {
+      releaseInitialization();
+      await pending;
+      await (shutdown ?? controller.shutdown());
+    }
+  });
+
+  it('releases client cancellation listeners after a side question settles', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'settled-side-question';
+    const projectPath = '/tmp/settled-side-question';
+    mockResolvedSession(sessionId, { projectPath });
+    let operationSignal: AbortSignal | undefined;
+    runtimeState.runtime.askSideQuestion.mockImplementationOnce(
+      async (_question, options) => {
+        operationSignal = options?.signal;
+        return { response: 'Completed side question', durationMs: 1 };
+      }
+    );
+    const controller = createSessionRouteController();
+    const client = new AbortController();
+    try {
+      const response = await controller.app.request(`/${sessionId}/side-question`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: 'Explain the current work', projectPath }),
+        signal: client.signal,
+      });
+      expect(response.status).toBe(200);
+      expect(operationSignal).toBeDefined();
+      client.abort('late-client-abort');
+      expect(operationSignal?.aborted).toBe(false);
+      await controller.shutdown();
+      expect(operationSignal?.aborted).toBe(false);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+    } finally {
+      await controller.shutdown();
+    }
   });
 
   it('uses the source project for a discarded worktree side conversation', async () => {

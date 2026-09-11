@@ -595,6 +595,7 @@ function resetSharedSessionRouteState(): void {
 
 type Variables = {
   directory: string;
+  requestSignal: AbortSignal;
 };
 
 function sanitizeToolAdmissionMetadata(
@@ -1891,15 +1892,18 @@ export const createSessionRouteController = (): SessionRouteController => {
   };
   resetPendingResumeRecoveries = clearAllPendingResumeRecoveries;
 
-  const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
+  const withAdmission = async <T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    externalSignal?: AbortSignal
+  ): Promise<T> => {
     let lease;
     try {
-      lease = admissionGate.enter();
+      lease = admissionGate.enter(externalSignal);
     } catch {
       throw new ServiceUnavailableError();
     }
     try {
-      return await operation();
+      return await operation(lease.signal);
     } finally {
       lease.release();
     }
@@ -1909,7 +1913,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (c.req.method === 'GET' || c.req.method === 'HEAD') {
       return next();
     }
-    return withAdmission(next);
+    return withAdmission((signal) => {
+      c.set('requestSignal', signal);
+      return next();
+    }, c.req.raw.signal);
   });
 
   const withMessageSubmissionLock = <T>(
@@ -5678,7 +5685,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       (session) =>
         withSideConversationRuntime(session, async (runtime) => {
           const result = await runtime.askSideQuestion(parsed.data.question, {
-            signal: c.req.raw.signal,
+            signal: c.get('requestSignal'),
           });
           return c.json({
             ...result,

@@ -43,10 +43,10 @@ Headless 继续由 invocation-local signal owner 控制：收到 `SIGINT` 或 `S
 
 `blade web` 和 `blade serve` 在监听成功后立即注册 server cleanup。关闭开始后：
 
-- message、task dispatch/retry/delivery、user shell、code review 和 durable resume
-  不再接纳新工作；
+- message、side question、task dispatch/retry/delivery、user shell、code review 和
+  durable resume 不再接纳新工作；
 - HTTP mutation 返回 `503 SERVICE_UNAVAILABLE`；
-- active Agent run、user shell 与 review 收到 abort；
+- active Agent run、side question、user shell 与 review 收到 abort；
 - 已观察到的 completion Promise 全部 settle 后才释放 Runtime；
 - Runtime initialization、Runtime disposal 与 shared MCP cleanup 全部完成后才清空
   Session route owner；
@@ -54,6 +54,12 @@ Headless 继续由 invocation-local signal owner 控制：收到 `SIGINT` 或 `S
 
 只关闭浏览器页、SSE viewer 或其他 subscriber 不会触发该流程。Viewer ownership 与
 server-owned Agent run 继续分离；只有 server/process shutdown 才关闭 run admission。
+
+Web 侧边对话（`/btw`）随请求存活：关闭侧边面板或断开请求会取消该次提问，服务器
+关闭也会立即传递取消信号，而不是先等侧边请求结束再释放 Runtime。已经进入 Runtime
+初始化的提问在初始化完成后仍能收到取消；关闭期间的新提问返回 `503`。请求结束后移除
+客户端取消监听，后续提问不受影响。侧边对话不创建主任务，也不改写主会话 JSONL；
+主任务仍由服务器持有，不因提问取消或提交请求断连而停止。
 
 ## ACP
 
@@ -92,7 +98,12 @@ Provider、工具或宿主 transport 无法在预算内 settle，进程由 hard 
 ACP prompt/user-shell settle、Web closing `503`、run completion 与 Runtime dispose
 顺序、cleanup failure isolation、logger 顺序和 timer 清理。
 
-发布阻断真实 API 固定运行 DeepSeek Flash/Pro × Headless、真实 ACP stdio、
-raw PTY TUI 与 production Chromium Web GUI 八格矩阵。每格都在真实前台 Bash 活跃后
-发送生产 `SIGTERM`，并验证 durable abort、恢复 turn、进程树/lease/port/transport
-回收、延迟副作用对照和 Provider credential absence。
+主运行 shutdown 真实 API 轨迹使用 DeepSeek Flash/Pro，在真实前台 Bash 活跃后发送
+生产 `SIGTERM`，验证 durable abort、恢复 turn、资源回收、延迟副作用和凭据不泄露。
+当前 release matrix 运行 Headless、真实 ACP stdio 和 production Chromium 六格；
+raw PTY TUI 不计入该门禁，需另行验证，且不等同于原生桌面 Computer Use。
+
+侧边对话另有 DeepSeek Flash/Pro × 关闭面板、服务器 `SIGTERM` 四格 Chromium 验证。
+测试先收到真实 Provider 内容，再暂停投递，要求取消在 3 秒内完成；服务器关闭必须出现
+正常停止日志，不能仅以退出码为零判定成功。后续提问精确返回预期答案，主 JSONL
+字节不变；框架及模型均不重试。主运行活动轨迹另行覆盖浏览器刷新后继续执行。

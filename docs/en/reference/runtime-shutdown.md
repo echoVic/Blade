@@ -34,14 +34,16 @@ Headless continues to be controlled by the invocation-local signal owner: after 
 
 `blade web` and `blade serve` register server cleanup immediately after successful listen. After shutdown begins:
 
-- messages, task dispatch/retry/delivery, user shell, code review, and durable resume no longer accept new work;
+- messages, side questions, task dispatch/retry/delivery, user shell, code review, and durable resume no longer accept new work;
 - HTTP mutations return `503 SERVICE_UNAVAILABLE`;
-- Active Agent runs, user shells, and reviews receive abort;
+- Active Agent runs, side questions, user shells, and reviews receive abort;
 - Runtime is released only after all observed completion Promises have settled;
 - Session route owner is cleared only after Runtime initialization, Runtime disposal, and shared MCP cleanup all complete;
 - Task scheduler, stale-session GC, and network listeners stop last.
 
 Closing only the browser tab, SSE viewer, or other subscriber does not trigger this flow. Viewer ownership continues to be separated from server-owned Agent runs; only server/process shutdown closes run admission.
+
+Web side conversations (`/btw`) are request-owned: dismissing the panel or disconnecting the request cancels that question. Server shutdown also signals cancellation immediately instead of waiting for the side request before releasing its Runtime. A question already initializing its Runtime receives cancellation after initialization; new questions during shutdown return `503`. Settled requests remove their client cancellation listeners, so later questions remain independent. Side conversations neither create a main run nor modify the main session JSONL. Main runs remain server-owned and do not stop when a side question is cancelled or their submitting request disconnects.
 
 ## ACP
 
@@ -74,4 +76,6 @@ The Runtime cleanup phase uses an independent 4-second budget; after success, ha
 
 Deterministic tests cover operation admission, abort reason, idle barrier, concurrent destroy, ACP prompt/user-shell settlement, Web closing `503`, run completion and Runtime dispose order, cleanup failure isolation, logger order, and timer cleanup.
 
-Release-blocking real API consistently runs an eight-cell matrix of DeepSeek Flash/Pro × Headless, real ACP stdio, raw PTY TUI, and production Chromium Web GUI. Each cell sends production `SIGTERM` while a real foreground Bash is active, and verifies durable abort, turn recovery, process tree/lease/port/transport reclamation, delayed side-effect controls, and Provider credential absence.
+The main-run shutdown trajectory uses real DeepSeek Flash/Pro, sends production `SIGTERM` while a real foreground Bash is active, and verifies durable abort, turn recovery, resource reclamation, delayed side effects, and credential absence. The current release matrix runs six cells across Headless, real ACP stdio, and production Chromium. Raw PTY TUI is excluded from that gate and requires separate verification; it is not native desktop Computer Use.
+
+Side conversations have a separate four-cell Chromium matrix: DeepSeek Flash/Pro × panel dismissal and server `SIGTERM`. Tests receive real Provider content before pausing delivery, then require cancellation within three seconds. Server shutdown must emit the normal stopped log; exit code zero alone is insufficient. A subsequent question must return the exact expected answer, with unchanged main JSONL bytes and no framework or model retries. The separate main-run activity trajectory checks continued execution after browser reload.

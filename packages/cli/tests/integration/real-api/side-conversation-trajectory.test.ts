@@ -1,8 +1,16 @@
+import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  SessionSchema,
+  SideConversationResponseSchema,
+} from '../../../src/api/schemas.js';
 import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
@@ -11,13 +19,174 @@ import { createSessionRouteController } from '../../../src/server/routes/session
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import {
+  captureForegroundGuiLauncherIdentity,
+  isExpectedBrowserRequestFailure,
+  stopForegroundGuiLauncher,
+} from '../../support/foregroundBoundedOutputWebDriver.js';
 import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
+import {
+  assertNoSecrets,
+  findSessionTranscript,
+} from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
+  resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+
+async function waitForSideCondition(
+  check: () => boolean | Promise<boolean>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(label);
+}
+
+async function reserveSidePort(): Promise<number> {
+  const server = createNetServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string')
+    throw new Error('Missing side server port');
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve()))
+  );
+  return address.port;
+}
+
+async function startSideCancellationProxy(baseURL: string) {
+  const operations = new Set<Promise<void>>();
+  const controllers = new Set<AbortController>();
+  const forwarded: number[] = [];
+  const held: number[] = [];
+  const cancelled: number[] = [];
+  const completed: number[] = [];
+  const failures: string[] = [];
+  const server = createServer((request, response) => {
+    const requestNumber = forwarded.length + 1;
+    forwarded.push(requestNumber);
+    const controller = new AbortController();
+    controllers.add(controller);
+    const onClose = () => {
+      if (!response.writableEnded) {
+        cancelled.push(requestNumber);
+        controller.abort('downstream-closed');
+      }
+    };
+    response.once('close', onClose);
+    const operation = (async () => {
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const target = new URL(baseURL);
+        const incoming = new URL(request.url ?? '/', 'http://127.0.0.1');
+        const suffix =
+          target.pathname.endsWith('/v1') && incoming.pathname.startsWith('/v1/')
+            ? incoming.pathname.slice(3)
+            : incoming.pathname;
+        target.pathname = `${target.pathname.replace(/\/$/, '')}/${suffix.replace(/^\//, '')}`;
+        target.search = incoming.search;
+        const headers = new Headers();
+        for (const name of ['authorization', 'content-type']) {
+          const value = request.headers[name];
+          if (value) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+        }
+        const upstream = await fetch(target, {
+          method: request.method,
+          headers,
+          body: Buffer.concat(chunks),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
+        });
+        if (!upstream.ok || !upstream.body)
+          throw new Error('Side Provider response unavailable');
+        response.writeHead(upstream.status, {
+          'content-type': upstream.headers.get('content-type') ?? 'text/event-stream',
+        });
+        reader = upstream.body.getReader();
+        const decoder = new TextDecoder();
+        let prefix = '';
+        let stoppedOnce = false;
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          prefix = `${prefix}${decoder.decode(chunk.value, { stream: true })}`.slice(
+            -32_768
+          );
+          if (
+            requestNumber === 1 &&
+            !stoppedOnce &&
+            /"(?:content|reasoning_content)"\s*:\s*"[^"\s]/.test(prefix)
+          ) {
+            stoppedOnce = true;
+            held.push(requestNumber);
+            await new Promise<void>((resolve, reject) => {
+              const stop = () => {
+                clearTimeout(timer);
+                resolve();
+              };
+              const timer = setTimeout(() => {
+                controller.signal.removeEventListener('abort', stop);
+                reject(new Error('Side cancellation barrier expired'));
+              }, 30_000);
+              if (controller.signal.aborted) stop();
+              else controller.signal.addEventListener('abort', stop, { once: true });
+            });
+            controller.signal.throwIfAborted();
+          }
+          response.write(chunk.value);
+        }
+        completed.push(requestNumber);
+        response.end();
+      } catch (error) {
+        if (!controller.signal.aborted)
+          failures.push(error instanceof Error ? error.name : 'proxy-failure');
+        response.destroy();
+      } finally {
+        await reader?.cancel().catch(() => undefined);
+        controllers.delete(controller);
+        response.off('close', onClose);
+      }
+    })();
+    operations.add(operation);
+    void operation.finally(() => operations.delete(operation));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string')
+    throw new Error('Missing side proxy port');
+  return {
+    baseURL: `http://127.0.0.1:${address.port}`,
+    forwarded,
+    held,
+    cancelled,
+    completed,
+    failures,
+    active: () => operations.size,
+    close: async () => {
+      for (const controller of controllers) controller.abort('fixture-cleanup');
+      server.closeAllConnections();
+      await Promise.allSettled([...operations]);
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      );
+    },
+  };
+}
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 const deepseek = enabledModels.find((model) => model.id === 'deepseek');
@@ -113,6 +282,315 @@ afterAll(() => {
     process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
   }
 });
+
+const cancellationModels = isRealApiTestEnabled()
+  ? resolveRequiredDeepSeekQualificationModels()
+  : [];
+
+async function runSideCancellationTrajectory(
+  model: TestModelConfig,
+  action: 'dismiss' | 'shutdown'
+): Promise<void> {
+  if (!model.baseURL) throw new Error('Missing real side-question Provider');
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), 'blade-side-cancel-'))
+  );
+  const workspace = path.join(root, 'workspace');
+  const storageRoot = path.join(root, 'storage');
+  const home = path.join(root, 'home');
+  const proxy = await startSideCancellationProxy(model.baseURL);
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  const processes: Array<{
+    child: ChildProcess;
+    identity?: Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>;
+  }> = [];
+  let output = '';
+  const faults: string[] = [];
+  const networkState = { refreshing: false, closing: false };
+  let stoppingServer = false;
+  let cancellingSideRequest = false;
+  const expectedNetworkErrors: string[] = [];
+  const errors: unknown[] = [];
+  const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
+  try {
+    await mkdir(workspace, { recursive: true });
+    await mkdir(path.join(home, '.blade'), { recursive: true });
+    const config = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseURL });
+    await writeFile(
+      path.join(home, '.blade', 'config.json'),
+      JSON.stringify({
+        ...config,
+        models: config.models.map((entry) => ({
+          ...entry,
+          overrides: { ...entry.overrides, maxRetries: 0 },
+        })),
+        providerForegroundRecoveryMs: 0,
+        hooks: { enabled: false },
+        disableAllHooks: true,
+        mcpServers: {},
+      }),
+      { mode: 0o600 }
+    );
+    const launch = async (port: number) => {
+      const child = spawn(
+        process.execPath,
+        [
+          cliEntry,
+          '--debug',
+          'Service',
+          '--trust-workspace',
+          'serve',
+          '--hostname',
+          '127.0.0.1',
+          '--port',
+          String(port),
+        ],
+        {
+          cwd: workspace,
+          env: {
+            ...process.env,
+            HOME: home,
+            BLADE_STORAGE_ROOT: storageRoot,
+            BLADE_AUTO_MEMORY: '0',
+            BLADE_TELEMETRY_DISABLED: '1',
+          },
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      child.stdout?.on('data', (chunk: Buffer) => {
+        output = (output + chunk.toString()).slice(-64_000);
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        output = (output + chunk.toString()).slice(-64_000);
+      });
+      const owned: (typeof processes)[number] = { child };
+      processes.push(owned);
+      if (!child.pid) throw new Error('Side-question server has no PID');
+      owned.identity = await captureForegroundGuiLauncherIdentity(child.pid);
+      await waitForSideCondition(async () => {
+        if (child.exitCode !== null || child.signalCode !== null)
+          throw new Error('Side-question server exited before ready');
+        try {
+          return (
+            await fetch(`http://127.0.0.1:${port}/health`, {
+              signal: AbortSignal.timeout(1_000),
+            })
+          ).ok;
+        } catch {
+          return false;
+        }
+      }, 'Side-question server was not ready');
+      return child;
+    };
+    const port = await reserveSidePort();
+    let child = await launch(port);
+    const origin = `http://127.0.0.1:${port}`;
+    const createdResponse = await fetch(`${origin}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectPath: workspace,
+        title: 'SIDE CANCEL QUALIFICATION',
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(createdResponse.status).toBe(200);
+    const session = SessionSchema.parse(await createdResponse.json());
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ locale: 'en-US' });
+    page.on('pageerror', (error) => faults.push(error.name));
+    page.on('console', (message) => {
+      if (message.type() !== 'error') return;
+      const source = message.location().url;
+      const pathname = source.startsWith(origin) ? new URL(source).pathname : '';
+      if (
+        stoppingServer &&
+        (pathname === '/events' ||
+          pathname === `/sessions/${session.sessionId}/events` ||
+          pathname === `/sessions/${session.sessionId}/side-question`) &&
+        /^Failed to load resource:/.test(message.text())
+      ) {
+        expectedNetworkErrors.push(pathname);
+        return;
+      }
+      faults.push(message.text());
+    });
+    page.on('requestfailed', (request) => {
+      const url = new URL(request.url());
+      if (
+        cancellingSideRequest &&
+        url.pathname === `/sessions/${session.sessionId}/side-question` &&
+        (request.failure()?.errorText.includes('ERR_ABORTED') || stoppingServer)
+      ) {
+        expectedNetworkErrors.push(url.pathname);
+        return;
+      }
+      if (
+        stoppingServer &&
+        (url.pathname === '/events' ||
+          url.pathname === `/sessions/${session.sessionId}/events`)
+      ) {
+        expectedNetworkErrors.push(url.pathname);
+        return;
+      }
+      if (
+        !isExpectedBrowserRequestFailure({
+          url: request.url(),
+          resourceType: request.resourceType(),
+          errorText: request.failure()?.errorText ?? 'unknown',
+          ...networkState,
+        })
+      )
+        faults.push(`request:${url.pathname}`);
+    });
+    const sessionUrl = new URL(origin);
+    sessionUrl.searchParams.set('session', session.sessionId);
+    sessionUrl.searchParams.set('project', workspace);
+    await page.goto(sessionUrl.href, { waitUntil: 'domcontentloaded' });
+    const composer = page.locator('textarea[data-blade-composer]');
+    await composer.waitFor({ state: 'visible' });
+    await page.keyboard.press('Control+k');
+    await page
+      .getByRole('combobox', { name: 'Search tasks', exact: true })
+      .waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    const transcriptPath = findSessionTranscript(storageRoot, session.sessionId);
+    const before = await readFile(transcriptPath);
+    const panel = page.locator('[data-blade-side-conversation]');
+    await composer.fill(
+      '/btw Reply with exactly SIDE_CANCEL_FIRST and do not use tools.'
+    );
+    await page.locator('[data-blade-submit]').click();
+    await panel.locator('[role="status"]').waitFor({ state: 'visible' });
+    await waitForSideCondition(
+      () => proxy.held.includes(1),
+      'Real Provider content never reached the side-question barrier',
+      90_000
+    );
+    expect(proxy.forwarded).toEqual([1]);
+    const stoppedAt = Date.now();
+    cancellingSideRequest = true;
+    if (action === 'dismiss') {
+      await page
+        .getByRole('button', { name: 'Dismiss side conversation', exact: true })
+        .click();
+      await panel.waitFor({ state: 'detached' });
+    } else {
+      stoppingServer = true;
+      child.kill('SIGTERM');
+    }
+    await waitForSideCondition(
+      () => proxy.cancelled.includes(1) && proxy.active() === 0,
+      'Side request was not cancelled before the shutdown grace deadline',
+      3_000
+    );
+    if (action === 'shutdown') {
+      await waitForSideCondition(
+        () => child.exitCode !== null || child.signalCode !== null,
+        'Side-question server did not exit gracefully',
+        3_000
+      );
+      expect(child.exitCode).toBe(0);
+      expect(output).toContain('Blade server stopped');
+      expect(output).not.toContain('清理超时');
+    }
+    const shutdownMs = Date.now() - stoppedAt;
+    if (action === 'shutdown') {
+      networkState.closing = true;
+      await page.goto('about:blank');
+      child = await launch(port);
+      stoppingServer = false;
+      cancellingSideRequest = false;
+      networkState.closing = false;
+      await page.goto(sessionUrl.href, { waitUntil: 'domcontentloaded' });
+      await composer.waitFor({ state: 'visible' });
+    }
+    cancellingSideRequest = false;
+    expect(await readFile(transcriptPath)).toEqual(before);
+    const followUpResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/sessions/${session.sessionId}/side-question` &&
+        response.request().method() === 'POST'
+    );
+    await composer.fill(
+      '/btw Reply with exactly SIDE_CANCEL_FOLLOWUP and do not use tools.'
+    );
+    await page.locator('[data-blade-submit]').click();
+    const followUp = await followUpResponse;
+    expect(followUp.status()).toBe(200);
+    expect(
+      SideConversationResponseSchema.parse(await followUp.json()).response.trim()
+    ).toBe('SIDE_CANCEL_FOLLOWUP');
+    await waitForSideCondition(
+      async () => (await panel.getAttribute('data-status')) === 'completed',
+      'Side follow-up did not complete',
+      90_000
+    );
+    expect(await panel.innerText()).toContain('SIDE_CANCEL_FOLLOWUP');
+    expect(await readFile(transcriptPath)).toEqual(before);
+    expect(proxy.forwarded).toEqual([1, 2]);
+    expect(proxy.completed).toEqual([2]);
+    expect(proxy.failures).toEqual([]);
+    expect(faults).toEqual([]);
+    expect(child.exitCode).toBeNull();
+    const evidence = {
+      model: model.model,
+      action,
+      cancelled: proxy.cancelled,
+      completed: proxy.completed,
+      forwarded: proxy.forwarded,
+      shutdownMs,
+      transcriptUnchanged: true,
+      followUpCompleted: true,
+      expectedNetworkErrors,
+      faults,
+    };
+    assertNoSecrets({ evidence, output, html: await page.content() }, [model.apiKey]);
+    console.log(`[side-cancellation] ${JSON.stringify(evidence)}`);
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    networkState.closing = true;
+    const cleanup = await Promise.allSettled([
+      browser?.close(),
+      ...processes.map((owned) =>
+        stopForegroundGuiLauncher(owned.child, owned.identity)
+      ),
+      proxy.close(),
+    ]);
+    for (const result of cleanup) {
+      if (result.status === 'rejected') errors.push(result.reason);
+    }
+    if (cleanup.every((result) => result.status === 'fulfilled')) {
+      await rm(root, { recursive: true, force: true }).catch((error: unknown) => {
+        errors.push(error);
+      });
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1)
+    throw new AggregateError(errors, 'Side cancellation trajectory and cleanup failed');
+}
+
+describe.skipIf(!isRealApiTestEnabled())(
+  'Side conversation cancellation production Chromium',
+  () => {
+    for (const model of cancellationModels) {
+      it.for(['dismiss', 'shutdown'] as const)(
+        `${model.model} cancels on %s without changing the main transcript`,
+        { timeout: 240_000 },
+        async (action, context) => {
+          const retry = context.task.retry;
+          expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+          await runSideCancellationTrajectory(model, action);
+        }
+      );
+    }
+  }
+);
 
 describe.skipIf(!deepseek)('Side conversation runtime trajectory (real API)', () => {
   it('answers from durable context without changing its JSONL', async () => {
