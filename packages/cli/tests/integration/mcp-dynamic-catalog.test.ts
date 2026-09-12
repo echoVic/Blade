@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -83,6 +84,68 @@ describe('dynamic MCP tool catalog over real stdio transport', () => {
       await Promise.all([waiting, other]);
     }
   });
+
+  it.each([false, true])(
+    'releases fixture watchers on stdin EOF while catalog held: %s',
+    async (held) => {
+      const holdFile = path.join(root, 'hold');
+      const releaseFile = path.join(root, 'release');
+      if (held) await writeFile(holdFile, 'hold');
+      const child = spawn(process.execPath, [serverEntry], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          MCP_DYNAMIC_PID_FILE: pidFile,
+          MCP_DYNAMIC_TRACE_FILE: traceFile,
+          MCP_DYNAMIC_HOLD_FILE: holdFile,
+          MCP_DYNAMIC_RELEASE_FILE: releaseFile,
+        },
+      });
+      child.stdout.resume();
+      child.stderr.resume();
+      const closed = new Promise<void>((resolve) =>
+        child.once('close', () => resolve())
+      );
+      try {
+        await expect
+          .poll(async () => {
+            try {
+              await access(pidFile);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+          .toBe(true);
+        if (held) {
+          child.stdin.write(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'tools/list',
+              params: {},
+            }) + '\n'
+          );
+          await expect
+            .poll(async () => {
+              try {
+                return (await readFile(traceFile, 'utf8')).includes('catalog_held');
+              } catch {
+                return false;
+              }
+            })
+            .toBe(true);
+        }
+        child.stdin.end();
+        await expect.poll(() => child.exitCode, { timeout: 1_000 }).toBe(0);
+        expect(child.signalCode).toBeNull();
+        await closed;
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        await closed;
+      }
+    }
+  );
 
   it('publishes bounded revisions and retains the last valid catalog', async () => {
     const changes: McpCatalogChange[] = [];

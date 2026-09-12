@@ -873,7 +873,30 @@ describe.skipIf(!isRealApiTestEnabled())(
                 () => child?.exitCode !== null || child?.signalCode !== null,
                 'MCP side wait blocked graceful shutdown',
                 3_000
-              );
+              ).catch((error: unknown) => {
+                let mcpAlive = true;
+                try {
+                  process.kill(mcpPid, 0);
+                } catch {
+                  mcpAlive = false;
+                }
+                throw new Error(
+                  `${error instanceof Error ? error.message : 'Shutdown wait failed'}: ${JSON.stringify(
+                    {
+                      elapsedMs: Date.now() - startedAt,
+                      exitCode: child?.exitCode,
+                      signalCode: child?.signalCode,
+                      mcpAlive,
+                      signalObserved: output.includes('收到 SIGTERM'),
+                      shutdownStarted: output.includes('开始优雅退出'),
+                      serverStopped: output.includes('Blade server stopped'),
+                      cleanupTimedOut: output.includes('清理超时'),
+                      sideResponseFinished:
+                        output.split(`POST ${endpoint} -`).length > completionsBefore,
+                    }
+                  )}`
+                );
+              });
               expect(child.exitCode).toBe(0);
               expect(output).toContain('Blade server stopped');
               expect(output).not.toContain('清理超时');
@@ -913,6 +936,57 @@ describe.skipIf(!isRealApiTestEnabled())(
               await page.locator('[data-blade-submit]').click();
               const followup = await followupResponse;
               expect(followup.status()).toBe(200);
+              const providerRequest = Runtime(
+                Type.Object({
+                  messages: Type.Array(
+                    Type.Object({
+                      role: Type.String(),
+                      content: Type.Optional(Type.Unknown()),
+                    })
+                  ),
+                })
+              ).parse(JSON.parse(proxy.requestBodies[1] ?? '{}'));
+              const lastMessage = providerRequest.messages.at(-1);
+              const lastContent =
+                typeof lastMessage?.content === 'string'
+                  ? lastMessage.content
+                  : JSON.stringify(lastMessage?.content);
+              const systemContent = providerRequest.messages
+                .filter((message) => message.role === 'system')
+                .map((message) =>
+                  typeof message.content === 'string'
+                    ? message.content
+                    : JSON.stringify(message.content)
+                )
+                .join('\n');
+              const boundaryEvidence = {
+                roles: providerRequest.messages.map((message) => message.role),
+                systemHasSideScope: systemContent.includes(
+                  'The final user message is the current side question.'
+                ),
+                systemContainsQuestion:
+                  systemContent.includes('CATALOG_SIDE_FOLLOWUP') ||
+                  systemContent.includes('MAIN_MUST_NOT_RUN'),
+                lastIsUser: lastMessage?.role === 'user',
+                lastHasSideQuestion:
+                  lastContent?.includes('CATALOG_SIDE_FOLLOWUP') === true,
+                lastHasCancelledMain:
+                  lastContent?.includes('MAIN_MUST_NOT_RUN') === true,
+                lastHasSideBoundary:
+                  lastContent?.includes('This is a side question from the user.') ===
+                  true,
+              };
+              console.log(
+                `[side-catalog-request-boundary] ${JSON.stringify({ model: model.model, action, ...boundaryEvidence })}`
+              );
+              expect(boundaryEvidence).toMatchObject({
+                systemHasSideScope: true,
+                systemContainsQuestion: false,
+                lastIsUser: true,
+                lastHasSideQuestion: true,
+                lastHasCancelledMain: false,
+                lastHasSideBoundary: true,
+              });
               expect(
                 SideConversationResponseSchema.parse(
                   await followup.json()

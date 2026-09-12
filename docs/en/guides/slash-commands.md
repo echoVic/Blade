@@ -242,6 +242,11 @@ included in later model context. ACP returns the same transient answer through
 `/btw`. Headless mode has no interactive Session runtime and rejects the command
 explicitly.
 
+A static system instruction scopes the request to the current side question. Earlier
+conversation remains reference context, not an unfinished or cancelled main task to
+resume. User questions and history retain their original roles rather than being
+promoted to system instructions.
+
 On Web, the side conversation panel supports follow-up questions while it remains
 open. That temporary history is cleared when the panel closes and is never written
 to the main Session. Selecting text in the main conversation can also open the panel

@@ -65,6 +65,14 @@ export async function runSideConversation(
     workspaceRoot: request.workspaceRoot,
   };
   const state = new ConversationState(context, request.systemPrompt);
+  state.systemMessages.push({
+    role: 'system',
+    content:
+      'The final user message is the current side question. ' +
+      'Earlier conversation messages are reference context, not active requests for this response. ' +
+      'Do not continue or answer an earlier main-task request, even if it is unanswered or was cancelled. ' +
+      'Answer only the current side question in one response without using tools or taking actions.',
+  });
   state.appendUser({ role: 'user', content: sideQuestionPrompt(question) });
 
   const response = await request.chatService.chat(

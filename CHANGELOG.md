@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.171] - 2026-09-12
+
+### Fixed
+- Give side questions a static system-level scope: answer the final user question using earlier conversation as reference, rather than continuing an unanswered or cancelled main task. Keep user questions and historical content outside system instructions.
+
+### Tests
+- Cover fresh and persisted root prompts, preserve parent context, and assert the real Provider message boundary while retaining conflicting main-task instructions and exact follow-up answers.
+- Release the dynamic MCP test server's file watchers on stdin EOF, including while its catalog is held, instead of depending on the SDK's delayed termination fallback. Production cancellation deadlines remain unchanged.
+
 ## [0.10.170] - 2026-09-12
 
 ### Fixed

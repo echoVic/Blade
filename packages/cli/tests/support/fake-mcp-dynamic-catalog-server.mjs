@@ -186,6 +186,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 await server.connect(new StdioServerTransport());
+process.stdin.once('end', () => {
+  if (holdFile) unwatchFile(holdFile);
+  if (releaseFile) unwatchFile(releaseFile);
+  void server.close();
+});
 if (holdFile && releaseFile) {
   const hold = () => {
     if (!existsSync(holdFile)) return;

@@ -80,6 +80,68 @@ describe('runSideConversation', () => {
     });
   });
 
+  it.each([false, true])(
+    'keeps static side-question scope at system priority with a persisted root: %s',
+    async (persistedRoot) => {
+      const history: Message[] = [
+        ...(persistedRoot
+          ? [
+              {
+                role: 'system' as const,
+                content: [{ type: 'text' as const, text: 'Persisted base prompt.' }],
+              },
+            ]
+          : []),
+        { role: 'user', content: 'Reply only CANCELLED_MAIN_MARKER.' },
+      ];
+      const original = structuredClone(history);
+      const question = 'Reply only CURRENT_SIDE_MARKER.';
+      const { service } = chatService({ content: 'CURRENT_SIDE_MARKER' });
+      const requests: Message[][] = [];
+      service.chat = async (messages) => {
+        requests.push(messages);
+        return { content: 'CURRENT_SIDE_MARKER' };
+      };
+      await runSideConversation({
+        question,
+        sessionId: 'scope-session',
+        workspaceRoot: '/tmp/scope-workspace',
+        systemPrompt: 'Base prompt.',
+        messages: history,
+        tools: [],
+        chatService: service,
+      });
+      expect(requests).toHaveLength(1);
+      const messages = requests[0]!;
+      const system = messages
+        .filter((message) => message.role === 'system')
+        .map((message) =>
+          typeof message.content === 'string'
+            ? message.content
+            : message.content
+                .filter((part) => part.type === 'text')
+                .map((part) => part.text)
+                .join('\n')
+        )
+        .join('\n');
+      expect(system).toContain(
+        persistedRoot ? 'Persisted base prompt.' : 'Base prompt.'
+      );
+      expect(system).toContain('The final user message is the current side question.');
+      expect(system).toContain('Earlier conversation messages are reference context');
+      expect(system).toContain(
+        'Do not continue or answer an earlier main-task request'
+      );
+      expect(system).not.toContain('CANCELLED_MAIN_MARKER');
+      expect(system).not.toContain('CURRENT_SIDE_MARKER');
+      expect(messages.at(-1)).toMatchObject({
+        role: 'user',
+        content: expect.stringContaining(question),
+      });
+      expect(history).toEqual(original);
+    }
+  );
+
   it('rejects tool use instead of executing a second turn', async () => {
     const { service } = chatService({
       content: '',
