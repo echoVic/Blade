@@ -34,6 +34,8 @@ Side questions check cancellation before preparation and after context preparati
 
 TUI process-level shutdown first synchronously calls the active command's abort controller, then performs React/Agent cleanup. This way, even if the terminal host begins UI unload after the signal, the Agent generator can still first submit the terminal turn record.
 
+When `/btw` runs alongside a main task, the first `Esc` cancels only the side question. After the panel closes, the next `Esc` can stop the main task. Duplicate cancellation is scoped to the current target rather than the entire busy period, and replacing a side request also re-arms cancellation. Real DeepSeek Flash/Pro raw-PTY tests verify the main abort record, tool-process cleanup, and subsequent side questions; raw PTY is not desktop Computer Use.
+
 Headless continues to be controlled by the invocation-local signal owner: after receiving `SIGINT` or `SIGTERM`, it cancels the current turn, waits for output drain and Runtime disposal, then returns with interrupted status. Headless does not depend on process-level UI cleanup.
 
 ## Web and serve
@@ -62,6 +64,8 @@ Web side conversations (`/btw`) are request-owned: dismissing the panel or disco
 5. Release SessionRuntime and ACP service context.
 
 Concurrent destroy calls on the same Session or BladeAgent share a single Promise. Natural stdio ACP connection close, host signals, and process cleanup all ultimately enter the same BladeAgent owner.
+
+ACP `session/cancel` also cancels a side question waiting for the MCP catalog and returns `stopReason="cancelled"`. Separate stdio tests verify that Flash/Pro can answer a subsequent `/btw`, with exact display text and unchanged main JSONL.
 
 ## Bounded Failure
 

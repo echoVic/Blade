@@ -1,10 +1,11 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -14,6 +15,7 @@ import {
 import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { Runtime, Type } from '../../../src/schema/index.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import { createSessionRouteController } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -965,6 +967,160 @@ describe.skipIf(!isRealApiTestEnabled())(
               errors,
               'MCP catalog trajectory and cleanup failed'
             );
+        }
+      );
+    }
+  }
+);
+
+describe.skipIf(!isRealApiTestEnabled())(
+  'Side cancellation production terminal surfaces',
+  () => {
+    for (const model of cancellationModels) {
+      it.for(['pty', 'acp'] as const)(
+        `${model.model} cancels and recovers through %s`,
+        { timeout: 240_000 },
+        async (surface, context) => {
+          const retry = context.task.retry;
+          expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+          if (!model.baseURL) throw new Error('Missing terminal cancellation Provider');
+          const root = await realpath(
+            await mkdtemp(path.join(os.tmpdir(), 'blade-side-terminal-'))
+          );
+          const workspace = path.join(root, 'workspace');
+          const home = path.join(root, 'home');
+          const storageRoot = path.join(root, 'storage');
+          const toolStarted = path.join(root, 'tool-started');
+          const holdFile = path.join(root, 'hold');
+          const releaseFile = path.join(root, 'release');
+          const traceFile = path.join(root, 'catalog.jsonl');
+          const pidFile = path.join(root, 'mcp.pid');
+          const marker = 'SIDE_RECOVERED';
+          const followupQuestion = `Reply with exactly ${marker} and do not use tools.`;
+          const proxy = await startRecordingProviderProxy(model.baseURL);
+          try {
+            await mkdir(workspace, { recursive: true });
+            await mkdir(path.join(home, '.blade'), { recursive: true });
+            const config = buildRealApiRuntimeConfig({
+              ...model,
+              baseURL: proxy.baseUrl,
+            });
+            await writeFile(
+              path.join(home, '.blade', 'config.json'),
+              JSON.stringify({
+                ...config,
+                models: config.models.map((entry) => ({
+                  ...entry,
+                  overrides: { ...entry.overrides, maxRetries: 0 },
+                })),
+                providerForegroundRecoveryMs: 0,
+                bashForegroundHandoffMs: 90_000,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {
+                  dynamic: {
+                    type: 'stdio',
+                    command: process.execPath,
+                    args: [
+                      path.resolve(
+                        import.meta.dirname,
+                        '../../support/fake-mcp-dynamic-catalog-server.mjs'
+                      ),
+                    ],
+                    env: {
+                      MCP_DYNAMIC_PID_FILE: pidFile,
+                      MCP_DYNAMIC_TRACE_FILE: traceFile,
+                      MCP_DYNAMIC_HOLD_FILE: holdFile,
+                      MCP_DYNAMIC_RELEASE_FILE: releaseFile,
+                    },
+                  },
+                },
+              }),
+              { mode: 0o600 }
+            );
+            const command = `node -e 'require("fs").writeFileSync(${JSON.stringify(toolStarted)}, String(process.pid));setInterval(()=>{},1000)'`;
+            const input = {
+              surface,
+              cliEntry: path.resolve(import.meta.dirname, '../../../dist/blade.js'),
+              workspace,
+              home,
+              storageRoot,
+              toolStarted,
+              holdFile,
+              releaseFile,
+              traceFile,
+              pidFile,
+              marker,
+              followupQuestion,
+              sessionId: `side-terminal-${randomUUID()}`,
+              mainPrompt: `Call Bash exactly once with this command and timeout 120000. Do not use any other tools: ${command}`,
+              secret: model.apiKey,
+            };
+            const result = await promisify(execFile)(
+              'bun',
+              [
+                path.resolve(
+                  import.meta.dirname,
+                  '../../support/sideConversationCancellationRunner.ts'
+                ),
+              ],
+              {
+                cwd: path.resolve(import.meta.dirname, '../../..'),
+                env: {
+                  ...process.env,
+                  BLADE_SIDE_CANCELLATION_INPUT: Buffer.from(
+                    JSON.stringify(input)
+                  ).toString('base64'),
+                },
+                timeout: 220_000,
+                maxBuffer: 128_000,
+              }
+            ).catch((error: unknown) => {
+              if (
+                error &&
+                typeof error === 'object' &&
+                'stdout' in error &&
+                typeof error.stdout === 'string'
+              )
+                throw new Error(error.stdout.replaceAll(model.apiKey, '[REDACTED]'));
+              throw error;
+            });
+            const evidence = Runtime(
+              Type.Object({
+                success: Type.Literal(true),
+                surface: Type.Union([Type.Literal('pty'), Type.Literal('acp')]),
+                sessionId: Type.String(),
+                cancellationMs: Type.Number(),
+                followup: Type.String(),
+                cleanupComplete: Type.Literal(true),
+                transcriptUnchanged: Type.Optional(Type.Boolean()),
+                sideDismissedWithoutMainAbort: Type.Optional(Type.Boolean()),
+                mainAbortCommitted: Type.Optional(Type.Boolean()),
+              })
+            ).parse(JSON.parse(result.stdout));
+            expect(evidence.surface).toBe(surface);
+            expect(evidence.followup).toBe(marker);
+            expect(evidence.cancellationMs).toBeLessThan(3_000);
+            expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+            const transcript = await readFile(
+              findSessionTranscript(storageRoot, evidence.sessionId),
+              'utf8'
+            );
+            expect(transcript).not.toContain(marker);
+            if (surface === 'pty') {
+              expect(evidence.sideDismissedWithoutMainAbort).toBe(true);
+              expect(evidence.mainAbortCommitted).toBe(true);
+            } else expect(evidence.transcriptUnchanged).toBe(true);
+            assertNoSecrets({ evidence, transcript, stderr: result.stderr }, [
+              model.apiKey,
+            ]);
+            console.log(
+              `[side-terminal-cancellation] ${JSON.stringify({ model: model.model, ...evidence })}`
+            );
+          } finally {
+            await proxy.close();
+            await rm(root, { recursive: true, force: true });
+          }
         }
       );
     }

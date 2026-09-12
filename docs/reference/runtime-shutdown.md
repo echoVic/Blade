@@ -46,6 +46,11 @@ TUI 的进程级 shutdown 会先同步调用 active command 的 abort controller
 React/Agent cleanup。这样即使终端宿主在信号后开始卸载 UI，Agent generator 仍能先提交
 terminal turn record。
 
+主任务运行中提问 `/btw` 时，第一次 `Esc` 只取消侧边提问；侧边面板关闭后，下一次
+`Esc` 可以停止主任务。重复取消按当前目标去重，不再把侧边请求和主轮次当成同一个
+忙碌阶段；替换侧边请求也会重新允许取消。此交互由真实 DeepSeek Flash/Pro raw PTY
+验证，并检查主任务中断记录、工具进程回收和后续提问，raw PTY 不等同于桌面 Computer Use。
+
 Headless 继续由 invocation-local signal owner 控制：收到 `SIGINT` 或 `SIGTERM` 后取消
 当前 turn，等待输出 drain 和 Runtime disposal，再以中断状态返回。Headless 不依赖
 进程级 UI cleanup。
@@ -84,6 +89,9 @@ Web 侧边对话（`/btw`）随请求存活：关闭侧边面板或断开请求�
 
 同一 Session 或 BladeAgent 的并发 destroy 调用共享一个 Promise。stdio ACP connection
 自然关闭、宿主信号和进程 cleanup 最终都进入同一个 BladeAgent owner。
+
+ACP `session/cancel` 也会取消等待 MCP 目录的侧边提问，返回 `stopReason="cancelled"`。
+独立 stdio 测试验证 Flash/Pro 取消后仍可继续 `/btw`，完整展示文本和主 JSONL 均按契约校验。
 
 ## 有界失败
 

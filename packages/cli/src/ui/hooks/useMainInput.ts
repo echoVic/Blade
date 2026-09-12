@@ -8,6 +8,7 @@ import {
   useCurrentFocus,
   useCurrentModel,
   useSessionActions,
+  useSideConversation,
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
@@ -79,15 +80,14 @@ export const useMainInput = (
   const lastEscTimeRef = useRef<number>(0);
   const ESC_DOUBLE_CLICK_THRESHOLD = 500; // 500ms 内连续两次 Esc 视为双击
 
-  // 防止重复取消
   const abortCalledRef = useRef<boolean>(false);
+  const sideConversation = useSideConversation();
+  const sideAbortTarget =
+    sideConversation?.status === 'loading' ? sideConversation.requestId : undefined;
 
-  // 当 isProcessing 变化时，重置 abortCalledRef
   useEffect(() => {
-    if (isProcessing) {
-      abortCalledRef.current = false;
-    }
-  }, [isProcessing]);
+    abortCalledRef.current = false;
+  }, [isProcessing, sideAbortTarget]);
 
   // 更新建议列表（支持斜杠命令和 @ 文件提及）
   useEffect(() => {

@@ -102,6 +102,7 @@ vi.mock('../../../src/store/selectors/index.js', () => ({
     toggleThinkingMode: vi.fn(),
   }),
   useCurrentModel: () => undefined,
+  useSideConversation: () => null,
   useWorkspaceRoot: () => '/repo-root',
 }));
 
