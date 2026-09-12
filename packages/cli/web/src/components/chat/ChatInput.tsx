@@ -221,6 +221,7 @@ export function ChatInput({
   const effectiveSubmitDisabled = isShellMode ? shellSubmitDisabled : submitDisabled;
   const attachmentCapabilityErrorRef = useRef<string | null>(null);
   const isSubmittingRef = useRef(false);
+  const composingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -766,6 +767,8 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229)
+        return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLocaleLowerCase() === 'a') {
         e.preventDefault();
         e.stopPropagation();
@@ -1061,6 +1064,15 @@ export function ChatInput({
             data-blade-composer
             value={input}
             onChange={handleInputChange}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onBlur={() => {
+              composingRef.current = false;
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onSelect={handleSelect}

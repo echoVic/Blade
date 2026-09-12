@@ -159,6 +159,105 @@ describe('ChatInput', () => {
     }
   });
 
+  test.each(
+    (['native', 'legacy', 'lifecycle'] as const).flatMap((composition) =>
+      ['Enter', 'ArrowUp'].map((key) => ({ composition, key }))
+    )
+  )(
+    'does not send or recall history on IME $composition $key',
+    async ({ composition, key }) => {
+      const onSend = vi.fn(async () => true);
+      await act(async () => root.render(<ChatInput onSend={onSend} />));
+      const textarea = container.querySelector('textarea');
+      if (!textarea) throw new Error('Main composer missing');
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      await act(async () => {
+        setter?.call(textarea, 'Previous request');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+      });
+      expect(onSend).toHaveBeenCalledOnce();
+      onSend.mockClear();
+      await act(async () => {
+        setter?.call(textarea, '解释这个错误');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        if (composition === 'lifecycle') {
+          textarea.dispatchEvent(
+            new CompositionEvent('compositionstart', { bubbles: true })
+          );
+        }
+      });
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+        isComposing: composition === 'native',
+        keyCode: composition === 'legacy' ? 229 : 0,
+      });
+      await act(async () => {
+        textarea.dispatchEvent(event);
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      expect(textarea.value).toBe('解释这个错误');
+      expect(event.defaultPrevented).toBe(false);
+    }
+  );
+
+  test.each(['compositionend', 'blur'] as const)(
+    'restores main composer Enter after %s but preserves IME confirmation',
+    async (ending) => {
+      const onSend = vi.fn(async () => true);
+      await act(async () => root.render(<ChatInput onSend={onSend} />));
+      const textarea = container.querySelector('textarea');
+      if (!textarea) throw new Error('Main composer missing');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value'
+        )?.set?.call(textarea, '继续分析');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(
+          new CompositionEvent('compositionstart', { bubbles: true })
+        );
+        textarea.dispatchEvent(
+          ending === 'blur'
+            ? new FocusEvent('focusout', { bubbles: true })
+            : new CompositionEvent('compositionend', { bubbles: true })
+        );
+      });
+      if (ending === 'compositionend') {
+        await act(async () => {
+          textarea.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true })
+          );
+        });
+        expect(onSend).not.toHaveBeenCalled();
+      }
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true })
+        );
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+      });
+      expect(onSend).toHaveBeenCalledOnce();
+      expect(onSend.mock.calls[0]).toEqual([
+        expect.objectContaining({ content: '继续分析' }),
+      ]);
+    }
+  );
+
   test('adds pasted images as attachments and allows removal', async () => {
     const onSend = vi.fn();
 

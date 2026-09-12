@@ -90,6 +90,7 @@ export function ChatSelectionToolbar({
   const t = useT();
   const overlayRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
   const modeRef = useRef<EditorMode>('actions');
   const [selection, setSelection] = useState<ChatTextSelection | null>(null);
   const [mode, setMode] = useState<EditorMode>('actions');
@@ -97,12 +98,14 @@ export function ChatSelectionToolbar({
   const [position, setPosition] = useState<OverlayPosition | null>(null);
 
   const setEditorMode = useCallback((next: EditorMode) => {
+    composingRef.current = false;
     modeRef.current = next;
     setMode(next);
     setEditorValue('');
   }, []);
 
   const dismiss = useCallback(() => {
+    composingRef.current = false;
     modeRef.current = 'actions';
     setMode('actions');
     setEditorValue('');
@@ -153,6 +156,7 @@ export function ChatSelectionToolbar({
     const handlePointerDown = (event: PointerEvent) => {
       if (overlayRef.current?.contains(event.target as Node)) return;
       if (selection) {
+        composingRef.current = false;
         modeRef.current = 'actions';
         setMode('actions');
         setEditorValue('');
@@ -164,7 +168,13 @@ export function ChatSelectionToolbar({
       dismiss();
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!selection) return;
+      if (
+        !selection ||
+        composingRef.current ||
+        event.isComposing ||
+        event.keyCode === 229
+      )
+        return;
       if (event.key === 'Escape') {
         event.preventDefault();
         dismiss();
@@ -233,6 +243,8 @@ export function ChatSelectionToolbar({
   };
 
   const editorKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229)
+      return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'a') {
       event.preventDefault();
       event.stopPropagation();
@@ -322,6 +334,15 @@ export function ChatSelectionToolbar({
             rows={3}
             value={editorValue}
             onChange={(event) => setEditorValue(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onBlur={() => {
+              composingRef.current = false;
+            }}
             onKeyDown={editorKeyDown}
             aria-label={t('chat.selection.commentInput')}
             placeholder={t('chat.selection.commentPlaceholder')}

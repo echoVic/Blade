@@ -163,6 +163,116 @@ describe('ChatSelectionToolbar', () => {
     ]);
   });
 
+  it.each(
+    (['native', 'legacy', 'lifecycle'] as const).flatMap((composition) =>
+      ['Enter', 'Escape'].map((key) => ({ composition, key }))
+    )
+  )(
+    'keeps the annotation editor during IME $composition $key',
+    async ({ composition, key }) => {
+      await renderSelectedFixture(root, container, {
+        onOpenSideConversation: vi.fn(() => true),
+      });
+      await act(async () => {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'j', metaKey: true, bubbles: true })
+        );
+      });
+      const textarea = document.querySelector('textarea');
+      if (!textarea) throw new Error('Annotation editor missing');
+      await act(async () => {
+        setTextareaValue(textarea, '请解释这里');
+        if (composition === 'lifecycle')
+          textarea.dispatchEvent(
+            new CompositionEvent('compositionstart', { bubbles: true })
+          );
+      });
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+        isComposing: composition === 'native',
+        keyCode: composition === 'legacy' ? 229 : 0,
+      });
+      await act(async () => {
+        textarea.dispatchEvent(event);
+      });
+      expect(document.querySelector('textarea')).toBe(textarea);
+      expect(textarea.value).toBe('请解释这里');
+      expect(readComposerDraft(DRAFT_KEY).annotations ?? []).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+    }
+  );
+
+  it.each(['compositionend', 'blur', 'reopen', 'outside-click'] as const)(
+    'permits deliberate annotation submission after %s',
+    async (ending) => {
+      const props = { onOpenSideConversation: vi.fn(() => true) };
+      await renderSelectedFixture(root, container, props);
+      const openEditor = async () => {
+        await act(async () => {
+          document.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'j', metaKey: true, bubbles: true })
+          );
+        });
+        const textarea = document.querySelector('textarea');
+        if (!textarea) throw new Error('Annotation editor missing');
+        return textarea;
+      };
+      let textarea = await openEditor();
+      await act(async () => {
+        textarea.dispatchEvent(
+          new CompositionEvent('compositionstart', { bubbles: true })
+        );
+      });
+      if (ending === 'reopen' || ending === 'outside-click') {
+        await act(async () => {
+          container.dispatchEvent(
+            new Event(ending === 'reopen' ? 'scroll' : 'pointerdown', { bubbles: true })
+          );
+        });
+        await renderSelectedFixture(root, container, props);
+        textarea = await openEditor();
+      } else {
+        await act(async () => {
+          textarea.dispatchEvent(
+            ending === 'blur'
+              ? new FocusEvent('focusout', { bubbles: true })
+              : new CompositionEvent('compositionend', { bubbles: true })
+          );
+        });
+      }
+      await act(async () => {
+        setTextareaValue(textarea, '请解释这里');
+      });
+      if (ending === 'compositionend') {
+        await act(async () => {
+          textarea.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true })
+          );
+        });
+        expect(document.querySelector('textarea')).toBe(textarea);
+      }
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true })
+        );
+      });
+      expect(readComposerDraft(DRAFT_KEY).annotations ?? []).toEqual([]);
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+      });
+      expect(readComposerDraft(DRAFT_KEY).annotations).toEqual([
+        expect.objectContaining({
+          text: 'Selected response text',
+          comment: '请解释这里',
+        }),
+      ]);
+    }
+  );
+
   it('opens a side conversation with the selected text', async () => {
     const onOpenSideConversation = vi.fn(() => true);
     await renderSelectedFixture(root, container, {

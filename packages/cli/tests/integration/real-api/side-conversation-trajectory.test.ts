@@ -1138,6 +1138,320 @@ describe.skipIf(!isRealApiTestEnabled())(
   }
 );
 
+for (const mode of ['production', 'development'] as const) {
+  describe.skipIf(!isRealApiTestEnabled() || process.platform === 'win32')(
+    `Chat IME ${mode} Chromium`,
+    () => {
+      for (const model of cancellationModels) {
+        it(`${model.model} keeps composition keys local before deliberate submission`, {
+          timeout: 180_000,
+        }, async (context) => {
+          const retry = context.task.retry;
+          expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+          if (!model.baseURL) throw new Error('Missing IME Provider');
+          const root = await realpath(
+            await mkdtemp(path.join(os.tmpdir(), 'blade-chat-ime-'))
+          );
+          const workspace = path.join(root, 'workspace');
+          const home = path.join(root, 'home');
+          const storage = path.join(root, 'storage');
+          const proxy = await startRecordingProviderProxy(model.baseURL);
+          const processes: Array<{
+            child: ChildProcess;
+            identity?: Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>;
+          }> = [];
+          let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+          let closing = false;
+          let output = '';
+          const faults: string[] = [];
+          const errors: unknown[] = [];
+          try {
+            await mkdir(workspace, { recursive: true });
+            await mkdir(path.join(home, '.blade'), { recursive: true });
+            const config = buildRealApiRuntimeConfig({
+              ...model,
+              baseURL: proxy.baseUrl,
+            });
+            await writeFile(
+              path.join(home, '.blade', 'config.json'),
+              JSON.stringify({
+                ...config,
+                models: config.models.map((entry) => ({
+                  ...entry,
+                  overrides: { ...entry.overrides, maxRetries: 0 },
+                })),
+                providerForegroundRecoveryMs: 0,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {},
+              }),
+              { mode: 0o600 }
+            );
+            const env = {
+              ...process.env,
+              HOME: home,
+              BLADE_STORAGE_ROOT: storage,
+              BLADE_AUTO_MEMORY: '0',
+              BLADE_TELEMETRY_DISABLED: '1',
+            };
+            const port = await reserveSidePort();
+            const origin = `http://127.0.0.1:${port}`;
+            const launch = async (args: string[], cwd: string, extraEnv = {}) => {
+              const child = spawn(process.execPath, args, {
+                cwd,
+                env: { ...env, ...extraEnv },
+                detached: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              });
+              const owned: (typeof processes)[number] = { child };
+              processes.push(owned);
+              for (const stream of [child.stdout, child.stderr]) {
+                stream?.on('data', (chunk: Buffer) => {
+                  output = (output + chunk.toString()).slice(-64_000);
+                });
+              }
+              if (!child.pid) throw new Error('IME server has no PID');
+              owned.identity = await captureForegroundGuiLauncherIdentity(child.pid);
+              return child;
+            };
+            await launch(
+              [
+                path.resolve(import.meta.dirname, '../../../dist/blade.js'),
+                '--trust-workspace',
+                'serve',
+                '--hostname',
+                '127.0.0.1',
+                '--port',
+                String(port),
+              ],
+              workspace
+            );
+            const ready = async (url: string) => {
+              await waitForSideCondition(async () => {
+                if (
+                  processes.some(
+                    ({ child }) => child.exitCode !== null || child.signalCode !== null
+                  )
+                ) {
+                  throw new Error('IME server exited before ready');
+                }
+                try {
+                  return (await fetch(url, { signal: AbortSignal.timeout(1_000) })).ok;
+                } catch {
+                  return false;
+                }
+              }, 'IME server not ready');
+            };
+            await ready(`${origin}/health`);
+            let guiOrigin = origin;
+            if (mode === 'development') {
+              const webRoot = path.resolve(import.meta.dirname, '../../../web');
+              const webPort = await reserveSidePort();
+              const dependencyRoot = await realpath(
+                path.resolve(webRoot, '../../../node_modules')
+              );
+              await launch(
+                [
+                  '--input-type=module',
+                  '--eval',
+                  'import { createServer, searchForWorkspaceRoot } from "vite";' +
+                    `const server = await createServer({server: {host: "127.0.0.1", port: ${webPort}, strictPort: true, fs: {allow: [searchForWorkspaceRoot(process.cwd()), ${JSON.stringify(dependencyRoot)}]}}});` +
+                    'await server.listen();',
+                ],
+                webRoot,
+                { VITE_API_TARGET: origin }
+              );
+              guiOrigin = `http://127.0.0.1:${webPort}`;
+              await ready(guiOrigin);
+            }
+            const created = await fetch(`${origin}/sessions`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ projectPath: workspace, title: 'CHAT IME' }),
+            });
+            expect(created.status).toBe(200);
+            const session = SessionSchema.parse(await created.json());
+            browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ locale: 'en-US' });
+            page.on('pageerror', (error) => faults.push(error.name));
+            page.on('console', (message) => {
+              if (message.type() === 'error') faults.push(message.text());
+            });
+            page.on('requestfailed', (request) => {
+              if (
+                !isExpectedBrowserRequestFailure({
+                  url: request.url(),
+                  resourceType: request.resourceType(),
+                  errorText: request.failure()?.errorText ?? 'unknown',
+                  closing,
+                  refreshing: false,
+                })
+              )
+                faults.push(`request:${new URL(request.url()).pathname}`);
+            });
+            let mainRequests = 0;
+            let sideRequests = 0;
+            page.on('request', (request) => {
+              if (request.method() !== 'POST') return;
+              const endpoint = new URL(request.url()).pathname;
+              if (endpoint === `/sessions/${session.sessionId}/message`) mainRequests++;
+              if (endpoint === `/sessions/${session.sessionId}/side-question`)
+                sideRequests++;
+            });
+            const url = new URL(guiOrigin);
+            url.searchParams.set('session', session.sessionId);
+            url.searchParams.set('project', workspace);
+            await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+            const composer = page.locator('textarea[data-blade-composer]');
+            await composer.waitFor({ state: 'visible' });
+            const cdp = await page.context().newCDPSession(page);
+            const settle = () =>
+              page.evaluate(
+                () =>
+                  new Promise<void>((resolve) => {
+                    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+                  })
+              );
+            const checkComposition = async (selector: string, text: string) => {
+              const input = page.locator(selector);
+              await input.fill('');
+              await input.focus();
+              const before = { mainRequests, sideRequests };
+              await cdp.send('Input.imeSetComposition', {
+                text,
+                selectionStart: text.length,
+                selectionEnd: text.length,
+              });
+              for (const key of ['Enter', 'Escape', 'ArrowUp', 'ArrowDown']) {
+                await input.dispatchEvent('keydown', {
+                  key,
+                  bubbles: true,
+                  cancelable: true,
+                });
+                await settle();
+                expect(await input.count()).toBe(1);
+                expect(await input.inputValue()).toBe(text);
+                expect({ mainRequests, sideRequests }).toEqual(before);
+              }
+              await cdp.send('Input.insertText', { text });
+              await input.dispatchEvent('keydown', {
+                key: 'Enter',
+                keyCode: 229,
+                bubbles: true,
+                cancelable: true,
+              });
+              await settle();
+              expect(await input.inputValue()).toBe(text);
+              expect({ mainRequests, sideRequests }).toEqual(before);
+            };
+            const mainPrompt = '请只回复 IME_MAIN_READY，不要调用工具。';
+            await checkComposition('textarea[data-blade-composer]', mainPrompt);
+            expect(proxy.forwardedRequestNumbers).toEqual([]);
+            await composer.press('Enter');
+            const answer = page
+              .locator('[data-chat-role="assistant"]')
+              .getByText('IME_MAIN_READY', { exact: true });
+            await answer.waitFor({ state: 'visible', timeout: 90_000 });
+            await waitForSideCondition(
+              async () => !(await composer.isDisabled()),
+              'Main composer stayed disabled'
+            );
+            const transcript = findSessionTranscript(storage, session.sessionId);
+            await waitForSideCondition(() => {
+              const events = readSessionEvents(transcript);
+              return (
+                events.some((event) => event.type === 'turn_completed') &&
+                events.some(
+                  (event) =>
+                    event.type === 'session_updated' &&
+                    event.data.taskStatus === 'completed'
+                )
+              );
+            }, 'Main turn and task status did not settle');
+            const beforeSide = await readFile(transcript);
+            expect(mainRequests).toBe(1);
+            expect(proxy.forwardedRequestNumbers).toEqual([1]);
+            await composer.fill('/btw 请只回复 IME_SIDE_READY，不要调用工具。');
+            await composer.press('Enter');
+            const panel = page.locator('[data-blade-side-conversation]');
+            await panel
+              .getByText('IME_SIDE_READY', { exact: true })
+              .waitFor({ state: 'visible', timeout: 90_000 });
+            const sidePrompt = '请只回复 IME_SIDE_DONE，不要调用工具。';
+            await checkComposition(
+              'textarea[name="side-conversation-composer"]',
+              sidePrompt
+            );
+            expect(sideRequests).toBe(1);
+            await page
+              .locator('textarea[name="side-conversation-composer"]')
+              .press('Enter');
+            await panel
+              .getByText('IME_SIDE_DONE', { exact: true })
+              .waitFor({ state: 'visible', timeout: 90_000 });
+            expect(sideRequests).toBe(2);
+            await page
+              .getByRole('button', { name: 'Dismiss side conversation', exact: true })
+              .click();
+            await answer.evaluate((element) => {
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              const selection = window.getSelection();
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+              document.dispatchEvent(new Event('selectionchange'));
+            });
+            await page
+              .getByRole('button', { name: 'Comment in chat', exact: false })
+              .click();
+            const commentSelector = 'textarea[name="selected-conversation-comment"]';
+            await checkComposition(commentSelector, '请解释这里');
+            await page.locator(commentSelector).press('Enter');
+            await page
+              .locator('[data-chat-selection-overlay]')
+              .waitFor({ state: 'detached' });
+            await page
+              .getByRole('button', {
+                name: 'Show 1 selected-text annotations',
+                exact: true,
+              })
+              .click();
+            await page
+              .getByText('请解释这里', { exact: true })
+              .waitFor({ state: 'visible' });
+            expect(mainRequests).toBe(1);
+            expect(sideRequests).toBe(2);
+            expect(await readFile(transcript)).toEqual(beforeSide);
+            expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
+            expect(faults).toEqual([]);
+            assertNoSecrets({ output, html: await page.content() }, [model.apiKey]);
+            console.log(
+              `[chat-ime] ${JSON.stringify({ model: model.model, mode, mainRequests, sideRequests, providerRequests: proxy.forwardedRequestNumbers, compositionPreserved: true, annotationLocal: true, faults })}`
+            );
+          } catch (error) {
+            errors.push(error);
+          } finally {
+            closing = true;
+            const cleanup = await Promise.allSettled([
+              browser?.close(),
+              ...processes.map(({ child, identity }) =>
+                stopForegroundGuiLauncher(child, identity)
+              ),
+              proxy.close(),
+            ]);
+            for (const result of cleanup)
+              if (result.status === 'rejected') errors.push(result.reason);
+            if (cleanup.every((result) => result.status === 'fulfilled'))
+              await rm(root, { recursive: true, force: true });
+          }
+          if (errors.length)
+            throw new AggregateError(errors, 'Chat IME trajectory failed');
+        });
+      }
+    }
+  );
+}
+
 describe.skipIf(!isRealApiTestEnabled() || process.platform === 'win32')(
   'Side preparation drain production Chromium',
   () => {

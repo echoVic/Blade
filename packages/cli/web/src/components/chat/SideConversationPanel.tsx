@@ -52,6 +52,7 @@ export function SideConversationPanel() {
   const dismiss = useSessionStore((state) => state.dismissSideConversation);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(
     () =>
@@ -61,6 +62,7 @@ export function SideConversationPanel() {
   );
 
   useEffect(() => {
+    composingRef.current = false;
     if (!sideConversation || sideConversation.status === 'loading') return;
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [
@@ -85,6 +87,8 @@ export function SideConversationPanel() {
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229)
+      return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'a') {
       event.preventDefault();
       event.stopPropagation();
@@ -221,6 +225,15 @@ export function SideConversationPanel() {
             name="side-conversation-composer"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onBlur={() => {
+              composingRef.current = false;
+            }}
             onKeyDown={handleKeyDown}
             rows={3}
             disabled={sideConversation.status === 'loading'}

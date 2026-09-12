@@ -247,6 +247,12 @@ open. That temporary history is cleared when the panel closes and is never writt
 to the main Session. Selecting text in the main conversation can also open the panel
 with that passage attached as quoted context.
 
+During input-method composition, the Web main composer, side conversation, and
+annotation editor leave keys to the input method: candidate-confirmation Enter
+does not submit, Escape does not dismiss, and arrow keys do not recall input
+history. Press Enter again after composition to submit; Shift+Enter still inserts
+a newline, and Ctrl/Cmd+A still selects all text.
+
 ### /compact
 
 Manually compact the context to generate a summary and save tokens:

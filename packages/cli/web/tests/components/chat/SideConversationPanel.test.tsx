@@ -121,6 +121,116 @@ describe('SideConversationPanel', () => {
     expect(useSessionStore.getState().messages).toBe(messages);
   });
 
+  it.each(
+    (['native', 'legacy', 'lifecycle'] as const).flatMap((composition) =>
+      ['Enter', 'Escape'].map((key) => ({ composition, key }))
+    )
+  )('leaves $key to the $composition input method', async ({ composition, key }) => {
+    const askSideConversation = vi.fn(async () => true);
+    const sideConversation = {
+      requestId: 'side-ime',
+      sessionRef: { sessionId: 'session-ime', projectPath: '/tmp/project' },
+      question: '',
+      messages: [],
+      status: 'idle' as const,
+    };
+    useSessionStore.setState({ askSideConversation, sideConversation });
+    await act(async () => root.render(<SideConversationPanel />));
+    const textarea = container.querySelector('textarea');
+    if (!textarea) throw new Error('Side composer missing');
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      setter?.call(textarea, '解释这个错误');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      if (composition === 'lifecycle') {
+        textarea.dispatchEvent(
+          new CompositionEvent('compositionstart', { bubbles: true })
+        );
+      }
+    });
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      isComposing: composition === 'native',
+      keyCode: composition === 'legacy' ? 229 : 0,
+    });
+    await act(async () => textarea.dispatchEvent(event));
+    expect(askSideConversation).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().sideConversation).toBe(sideConversation);
+    expect(textarea.value).toBe('解释这个错误');
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it.each(['compositionend', 'blur', 'reopen'] as const)(
+    'allows a deliberate Enter after %s clears composition ownership',
+    async (ending) => {
+      const askSideConversation = vi.fn(async () => true);
+      const sideConversation = {
+        requestId: 'side-ime-end',
+        sessionRef: { sessionId: 'session-ime', projectPath: '/tmp/project' },
+        question: '',
+        messages: [],
+        status: 'idle' as const,
+      };
+      useSessionStore.setState({ askSideConversation, sideConversation });
+      await act(async () => root.render(<SideConversationPanel />));
+      const initialTextarea = container.querySelector('textarea');
+      if (!initialTextarea) throw new Error('Side composer missing');
+      let textarea = initialTextarea;
+      await act(async () => {
+        textarea.dispatchEvent(
+          new CompositionEvent('compositionstart', { bubbles: true })
+        );
+      });
+      if (ending === 'reopen') {
+        await act(async () => useSessionStore.setState({ sideConversation: null }));
+        await act(async () => useSessionStore.setState({ sideConversation }));
+        const reopenedTextarea = container.querySelector('textarea');
+        if (!reopenedTextarea) throw new Error('Reopened side composer missing');
+        textarea = reopenedTextarea;
+      } else {
+        await act(async () => {
+          textarea.dispatchEvent(
+            ending === 'blur'
+              ? new FocusEvent('focusout', { bubbles: true })
+              : new CompositionEvent('compositionend', { bubbles: true })
+          );
+        });
+      }
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      await act(async () => {
+        setter?.call(textarea, '解释这个错误');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      if (ending === 'compositionend') {
+        await act(async () => {
+          textarea.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'Enter',
+              keyCode: 229,
+              bubbles: true,
+              cancelable: true,
+            })
+          );
+        });
+        expect(askSideConversation).not.toHaveBeenCalled();
+      }
+      await act(async () => {
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+      });
+      expect(askSideConversation).toHaveBeenCalledExactlyOnceWith('解释这个错误');
+    }
+  );
+
   it('owns a side-chat composer with native select-all and follow-up submission', async () => {
     const askSideConversation = vi.fn(async () => true);
     useSessionStore.setState({
