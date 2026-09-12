@@ -77,6 +77,7 @@ export interface BackgroundShellProcess {
   startTime: number;
   endTime?: number;
   errorMessage?: string;
+  finalizationFailed?: boolean;
   pendingStdout: BoundedOutputBuffer;
   pendingStderr: BoundedOutputBuffer;
   sandboxed: boolean;
@@ -115,6 +116,7 @@ export interface ShellOutputSnapshot {
   startedAt: number;
   endedAt?: number;
   errorMessage?: string;
+  finalizationFailed?: boolean;
   sandboxed: boolean;
   transport: BackgroundShellTransport;
   autoBackgrounded: boolean;
@@ -300,6 +302,7 @@ export class BackgroundShellManager {
     child.on('close', (code, signal) => {
       void (async () => {
         const finalized = await finalizeProcessGroup();
+        if (!finalized) processInfo.finalizationFailed = true;
         if (processInfo.terminalSettled) return;
         processInfo.terminalSettled = true;
         options.sandboxedCommand?.cleanup();
@@ -334,6 +337,7 @@ export class BackgroundShellManager {
     child.on('error', (error) => {
       void (async () => {
         const finalized = await finalizeProcessGroup();
+        if (!finalized) processInfo.finalizationFailed = true;
         if (processInfo.terminalSettled) return;
         processInfo.terminalSettled = true;
         options.sandboxedCommand?.cleanup();
@@ -450,6 +454,7 @@ export class BackgroundShellManager {
     child.on('close', (code, signal) => {
       void (async () => {
         const finalized = await finalizeProcessGroup();
+        if (!finalized) processInfo.finalizationFailed = true;
         if (processInfo.terminalSettled) return;
         processInfo.terminalSettled = true;
         options.sandboxedCommand?.cleanup();
@@ -484,6 +489,7 @@ export class BackgroundShellManager {
     child.on('error', (error) => {
       void (async () => {
         const finalized = await finalizeProcessGroup();
+        if (!finalized) processInfo.finalizationFailed = true;
         if (processInfo.terminalSettled) return;
         processInfo.terminalSettled = true;
         options.sandboxedCommand?.cleanup();
@@ -949,6 +955,7 @@ export class BackgroundShellManager {
       startedAt: processInfo.startTime,
       endedAt: processInfo.endTime,
       errorMessage: processInfo.errorMessage,
+      ...(processInfo.finalizationFailed ? { finalizationFailed: true } : {}),
       sandboxed: processInfo.sandboxed,
       transport: processInfo.transport,
       autoBackgrounded: processInfo.autoBackgrounded,

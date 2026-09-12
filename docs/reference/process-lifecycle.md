@@ -53,7 +53,7 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   identity-checked reaper 覆盖 wrapper 同时退出或未完成清理的窗口。
 - foreground lease 仅包含 session/process identity、owner/root PID、平台启动身份和
   时间，使用 `0600` 文件、`0700` 目录和 atomic write + fsync；不包含命令、cwd、env、
-  stdout/stderr 或凭据。自然退出、spawn error、timeout 和 abort 都会删除 lease。
+  stdout/stderr 或凭据。自然退出、spawn error、timeout 和 abort 仅在收尾成功后删除 lease。
 - 新 Runtime 取得 Session lease 后先依次回收 foreground、background orphan process，
   再恢复 workspace patch transaction、subagent 和其他 Runtime 资源。只有 owner 已退出
   且 root PID 启动身份仍匹配时才发送 TERM/KILL；PID reuse、损坏或超限 sidecar 均
@@ -69,6 +69,11 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   process-group finalize barrier。即使用户命令用 `&` 启动后代并重定向全部 stdio，
   terminal ToolResult/TaskOutput 也只能在后代回收后发布；finalize 失败时返回结构化错误
   并保留 durable lease。
+- 本地前台 Bash（包括交接前的受管候选）及 ACP local terminal 若在 timeout/abort 后
+  无法完成收尾或删除 lease，返回 `execution_error` 和 `execution_host_failure=finalization`，
+  同时保留 `timeout`/`aborted` 与 `finalization_failed` 标记；不再只显示普通超时或取消。
+  清理成功时原有分类不变，权限恢复后新命令不会误删旧 lease；不自动重放失败命令，也不改变
+  进程终止预算或 orphan reaper 的身份检查。该契约不涵盖 ACP 客户端远程 terminal 的清理。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - eligible 前台 Bash 默认等待 15 秒；若仍在运行且原 timeout 更晚，会把同一 PID 原子

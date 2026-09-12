@@ -1,14 +1,32 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { getTerminalService } from '../../src/acp/AcpServiceContext.js';
+import {
+  AcpServiceContext,
+  getTerminalService,
+} from '../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../src/config/types.js';
+import {
+  createGoalExecutionHostFailureAccumulator,
+  observeGoalExecutionHostToolResult,
+  resolveGoalExecutionHostFailure,
+} from '../../src/goals/executionHostFailure.js';
 import { ForegroundProcessLeaseStore } from '../../src/context/storage/ForegroundProcessLeaseStore.js';
 import { getProjectStoragePath } from '../../src/context/storage/pathUtils.js';
 import { SecureProcessExecutor } from '../../src/hooks/SecureProcessExecutor.js';
 import { HookEvent } from '../../src/hooks/types/HookTypes.js';
+import { ControlledTerminalClient } from '../support/acp/ControlledTerminalClient.js';
+import { createPairedAcpHarness } from '../support/acp/createPairedAcpHarness.js';
 import { BackgroundShellLeaseStore } from '../../src/tools/builtin/shell/BackgroundShellLeaseStore.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
@@ -679,6 +697,156 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       expect(names.some((name) => name.endsWith('.json'))).toBe(true);
     } finally {
       finalize.mockRestore();
+    }
+  });
+
+  it.each(
+    (['bash', 'bash-managed', 'acp-local'] as const).flatMap((surface) =>
+      (['timeout', 'aborted'] as const).map((reason) => ({ surface, reason }))
+    )
+  )(
+    'reports finalization failure after $surface $reason without discarding its lease',
+    async ({ surface, reason }) => {
+      const fixture = await createProcessTreeFixture(`finalize-${surface}-${reason}`);
+      const workspace = path.dirname(fixture.descendantPidFile);
+      const sessionId = `finalize-${surface}-${reason}-${Date.now()}`;
+      const controller = new AbortController();
+      const harness =
+        surface === 'acp-local'
+          ? createPairedAcpHarness(new ControlledTerminalClient())
+          : undefined;
+      if (harness)
+        AcpServiceContext.initializeSession(
+          harness.agentConnection,
+          sessionId,
+          {},
+          workspace
+        );
+      let leaseDirectory: string | undefined;
+      let execution: ReturnType<typeof bashTool.execute> | undefined;
+      try {
+        execution = bashTool.execute(
+          {
+            command: fixture.command,
+            timeout: reason === 'timeout' ? FIXTURE_COMMAND_TIMEOUT_MS : 10_000,
+            env: {},
+            run_in_background: false,
+          },
+          controller.signal,
+          {
+            sessionId,
+            workspaceRoot: workspace,
+            foregroundCommandHandoffMs: surface === 'bash-managed' ? 1_000 : 0,
+          }
+        );
+        const descendantPid = await fixture.readDescendantPid();
+        const lease = await readForegroundLease(workspace);
+        leaseDirectory = path.dirname(lease.filePath);
+        await chmod(leaseDirectory, 0o500);
+        if (reason === 'aborted') controller.abort('fixture-cancel');
+        const result = await execution;
+        await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
+        await expect(access(lease.filePath)).resolves.toBeUndefined();
+        expect(await readFile(lease.filePath, 'utf8')).toBe(lease.contents);
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            type: 'execution_error',
+            message: expect.stringContaining('finalization failed'),
+          },
+          metadata: {
+            execution_host_failure: 'finalization',
+            finalization_failed: true,
+            [reason === 'timeout' ? 'timeout' : 'aborted']: true,
+            output_accounting_complete: true,
+            terminal_transport: 'local',
+          },
+        });
+        expect(JSON.stringify(result)).not.toContain(lease.filePath);
+        expect(JSON.stringify(result)).not.toContain('EACCES');
+        const hostFailure = createGoalExecutionHostFailureAccumulator();
+        observeGoalExecutionHostToolResult(hostFailure, 'Bash', result);
+        expect(resolveGoalExecutionHostFailure(hostFailure)).toBe('finalization');
+        await chmod(leaseDirectory, 0o700);
+        const recovered = await bashTool.execute(
+          {
+            command: 'printf RECOVERED',
+            timeout: 2_000,
+            env: {},
+            run_in_background: false,
+          },
+          undefined,
+          { sessionId, workspaceRoot: workspace, foregroundCommandHandoffMs: 0 }
+        );
+        expect(recovered.success).toBe(true);
+        expect(recovered.metadata).not.toHaveProperty('finalization_failed');
+        expect(recovered.metadata).not.toHaveProperty('execution_host_failure');
+        expect(await readFile(lease.filePath, 'utf8')).toBe(lease.contents);
+      } finally {
+        controller.abort('fixture-cleanup');
+        if (leaseDirectory) await chmod(leaseDirectory, 0o700);
+        await execution;
+        AcpServiceContext.destroySession(sessionId);
+        await harness?.close();
+      }
+    },
+    20_000
+  );
+
+  it('preserves finalization failure when a cancelled gate emits error before close', async () => {
+    const fixture = await createProcessTreeFixture('finalization-error-event');
+    const workspace = path.dirname(fixture.descendantPidFile);
+    const sessionId = `error-finalization-${Date.now()}`;
+    const controller = new AbortController();
+    const originalRelease = CommandAdmissionGate.releaseCommandAdmissionGate;
+    let gate: ChildProcess | undefined;
+    let execution: ReturnType<typeof bashTool.execute> | undefined;
+    let leaseDirectory: string | undefined;
+    const release = vi
+      .spyOn(CommandAdmissionGate, 'releaseCommandAdmissionGate')
+      .mockImplementationOnce(async (child) => {
+        gate = child;
+        return originalRelease(child);
+      });
+    try {
+      execution = bashTool.execute(
+        {
+          command: fixture.command,
+          timeout: 10_000,
+          env: {},
+          run_in_background: false,
+        },
+        controller.signal,
+        { sessionId, workspaceRoot: workspace, foregroundCommandHandoffMs: 0 }
+      );
+      const descendantPid = await fixture.readDescendantPid();
+      const lease = await readForegroundLease(workspace);
+      leaseDirectory = path.dirname(lease.filePath);
+      await chmod(leaseDirectory, 0o500);
+      controller.abort('fixture-cancel');
+      if (!gate) throw new Error('Command gate missing');
+      gate.emit('error', new Error('PRIVATE_PROCESS_FAILURE'));
+      const result = await execution;
+      await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+          message: 'Foreground command finalization failed',
+        },
+        metadata: {
+          aborted: true,
+          finalization_failed: true,
+          execution_host_failure: 'finalization',
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_PROCESS_FAILURE');
+      expect(await readFile(lease.filePath, 'utf8')).toBe(lease.contents);
+    } finally {
+      controller.abort('fixture-cleanup');
+      if (leaseDirectory) await chmod(leaseDirectory, 0o700);
+      await execution;
+      release.mockRestore();
     }
   });
 

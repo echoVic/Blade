@@ -1,8 +1,10 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   writeFile,
@@ -16,6 +18,10 @@ import { describe, expect, it, type TestContext, vi } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
 import { TurnActivityProjectionSchema } from '../../../src/api/turnActivitySchemas.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
+import {
+  captureForegroundGuiLauncherIdentity,
+  stopForegroundGuiLauncher,
+} from '../../support/foregroundBoundedOutputWebDriver.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { createTuiTaskAttentionRunnerEnvironment } from '../../support/tuiTaskAttentionPtyDriver.js';
 import {
@@ -713,6 +719,238 @@ describe('turn activity Web evidence synchronization', () => {
       vi.useRealTimers();
     }
   });
+});
+
+describeTrajectory('Bash finalization failure production Chromium (real API)', () => {
+  for (const model of models) {
+    it(`${model.model} reports cleanup failure after a real Bash timeout`, async (context) => {
+      expect(frameworkRetryBudget(context)).toBe(0);
+      if (!model.baseURL) throw new Error('Missing finalization Provider');
+      const root = await realpath(
+        await mkdtemp(path.join(os.tmpdir(), 'blade-finalization-gui-'))
+      );
+      const workspace = path.join(root, 'workspace');
+      const home = path.join(root, 'home');
+      const storageRoot = path.join(root, 'storage');
+      const startedFile = path.join(root, 'started');
+      const scriptPath = path.join(workspace, 'hold.cjs');
+      const proxy = await startRecordingProviderProxy(model.baseURL);
+      let child: ChildProcess | undefined;
+      let identity:
+        | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+        | undefined;
+      let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+      let leaseDirectory: string | undefined;
+      let leaseFile: string | undefined;
+      let toolPid: number | undefined;
+      let output = '';
+      const faults: string[] = [];
+      const errors: unknown[] = [];
+      try {
+        await mkdir(workspace, { recursive: true });
+        await writeRuntimeConfig(home, model, proxy.baseUrl);
+        await writeFile(
+          scriptPath,
+          `require('fs').writeFileSync(${JSON.stringify(startedFile)}, String(process.pid));setInterval(()=>{},1000);`
+        );
+        const port = await reservePort();
+        const origin = `http://127.0.0.1:${port}`;
+        child = spawn(
+          process.execPath,
+          [
+            cliEntry,
+            '--trust-workspace',
+            'serve',
+            '--hostname',
+            '127.0.0.1',
+            '--port',
+            String(port),
+          ],
+          {
+            cwd: workspace,
+            env: childEnvironment(home, storageRoot, model.apiKey),
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        );
+        for (const stream of [child.stdout, child.stderr])
+          stream?.on('data', (chunk: Buffer) => {
+            output = (output + chunk.toString()).slice(-64_000);
+          });
+        if (!child.pid) throw new Error('Finalization server has no PID');
+        identity = await captureForegroundGuiLauncherIdentity(child.pid);
+        await waitFor(
+          async () => {
+            try {
+              return (await fetch(`${origin}/health`)).ok;
+            } catch {
+              return false;
+            }
+          },
+          'Finalization server not ready',
+          30_000
+        );
+        const created = await fetch(`${origin}/sessions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ projectPath: workspace, title: 'BASH FINALIZATION' }),
+        });
+        expect(created.status).toBe(200);
+        const session = SessionSchema.parse(await created.json());
+        browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        page.on('pageerror', (error) => faults.push(error.name));
+        page.on('console', (message) => {
+          if (message.type() === 'error') faults.push(message.text());
+        });
+        const url = new URL(origin);
+        url.searchParams.set('session', session.sessionId);
+        url.searchParams.set('project', workspace);
+        await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+        const composer = page.locator('textarea[data-blade-composer]');
+        await composer.waitFor({ state: 'visible' });
+        const permission = page.locator('[data-blade-permission-mode]');
+        if ((await permission.getAttribute('data-blade-permission-mode')) !== 'yolo') {
+          await permission.click();
+          await page.locator('[data-blade-permission-option="yolo"]').click();
+          await page.locator('[data-blade-yolo-confirm]').click();
+          await page.waitForFunction(
+            () =>
+              document
+                .querySelector('[data-blade-permission-mode]')
+                ?.getAttribute('data-blade-permission-mode') === 'yolo'
+          );
+        }
+        await composer.fill(
+          [
+            'Call Bash exactly once before answering. Use command `node hold.cjs` and timeout 8000.',
+            'Do not call other tools or repeat the command.',
+            'After the tool returns, report its failure in one short sentence.',
+          ].join('\n')
+        );
+        await page.locator('[data-blade-submit]').click();
+        await waitFor(
+          async () => {
+            try {
+              toolPid = Number(await readFile(startedFile, 'utf8'));
+              return Number.isSafeInteger(toolPid);
+            } catch {
+              return false;
+            }
+          },
+          'Real model did not start Bash',
+          90_000
+        );
+        const transcriptPath = findSessionTranscript(storageRoot, session.sessionId);
+        const leaseRoot = path.join(
+          path.dirname(transcriptPath),
+          '.foreground-processes'
+        );
+        const names = await readdir(leaseRoot, { recursive: true });
+        const name = names.find((entry) => entry.endsWith('.json'));
+        if (!name) throw new Error('Durable foreground lease missing');
+        leaseFile = path.join(leaseRoot, name);
+        leaseDirectory = path.dirname(leaseFile);
+        const before = await readFile(leaseFile);
+        await chmod(leaseDirectory, 0o500);
+        await waitFor(
+          () => {
+            const events = readSessionEvents(transcriptPath);
+            return (
+              events.some((event) => event.type === 'turn_completed') &&
+              events.some(
+                (event) =>
+                  event.type === 'session_updated' &&
+                  event.data.taskStatus === 'completed'
+              )
+            );
+          },
+          'Finalization turn did not complete',
+          90_000
+        );
+        const events = readSessionEvents(transcriptPath);
+        const results = events.filter(
+          (event) =>
+            event.type === 'part_created' && event.data.partType === 'tool_result'
+        );
+        expect(toolCallNames(events)).toEqual(['Bash']);
+        expect(results).toHaveLength(1);
+        expect(JSON.stringify(results)).toContain(
+          '"execution_host_failure":"finalization"'
+        );
+        expect(JSON.stringify(results)).toContain('"finalization_failed":true');
+        expect(JSON.stringify(results)).toContain('"timeout":true');
+        expect(JSON.stringify(results)).not.toContain('"type":"timeout_error"');
+        expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+        const providerRequest = JSON.parse(proxy.requestBodies[1] ?? '{}') as {
+          messages?: Array<{ role?: string; content?: unknown }>;
+        };
+        expect(
+          providerRequest.messages
+            ?.filter((message) => message.role === 'tool')
+            .map((message) => message.content)
+        ).toEqual(['Error: Foreground command finalization failed']);
+        expect(proxy.requestBodies[1]).not.toContain(leaseFile);
+        expect(proxy.requestBodies[1]).not.toContain('EACCES');
+        expect(await readFile(leaseFile)).toEqual(before);
+        await waitFor(
+          () => {
+            try {
+              process.kill(toolPid!, 0);
+              return false;
+            } catch {
+              return true;
+            }
+          },
+          'Timed-out tool remained alive',
+          3_000
+        );
+        await page.locator('[data-turn-activity-strip]').waitFor({ state: 'detached' });
+        await page.locator('[data-agent-tool-group] > button').first().click();
+        const toolCard = page.locator(
+          '[data-tool-name="Bash"][data-tool-status="error"]'
+        );
+        await toolCard.waitFor({ state: 'visible' });
+        await toolCard.locator('button[data-tool-call-id]').click();
+        expect(await toolCard.locator('[data-tool-output]').innerText()).toContain(
+          'Foreground command finalization failed'
+        );
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await composer.waitFor({ state: 'visible' });
+        await page.locator('[data-agent-tool-group] > button').first().click();
+        await toolCard.waitFor({ state: 'visible' });
+        await toolCard.locator('button[data-tool-call-id]').click();
+        expect(await toolCard.locator('[data-tool-output]').innerText()).toContain(
+          'Foreground command finalization failed'
+        );
+        expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+        expect(faults).toEqual([]);
+        assertNoSecrets({ output, html: await page.content(), events }, [model.apiKey]);
+        console.log(
+          `[bash-finalization] ${JSON.stringify({ model: model.model, category: 'finalization', timeoutPreserved: true, leaseRetained: true, toolCalls: 1, providerRequests: proxy.forwardedRequestNumbers, faults })}`
+        );
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        if (leaseDirectory)
+          await chmod(leaseDirectory, 0o700).catch((error: unknown) => {
+            errors.push(error);
+          });
+        const cleanup = await Promise.allSettled([
+          browser?.close(),
+          child ? stopForegroundGuiLauncher(child, identity) : undefined,
+          proxy.close(),
+        ]);
+        for (const result of cleanup)
+          if (result.status === 'rejected') errors.push(result.reason);
+        if (cleanup.every((result) => result.status === 'fulfilled'))
+          await removeTestDirectory(root);
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length)
+        throw new AggregateError(errors, 'Bash finalization GUI failed');
+    }, 240_000);
+  }
 });
 
 describeTrajectory('turn activity surface matrix (real API)', () => {

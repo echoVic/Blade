@@ -673,6 +673,28 @@ function completedManagedShellResult(
         : `执行命令完成 (${snapshot.status}, ${executionTime}ms)`,
   };
 
+  if (snapshot.finalizationFailed) {
+    return {
+      success: false,
+      llmContent: 'Command process group could not be finalized',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'Foreground command finalization failed',
+      },
+      metadata: {
+        ...metadata,
+        execution_host_failure: 'finalization',
+        finalization_failed: true,
+        ...(snapshot.status === 'timed_out' ? { timeout: true } : {}),
+        ...(snapshot.status === 'aborted' || snapshot.status === 'killed'
+          ? { aborted: true }
+          : {}),
+        stdout: projected.stdout,
+        stderr: projected.stderr,
+      },
+    };
+  }
+
   if (snapshot.status === 'timed_out') {
     return {
       success: false,
@@ -982,6 +1004,29 @@ async function executeWithAcpTerminal(
       ? shellOutputFacts(projected, result.transport)
       : {};
 
+    if (result.failureKind === 'finalization') {
+      return {
+        success: false,
+        llmContent: 'Command process group could not be finalized',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Foreground command finalization failed',
+        },
+        metadata: {
+          command,
+          execution_host_failure: 'finalization',
+          finalization_failed: true,
+          ...(result.terminationReason === 'timeout' ? { timeout: true } : {}),
+          ...(result.terminationReason === 'aborted' ? { aborted: true } : {}),
+          ...(projected ? { stdout: projected.stdout, stderr: projected.stderr } : {}),
+          execution_time: executionTime,
+          exit_code: result.exitCode,
+          acp_mode: true,
+          ...outputMetadata,
+        },
+      };
+    }
+
     if (result.failureKind === 'aborted') {
       return {
         success: false,
@@ -1259,6 +1304,32 @@ async function executeWithTimeout(
       const executionTime = Date.now() - startTime;
       const projected = output();
 
+      if (finalizationError) {
+        settle({
+          success: false,
+          llmContent: 'Command process group could not be finalized',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Foreground command finalization failed',
+          },
+          metadata: {
+            ...metadataFor(projected, {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+            }),
+            execution_host_failure: 'finalization',
+            finalization_failed: true,
+            ...(terminalState.timedOut ? { timeout: true } : {}),
+            ...(terminalState.aborted ? { aborted: true } : {}),
+            ...(admissionError ? { admission_failed: true } : {}),
+            stdout: projected.stdout,
+            stderr: projected.stderr,
+            execution_time: executionTime,
+          },
+        });
+        return;
+      }
+
       if (terminalState.timedOut) {
         settle({
           success: false,
@@ -1319,29 +1390,6 @@ async function executeWithTimeout(
             }),
             execution_host_failure: 'admission',
             admission_failed: true,
-            stdout: projected.stdout,
-            stderr: projected.stderr,
-            execution_time: executionTime,
-          },
-        });
-        return;
-      }
-
-      if (finalizationError) {
-        settle({
-          success: false,
-          llmContent: 'Command process group could not be finalized',
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: 'Foreground command finalization failed',
-          },
-          metadata: {
-            ...metadataFor(projected, {
-              command,
-              sandboxed: Boolean(sandboxedCommand),
-            }),
-            execution_host_failure: 'finalization',
-            finalization_failed: true,
             stdout: projected.stdout,
             stderr: projected.stderr,
             execution_time: executionTime,
@@ -1436,27 +1484,28 @@ async function executeWithTimeout(
       const executionTime = Date.now() - startTime;
       settle({
         success: false,
-        llmContent: terminalState.timedOut
-          ? `Command execution timed out (${timeout}ms)`
-          : terminalState.aborted
-            ? 'Command execution aborted by user'
-            : admissionError
-              ? 'Command execution blocked before durable admission'
-              : finalizationError
-                ? 'Command process group could not be finalized'
+        llmContent: finalizationError
+          ? 'Command process group could not be finalized'
+          : terminalState.timedOut
+            ? `Command execution timed out (${timeout}ms)`
+            : terminalState.aborted
+              ? 'Command execution aborted by user'
+              : admissionError
+                ? 'Command execution blocked before durable admission'
                 : `Command execution failed: ${error.message}`,
         error: {
-          type: terminalState.timedOut
-            ? ToolErrorType.TIMEOUT_ERROR
-            : ToolErrorType.EXECUTION_ERROR,
-          message: terminalState.timedOut
-            ? '命令执行超时'
-            : terminalState.aborted
-              ? '操作被中止'
-              : admissionError
-                ? 'Foreground command admission failed'
-                : finalizationError
-                  ? 'Foreground command finalization failed'
+          type:
+            terminalState.timedOut && !finalizationError
+              ? ToolErrorType.TIMEOUT_ERROR
+              : ToolErrorType.EXECUTION_ERROR,
+          message: finalizationError
+            ? 'Foreground command finalization failed'
+            : terminalState.timedOut
+              ? '命令执行超时'
+              : terminalState.aborted
+                ? '操作被中止'
+                : admissionError
+                  ? 'Foreground command admission failed'
                   : error.message,
           ...(terminalState.timedOut ||
           terminalState.aborted ||
@@ -1468,21 +1517,22 @@ async function executeWithTimeout(
         metadata: metadataFor(projected, {
           command,
           sandboxed: Boolean(sandboxedCommand),
-          ...(terminalState.timedOut
-            ? { timeout: true }
-            : terminalState.aborted
-              ? { aborted: true }
+          ...(terminalState.timedOut ? { timeout: true } : {}),
+          ...(terminalState.aborted ? { aborted: true } : {}),
+          ...(admissionError ? { admission_failed: true } : {}),
+          ...(finalizationError ? { finalization_failed: true } : {}),
+          ...(!terminalState.timedOut &&
+          !terminalState.aborted &&
+          !admissionError &&
+          !finalizationError
+            ? { error: error.message }
+            : {}),
+          ...(finalizationError
+            ? { execution_host_failure: 'finalization' as const }
+            : terminalState.timedOut
+              ? { execution_host_failure: 'timeout' as const }
               : admissionError
-                ? { admission_failed: true }
-                : finalizationError
-                  ? { finalization_failed: true }
-                  : { error: error.message }),
-          ...(terminalState.timedOut
-            ? { execution_host_failure: 'timeout' as const }
-            : admissionError
-              ? { execution_host_failure: 'admission' as const }
-              : finalizationError
-                ? { execution_host_failure: 'finalization' as const }
+                ? { execution_host_failure: 'admission' as const }
                 : terminalState.aborted
                   ? {}
                   : { execution_host_failure: 'spawn' as const }),

@@ -93,6 +93,7 @@ export interface TerminalExecuteResult {
   exitCode: number | null;
   error?: string;
   failureKind?: TerminalFailureKind;
+  terminationReason?: 'timeout' | 'aborted';
   transport: TerminalTransport;
   capture?: ShellOutputCaptureSnapshot;
   background?: {
@@ -217,18 +218,17 @@ class LocalTerminalService implements TerminalService {
           }
           capture.finish();
           const snapshot = capture.snapshot();
-          const failureKind: TerminalFailureKind | undefined =
-            terminalEvent === 'timeout'
+          const failureKind: TerminalFailureKind | undefined = finalizationFailed
+            ? 'finalization'
+            : terminalEvent === 'timeout'
               ? 'timeout'
               : terminalEvent === 'aborted'
                 ? 'aborted'
                 : admissionFailed
                   ? 'admission'
-                  : finalizationFailed
-                    ? 'finalization'
-                    : spawnError
-                      ? 'spawn'
-                      : undefined;
+                  : spawnError
+                    ? 'spawn'
+                    : undefined;
           settle({
             success: code === 0 && !failureKind,
             stdout: snapshot.stdout.content,
@@ -243,6 +243,10 @@ class LocalTerminalService implements TerminalService {
                     ? 'Foreground command finalization failed'
                     : spawnError?.message,
             failureKind,
+            ...(finalizationFailed &&
+            (terminalEvent === 'timeout' || terminalEvent === 'aborted')
+              ? { terminationReason: terminalEvent }
+              : {}),
             transport: 'local',
             capture: snapshot,
           });
