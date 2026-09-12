@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.166] - 2026-09-12
+
+### Fixed
+- Re-arm TUI Escape cancellation when its target changes from a side question to the still-running main turn, or to a replacement side request. Preserve duplicate-cancel suppression for the same target.
+
+### Tests
+- Add real React rerender regressions for cancellation ownership and busy-period controls.
+- Reproduce the lost second Escape in production raw PTY, then verify DeepSeek Flash/Pro terminal cancellation, main-tool cleanup, and side follow-up recovery. Add real ACP stdio side cancellation with exact protocol text and unchanged main JSONL.
+
 ## [0.10.165] - 2026-09-12
 
 ### Fixed
