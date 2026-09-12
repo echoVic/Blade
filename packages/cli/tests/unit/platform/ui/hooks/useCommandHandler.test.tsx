@@ -1334,6 +1334,165 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      stage: 'initialization',
+      sessionId: 'replacement-session',
+      workspaceRoot: '/active-workspace',
+    },
+    {
+      stage: 'stream',
+      sessionId: 'replacement-session',
+      workspaceRoot: '/active-workspace',
+    },
+    {
+      stage: 'initialization',
+      sessionId: 'recovered-cli-session',
+      workspaceRoot: '/replacement-workspace',
+    },
+    {
+      stage: 'stream',
+      sessionId: 'recovered-cli-session',
+      workspaceRoot: '/replacement-workspace',
+    },
+  ] as const)(
+    'wakes the replacement $sessionId in $workspaceRoot when old pending $stage releases command ownership',
+    async ({ stage, sessionId, workspaceRoot }) => {
+      const oldCompletion = deferred<LoopResult>();
+      const oldAgent = {
+        chatStream: vi.fn(async function* () {
+          yield* [];
+          return await oldCompletion.promise;
+        }),
+      };
+      const initialization = deferred<typeof oldAgent>();
+      const replacementAgent = agentReturning(
+        successfulLoopResult('replacement pending done')
+      );
+      mocks.createAgent
+        .mockImplementationOnce(() =>
+          stage === 'initialization'
+            ? initialization.promise
+            : Promise.resolve(oldAgent)
+        )
+        .mockResolvedValueOnce(replacementAgent);
+
+      try {
+        await renderHarness();
+        expect(mocks.createAgent).toHaveBeenCalledOnce();
+        expect(mocks.storeProcessing).toBe(true);
+        const oldController = mocks.currentAbortController;
+        expect(oldController).not.toBeNull();
+        mocks.sessionId = sessionId;
+        mocks.workspaceRoot = workspaceRoot;
+        mocks.storeSessionId = sessionId;
+        mocks.storeWorkspaceRoot = workspaceRoot;
+        await renderHarness();
+        expect(oldController?.signal.aborted).toBe(true);
+        expect(mocks.createAgent).toHaveBeenCalledOnce();
+        expect(mocks.storeProcessing).toBe(true);
+
+        initialization.resolve(oldAgent);
+        oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+        await flushAsyncWork(60);
+
+        expect(mocks.createAgent).toHaveBeenCalledTimes(2);
+        expect(replacementAgent.chatStream).toHaveBeenCalledOnce();
+        expect(replacementAgent.chatStream).toHaveBeenCalledWith(
+          '',
+          expect.objectContaining({ sessionId, workspaceRoot }),
+          expect.objectContaining({ pendingInputOnly: true })
+        );
+        expect(mocks.storeProcessing).toBe(false);
+        expect(mocks.currentAbortController).toBeNull();
+        expect(mocks.setError).not.toHaveBeenCalled();
+      } finally {
+        initialization.resolve(oldAgent);
+        oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+        await flushAsyncWork(60);
+      }
+    }
+  );
+
+  it.each(['initialization', 'stream'] as const)(
+    'does not release or notify idle for a newer command when old pending %s settles',
+    async (stage) => {
+      const oldCompletion = deferred<LoopResult>();
+      const oldAgent = {
+        chatStream: vi.fn(async function* () {
+          yield* [];
+          return await oldCompletion.promise;
+        }),
+      };
+      const initialization = deferred<typeof oldAgent>();
+      const notifyIdle = vi.spyOn(PendingResumeCoordinator.prototype, 'notifyIdle');
+      mocks.createAgent.mockImplementationOnce(() =>
+        stage === 'initialization' ? initialization.promise : Promise.resolve(oldAgent)
+      );
+
+      try {
+        await renderHarness();
+        expect(mocks.createAgent).toHaveBeenCalledOnce();
+        const oldController = mocks.currentAbortController;
+        mocks.sessionId = 'replacement-session';
+        mocks.workspaceRoot = '/replacement-workspace';
+        mocks.storeSessionId = mocks.sessionId;
+        mocks.storeWorkspaceRoot = mocks.workspaceRoot;
+        await renderHarness();
+        expect(oldController?.signal.aborted).toBe(true);
+        const newerController = mocks.createAbortController();
+        mocks.setProcessing.mockClear();
+        mocks.clearAbortController.mockClear();
+        mocks.setCurrentThinkingContent.mockClear();
+
+        initialization.resolve(oldAgent);
+        oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+        await flushAsyncWork(60);
+
+        expect(mocks.currentAbortController).toBe(newerController);
+        expect(newerController.signal.aborted).toBe(false);
+        expect(mocks.storeProcessing).toBe(true);
+        expect(mocks.setProcessing).not.toHaveBeenCalled();
+        expect(mocks.clearAbortController).not.toHaveBeenCalled();
+        expect(mocks.setCurrentThinkingContent).not.toHaveBeenCalled();
+        expect(notifyIdle).not.toHaveBeenCalled();
+        expect(mocks.createAgent).toHaveBeenCalledOnce();
+      } finally {
+        initialization.resolve(oldAgent);
+        oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+        await flushAsyncWork(60);
+      }
+    }
+  );
+
+  it('does not start replacement work when old pending completion has no retained wake', async () => {
+    const oldCompletion = deferred<LoopResult>();
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* () {
+        yield* [];
+        return await oldCompletion.promise;
+      }),
+    });
+    const notifyIdle = vi.spyOn(PendingResumeCoordinator.prototype, 'notifyIdle');
+    try {
+      await renderHarness();
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+      mocks.sessionId = 'idle-replacement';
+      mocks.storeSessionId = mocks.sessionId;
+      mocks.hasPendingInbox.mockResolvedValue(false);
+      await renderHarness();
+      oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+      await flushAsyncWork(60);
+      expect(notifyIdle).toHaveBeenCalledOnce();
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+      expect(mocks.storeProcessing).toBe(false);
+      expect(mocks.currentAbortController).toBeNull();
+    } finally {
+      oldCompletion.resolve(failedLoopResult({ type: 'aborted' }));
+      await flushAsyncWork(60);
+    }
+  });
+
   it('lets an old foreground completion notify the current Session coordinator', async () => {
     const foregroundCompletion = deferred<LoopResult>();
     const oldForegroundAgent = {

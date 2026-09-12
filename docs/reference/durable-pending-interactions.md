@@ -92,6 +92,12 @@ continuation、preflight exception、取消，以及已有输出或工具生命�
 重放。`PendingResumeCoordinator` 合并 durable inbox 唤醒并持有有界 timer；中间可重试
 失败保持静默，最终失败只显示一次规范化错误。
 
+切换 TUI 会话时，旧自动续跑可能仍在等待 Runtime 初始化或流收尾。只有仍持有当前
+AbortController 的旧任务才能释放全局忙碌状态，并通知**当前挂载**的协调器消费已保留的
+唤醒；不能通知已经卸载的协调器，也不能覆盖后来接管的命令。没有待处理指令时，空闲
+通知不会凭空启动任务。真实 Hook/Runtime 测试用 FIFO 控制初始化顺序，再通过
+Flash/Pro 验证新会话恰好执行一次、旧指令仍保留且不混入新请求；该测试不是 raw PTY。
+
 ## 跨端行为
 
 | Surface | 恢复行为 |

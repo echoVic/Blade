@@ -95,6 +95,8 @@ output or tool lifecycle are never replayed automatically. `PendingResumeCoordin
 coalesces durable inbox wake-ups and owns the bounded timer. Intermediate retryable
 failures remain silent; a final failure is displayed once with its canonical message.
 
+When the TUI Session changes, an old automatic resume may still be initializing its Runtime or draining its stream. Only an attempt that still owns the current AbortController can release global busy state and notify the currently mounted coordinator to consume a retained wake. It must not notify an unmounted coordinator or overwrite a newer command. An idle notification without pending work does not start a task. Real Hook/Runtime tests hold initialization with a FIFO, then use Flash/Pro to verify exactly one replacement run, preserved old input, and no cross-session prompt leakage; these tests are not raw PTY.
+
 ## Cross-Surface Behavior
 
 | Surface | Recovery Behavior |

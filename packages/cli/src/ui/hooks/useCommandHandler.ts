@@ -962,6 +962,7 @@ export const useCommandHandler = (
           commandActions.setProcessing(false);
           commandActions.clearAbortController(abortController);
           sessionActions.setCurrentThinkingContent(null);
+          pendingResumeCoordinatorRef.current?.notifyIdle();
         }
       }
     }
