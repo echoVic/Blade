@@ -1097,7 +1097,7 @@ export class SessionRuntime {
       toolExecutor = this.createToolExecutor({ permissionMode });
       const registry = toolExecutor.getRegistry();
       await registry.waitForMcpCatalogIdle(operation.signal);
-      const [messages, builtPrompt] = await Promise.all([
+      const preparation = [
         this.loadModelContext(),
         buildSystemPrompt({
           ...(this.isRemoteWorkspace()
@@ -1123,7 +1123,13 @@ export class SessionRuntime {
             ? {}
             : { projectInstructionSourcePath: this.projectRoot }),
         }),
-      ]);
+      ] as const;
+      const [messages, builtPrompt] = await Promise.all(preparation).catch(
+        async (error: unknown) => {
+          await Promise.allSettled(preparation);
+          throw error;
+        }
+      );
       if (operation.signal.aborted) {
         throw new DOMException('Side conversation aborted', 'AbortError');
       }

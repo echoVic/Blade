@@ -1,6 +1,16 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
@@ -15,6 +25,7 @@ import {
 import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 import { Runtime, Type } from '../../../src/schema/index.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import { createSessionRouteController } from '../../../src/server/routes/session.js';
@@ -1123,6 +1134,301 @@ describe.skipIf(!isRealApiTestEnabled())(
           }
         }
       );
+    }
+  }
+);
+
+describe.skipIf(!isRealApiTestEnabled() || process.platform === 'win32')(
+  'Side preparation drain production Chromium',
+  () => {
+    for (const model of cancellationModels) {
+      it(`${model.model} keeps failed context preparation owned until memory reading settles`, {
+        timeout: 180_000,
+      }, async (context) => {
+        const retry = context.task.retry;
+        expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+        if (!model.baseURL) throw new Error('Missing preparation Provider');
+        const root = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-side-preparation-'))
+        );
+        const workspace = path.join(root, 'workspace');
+        const home = path.join(root, 'home');
+        const storage = path.join(root, 'storage');
+        const proxy = await startRecordingProviderProxy(model.baseURL);
+        let child: ChildProcess | undefined;
+        let identity:
+          | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+          | undefined;
+        let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+        let writer: Awaited<ReturnType<typeof open>> | undefined;
+        let output = '';
+        let closed = false;
+        let fifo: string | undefined;
+        let transcript: string | undefined;
+        let original: Buffer | undefined;
+        let restored = false;
+        const errors: unknown[] = [];
+        const faults: string[] = [];
+        try {
+          await mkdir(workspace, { recursive: true });
+          await mkdir(path.join(home, '.blade'), { recursive: true });
+          const config = buildRealApiRuntimeConfig({
+            ...model,
+            baseURL: proxy.baseUrl,
+          });
+          await writeFile(
+            path.join(home, '.blade', 'config.json'),
+            JSON.stringify({
+              ...config,
+              models: config.models.map((entry) => ({
+                ...entry,
+                overrides: { ...entry.overrides, maxRetries: 0 },
+              })),
+              providerForegroundRecoveryMs: 0,
+              hooks: { enabled: false },
+              disableAllHooks: true,
+              mcpServers: {},
+            }),
+            { mode: 0o600 }
+          );
+          const port = await reserveSidePort();
+          const origin = `http://127.0.0.1:${port}`;
+          child = spawn(
+            process.execPath,
+            [
+              path.resolve(import.meta.dirname, '../../../dist/blade.js'),
+              '--debug',
+              'Service',
+              '--trust-workspace',
+              'serve',
+              '--hostname',
+              '127.0.0.1',
+              '--port',
+              String(port),
+            ],
+            {
+              cwd: workspace,
+              env: {
+                ...process.env,
+                HOME: home,
+                BLADE_STORAGE_ROOT: storage,
+                BLADE_AUTO_MEMORY: '1',
+                BLADE_TELEMETRY_DISABLED: '1',
+              },
+              detached: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }
+          );
+          child.stdout?.on('data', (chunk: Buffer) => {
+            output = (output + chunk.toString()).slice(-64_000);
+          });
+          child.stderr?.on('data', (chunk: Buffer) => {
+            output = (output + chunk.toString()).slice(-64_000);
+          });
+          if (!child.pid) throw new Error('Missing preparation server PID');
+          identity = await captureForegroundGuiLauncherIdentity(child.pid);
+          await waitForSideCondition(async () => {
+            if (child?.exitCode !== null || child?.signalCode !== null)
+              throw new Error('Preparation server exited');
+            try {
+              return (
+                await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1_000) })
+              ).ok;
+            } catch {
+              return false;
+            }
+          }, 'Preparation server not ready');
+          const created = await fetch(`${origin}/sessions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              projectPath: workspace,
+              title: 'SIDE PREPARATION DRAIN',
+            }),
+          });
+          expect(created.status).toBe(200);
+          const session = SessionSchema.parse(await created.json());
+          const endpoint = `/sessions/${session.sessionId}/side-question`;
+          browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ locale: 'en-US' });
+          page.on('pageerror', (error) => faults.push(error.name));
+          let expectedFailure = false;
+          page.on('console', (message) => {
+            if (message.type() !== 'error') return;
+            const location = message.location().url;
+            if (
+              expectedFailure &&
+              location.startsWith(origin) &&
+              new URL(location).pathname === endpoint &&
+              /^Failed to load resource:.*500/.test(message.text())
+            )
+              return;
+            faults.push(message.text());
+          });
+          page.on('requestfailed', (request) => {
+            if (
+              !isExpectedBrowserRequestFailure({
+                url: request.url(),
+                resourceType: request.resourceType(),
+                errorText: request.failure()?.errorText ?? 'unknown',
+                closing: closed,
+                refreshing: false,
+              })
+            )
+              faults.push(`request:${new URL(request.url()).pathname}`);
+          });
+          const url = new URL(origin);
+          url.searchParams.set('session', session.sessionId);
+          url.searchParams.set('project', workspace);
+          await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+          const composer = page.locator('textarea[data-blade-composer]');
+          await composer.waitFor({ state: 'visible' });
+          const responseForQuestion = () =>
+            page.waitForResponse(
+              (response) =>
+                new URL(response.url()).pathname === endpoint &&
+                response.request().method() === 'POST'
+            );
+          const warmupResponse = responseForQuestion();
+          await composer.fill(
+            '/btw Reply exactly PREPARATION_READY and do not use tools.'
+          );
+          await page.locator('[data-blade-submit]').click();
+          const warmup = await warmupResponse;
+          expect(warmup.status()).toBe(200);
+          expect(
+            SideConversationResponseSchema.parse(await warmup.json()).response.trim()
+          ).toBe('PREPARATION_READY');
+          expect(proxy.forwardedRequestNumbers).toEqual([1]);
+          transcript = findSessionTranscript(storage, session.sessionId);
+          original = await readFile(transcript);
+          const now = new Date().toISOString();
+          const invalidSummary: SessionEvent = {
+            id: randomUUID(),
+            sessionId: session.sessionId,
+            projectPath: workspace,
+            timestamp: now,
+            type: 'part_created',
+            cwd: workspace,
+            version: 'test',
+            data: {
+              partId: randomUUID(),
+              messageId: randomUUID(),
+              partType: 'summary',
+              payload: null,
+              createdAt: now,
+            },
+          };
+          await writeFile(
+            transcript,
+            Buffer.concat([
+              original,
+              Buffer.from(JSON.stringify(invalidSummary) + '\n'),
+            ])
+          );
+          const memoryDir = path.join(path.dirname(transcript), 'memory');
+          await mkdir(memoryDir, { recursive: true });
+          fifo = path.join(memoryDir, 'MEMORY.md');
+          await promisify(execFile)('mkfifo', [fifo]);
+          let responseStatus: number | undefined;
+          expectedFailure = true;
+          const failed = responseForQuestion().then((response) => {
+            responseStatus = response.status();
+            return response;
+          });
+          await composer.fill('/btw Explain the current state without tools.');
+          await page.locator('[data-blade-submit]').click();
+          await waitForSideCondition(async () => {
+            try {
+              writer = await open(fifo!, constants.O_WRONLY | constants.O_NONBLOCK);
+              return true;
+            } catch (error) {
+              if (error instanceof Error && 'code' in error && error.code === 'ENXIO')
+                return false;
+              throw error;
+            }
+          }, 'Memory FIFO had no reader');
+          await waitForSideCondition(
+            () =>
+              output.includes(
+                `[SessionService] 加载模型上下文失败 (${session.sessionId})`
+              ),
+            'Model context failure was not observed'
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          expect(responseStatus).toBeUndefined();
+          expect(proxy.forwardedRequestNumbers).toEqual([1]);
+          await writer!.writeFile('Controlled memory read completed.\n');
+          await writer!.close();
+          writer = undefined;
+          const failedRequest = await failed;
+          expect(failedRequest.status()).toBe(500);
+          await expect(failedRequest.json()).resolves.toEqual({
+            error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+          });
+          await waitForSideCondition(
+            async () =>
+              (await page
+                .locator('[data-blade-side-conversation]')
+                .getAttribute('data-status')) === 'error',
+            'Side error did not render'
+          );
+          await rename(fifo, `${fifo}.released`);
+          fifo = undefined;
+          await writeFile(transcript, original);
+          restored = true;
+          expectedFailure = false;
+          const followupResponse = responseForQuestion();
+          await composer.fill(
+            '/btw Reply exactly PREPARATION_RECOVERED and do not use tools.'
+          );
+          await page.locator('[data-blade-submit]').click();
+          const followup = await followupResponse;
+          expect(followup.status()).toBe(200);
+          expect(
+            SideConversationResponseSchema.parse(await followup.json()).response.trim()
+          ).toBe('PREPARATION_RECOVERED');
+          expect(await readFile(transcript)).toEqual(original);
+          expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+          expect(faults).toEqual([]);
+          assertNoSecrets(
+            { output, html: await page.content(), transcript: original.toString() },
+            [model.apiKey]
+          );
+          console.log(
+            `[side-preparation-drain] ${JSON.stringify({ model: model.model, waitedForMemory: true, originalErrorReturned: true, followupCompleted: true, providerRequests: proxy.forwardedRequestNumbers })}`
+          );
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          closed = true;
+          if (writer)
+            await writer.close().catch((error: unknown) => {
+              errors.push(error);
+            });
+          if (transcript && original && !restored)
+            await writeFile(transcript, original).catch((error: unknown) => {
+              errors.push(error);
+            });
+          const cleanup = await Promise.allSettled([
+            browser?.close(),
+            child ? stopForegroundGuiLauncher(child, identity) : undefined,
+            proxy.close(),
+          ]);
+          for (const result of cleanup)
+            if (result.status === 'rejected') errors.push(result.reason);
+          if (cleanup.every((result) => result.status === 'fulfilled'))
+            await rm(root, { recursive: true, force: true }).catch((error: unknown) => {
+              errors.push(error);
+            });
+        }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1)
+          throw new AggregateError(
+            errors,
+            'Preparation drain trajectory and cleanup failed'
+          );
+      });
     }
   }
 );

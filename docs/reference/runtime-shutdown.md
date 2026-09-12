@@ -40,6 +40,11 @@ Durable inbox 在 aborted turn 后保持可恢复；后续 `--resume`、TUI、We
 文件系统调用或 Runtime 初始化。服务器关闭时，目录等待者先退出，随后按原顺序
 断开 Session-owned MCP transport。
 
+侧边上下文与系统提示并行准备。一项失败时，保留首个异常，但仍等待已启动的另一项
+结束后才释放执行器和会话租约；失败请求不会调用 Provider。真实 Chromium 验证使用
+损坏的上下文记录和 FIFO 内存读取，检查读取结束前不返回错误，恢复输入后可继续提问。
+FIFO 场景仅在支持命名管道的系统运行，确定性单测另行覆盖两侧失败及迟到失败。
+
 ## TUI 与 Headless
 
 TUI 的进程级 shutdown 会先同步调用 active command 的 abort controller，再执行

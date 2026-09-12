@@ -764,6 +764,158 @@ describe('SessionRuntime', () => {
     }
   });
 
+  it.each([
+    { failed: 'context', siblingRejects: false },
+    { failed: 'prompt', siblingRejects: false },
+    { failed: 'context', siblingRejects: true },
+    { failed: 'prompt', siblingRejects: true },
+  ] as const)(
+    'drains side preparation after $failed fails before Runtime disposal (siblingRejects: $siblingRejects)',
+    async ({ failed, siblingRejects }) => {
+      const chatDispose = vi.fn(async () => undefined);
+      const chatService = createDisposableChatService(chatDispose);
+      vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+      const runtime = await SessionRuntime.create({
+        sessionId: `side-preparation-${failed}-${siblingRejects}`,
+        workspaceRoot: storageRoot,
+      });
+      const firstError = new Error(`${failed} preparation failed first`);
+      const lateError = new Error('Sibling preparation failed later');
+      let failContext!: (error: Error) => void;
+      let resolveContext!: (
+        messages: Awaited<ReturnType<SessionRuntime['loadModelContext']>>
+      ) => void;
+      const context = new Promise<
+        Awaited<ReturnType<SessionRuntime['loadModelContext']>>
+      >((resolve, reject) => {
+        resolveContext = resolve;
+        failContext = reject;
+      });
+      let failPrompt!: (error: Error) => void;
+      let resolvePrompt!: (
+        result: Awaited<ReturnType<typeof buildSystemPrompt>>
+      ) => void;
+      const prompt = new Promise<Awaited<ReturnType<typeof buildSystemPrompt>>>(
+        (resolve, reject) => {
+          resolvePrompt = resolve;
+          failPrompt = reject;
+        }
+      );
+      const loadContext = vi
+        .spyOn(runtime, 'loadModelContext')
+        .mockReturnValueOnce(context);
+      vi.mocked(buildSystemPrompt).mockReturnValueOnce(prompt);
+      const executor = runtime.createToolExecutor();
+      vi.spyOn(runtime, 'createToolExecutor').mockReturnValueOnce(executor);
+      const disposeExecutor = vi.spyOn(executor, 'dispose');
+      const releaseLease = vi.spyOn(SessionLease.prototype, 'release');
+      let settled = false;
+      const question = runtime.askSideQuestion('Keep preparation owned').then(
+        (value) => {
+          settled = true;
+          return value;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        }
+      );
+      let shutdown: Promise<void> | undefined;
+      try {
+        await vi.waitFor(() => expect(loadContext).toHaveBeenCalledOnce());
+        if (failed === 'context') failContext(firstError);
+        else failPrompt(firstError);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        expect(runtime.isIdleForResidency()).toBe(false);
+        expect(disposeExecutor).not.toHaveBeenCalled();
+        let disposed = false;
+        shutdown = runtime.dispose().then(() => {
+          disposed = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(disposed).toBe(false);
+        expect(chatDispose).not.toHaveBeenCalled();
+        expect(releaseLease).not.toHaveBeenCalled();
+        if (failed === 'context') {
+          if (siblingRejects) failPrompt(lateError);
+          else resolvePrompt({ prompt: 'Prepared context', sources: [] });
+        } else {
+          if (siblingRejects) failContext(lateError);
+          else resolveContext([]);
+        }
+        await expect(question).resolves.toBe(firstError);
+        await shutdown;
+        expect(disposeExecutor).toHaveBeenCalledOnce();
+        expect(chatDispose).toHaveBeenCalledOnce();
+        expect(releaseLease).toHaveBeenCalledOnce();
+        expect(chatService.chat).not.toHaveBeenCalled();
+      } finally {
+        resolveContext([]);
+        resolvePrompt({ prompt: 'Fixture cleanup', sources: [] });
+        await question;
+        await (shutdown ?? runtime.dispose());
+      }
+    }
+  );
+
+  it.each(['context', 'prompt'] as const)(
+    'keeps side preparation parallel and waits for both results when %s completes first',
+    async (first) => {
+      const chatService = createDisposableChatService(vi.fn(async () => undefined));
+      chatService.chat.mockResolvedValueOnce({ content: 'Prepared side answer' });
+      vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+      const runtime = await SessionRuntime.create({
+        sessionId: `side-parallel-${first}`,
+        workspaceRoot: storageRoot,
+      });
+      let resolveContext!: (
+        messages: Awaited<ReturnType<SessionRuntime['loadModelContext']>>
+      ) => void;
+      const context = new Promise<
+        Awaited<ReturnType<SessionRuntime['loadModelContext']>>
+      >((resolve) => {
+        resolveContext = resolve;
+      });
+      let resolvePrompt!: (
+        result: Awaited<ReturnType<typeof buildSystemPrompt>>
+      ) => void;
+      const prompt = new Promise<Awaited<ReturnType<typeof buildSystemPrompt>>>(
+        (resolve) => {
+          resolvePrompt = resolve;
+        }
+      );
+      const loadContext = vi
+        .spyOn(runtime, 'loadModelContext')
+        .mockReturnValueOnce(context);
+      vi.mocked(buildSystemPrompt).mockClear().mockReturnValueOnce(prompt);
+      const question = runtime.askSideQuestion('Use the prepared context');
+      try {
+        await vi.waitFor(() => {
+          expect(loadContext).toHaveBeenCalledOnce();
+          expect(buildSystemPrompt).toHaveBeenCalledOnce();
+        });
+        if (first === 'context') resolveContext([]);
+        else resolvePrompt({ prompt: 'Prepared system prompt', sources: [] });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(chatService.chat).not.toHaveBeenCalled();
+        expect(runtime.isIdleForResidency()).toBe(false);
+        resolveContext([]);
+        resolvePrompt({ prompt: 'Prepared system prompt', sources: [] });
+        await expect(question).resolves.toMatchObject({
+          response: 'Prepared side answer',
+        });
+        expect(chatService.chat).toHaveBeenCalledOnce();
+        expect(runtime.isIdleForResidency()).toBe(true);
+      } finally {
+        resolveContext([]);
+        resolvePrompt({ prompt: 'Fixture cleanup', sources: [] });
+        await question;
+        await runtime.dispose();
+      }
+    }
+  );
+
   it('isolates session-provided MCP servers and releases them on dispose', async () => {
     const isolatedRegistry = {
       registerServer: vi.fn().mockResolvedValue(undefined),

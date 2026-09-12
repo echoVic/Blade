@@ -30,6 +30,8 @@ Main loops and side questions wait for MCP catalog refresh before entering the P
 
 Side questions check cancellation before preparation and after context preparation, so cancelled requests do not reach the Provider. Context file reads still settle before Runtime ownership is released. This does not promise interruption of arbitrary blocked filesystem calls or Runtime initialization. During server shutdown, catalog waiters exit before the Session-owned MCP transport is disconnected in the existing cleanup order.
 
+Side context and system-prompt preparation run concurrently. If either fails, the first error is preserved while all already-started preparation settles before the executor and Session lease are released. Failed requests do not reach the Provider. Chromium verification combines a damaged context record with a held FIFO memory read, checks that the error waits for the read, and verifies a subsequent question after recovery. The FIFO scenario runs only on systems supporting named pipes; deterministic tests cover either failure source and a late sibling failure.
+
 ## TUI and Headless
 
 TUI process-level shutdown first synchronously calls the active command's abort controller, then performs React/Agent cleanup. This way, even if the terminal host begins UI unload after the signal, the Agent generator can still first submit the terminal turn record.
