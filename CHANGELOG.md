@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.175] - 2026-09-13
+
+### Tests
+- Disable scroll-boundary bounce in the real Chromium fixture so coordinate authorization checks do not race compositor-only viewport motion after wheel input. Keep exact screenshot validation, cross-frame rejection, and changed-page rejection unchanged.
+
 ## [0.10.174] - 2026-09-13
 
 ### Fixed
