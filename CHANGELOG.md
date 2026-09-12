@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.169] - 2026-09-12
+
+### Fixed
+- Keep timed-out TUI pending-resume attempts owned until their cleanup settles. Coalesce new wakeups during cleanup and retain foreground-idle checks before starting a new recovery episode.
+- Preserve immediate deadline cancellation and one terminal failure report, without changing retry budgets or replaying exhausted work without a new wake.
+
+### Tests
+- Cover late success/failure, disposal during cleanup, no-wake behavior, foreground ownership, and reentrant deadline callbacks.
+- Verify real DeepSeek Flash/Pro Hook/Runtime recovery against the unchanged 120-second deadline, with one command owner during held initialization and one subsequent durable turn.
+- Check completed Ink redraws instead of accumulated terminal history when asserting side-panel dismissal; cover optional cursor positioning and chunked frame boundaries without relaxing the three-second cancellation deadline.
+
 ## [0.10.168] - 2026-09-12
 
 ### Fixed
