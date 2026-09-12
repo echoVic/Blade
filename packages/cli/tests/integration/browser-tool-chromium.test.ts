@@ -93,6 +93,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(`<!doctype html>
         <html>
+          <style>html { overscroll-behavior: none; }</style>
           <body>
             <label>Name <input aria-label="Name"></label>
             <label>Password <input type="password" aria-label="Password"></label>
