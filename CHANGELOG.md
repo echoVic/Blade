@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.168] - 2026-09-12
+
+### Fixed
+- Notify the current TUI pending-resume coordinator when an old automatic attempt releases command ownership, so a replacement Session does not lose its retained wake. Keep newer-command ownership and no-work guards intact.
+
+### Tests
+- Cover Session/workspace replacement during initialization and streaming, newer-command takeover, and idle replacements.
+- Verify real DeepSeek Flash/Pro Hook/Runtime handoff with held initialization: only the replacement prompt reaches the Provider, its input completes once, and the old durable input remains available.
+
 ## [0.10.167] - 2026-09-12
 
 ### Fixed
