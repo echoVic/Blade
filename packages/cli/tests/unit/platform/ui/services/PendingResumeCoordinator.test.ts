@@ -244,6 +244,10 @@ describe('PendingResumeCoordinator', () => {
     expect(vi.getTimerCount()).toBe(0);
 
     coordinator.request();
+    expect(callbacks).toHaveLength(0);
+    expect(run).toHaveBeenCalledOnce();
+    firstRun.resolve(completed());
+    await settleAsyncWork();
     expect(callbacks).toHaveLength(1);
     runNextMicrotask(callbacks);
     await settleAsyncWork();
@@ -251,10 +255,6 @@ describe('PendingResumeCoordinator', () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(terminalFailures).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
-
-    firstRun.resolve(completed());
-    await settleAsyncWork();
-    expect(terminalFailures).toHaveBeenCalledOnce();
   });
 
   it('fails closed when result and evidence report different failures', async () => {
@@ -640,6 +640,185 @@ describe('PendingResumeCoordinator', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(['resolve', 'reject'] as const)(
+    'waits for timed-out attempt cleanup before a new wake when the old run will %s',
+    async (outcome) => {
+      const callbacks: Array<() => void> = [];
+      let finish!: () => void;
+      const first = new Promise<PendingResumeRunResult>((resolve, reject) => {
+        finish = () =>
+          outcome === 'resolve'
+            ? resolve(completed())
+            : reject(new Error('late cleanup failure'));
+      });
+      const second = deferred<PendingResumeRunResult>();
+      const signals: AbortSignal[] = [];
+      const run = vi.fn((signal: AbortSignal) => {
+        signals.push(signal);
+        return signals.length === 1 ? first : second.promise;
+      });
+      const failures = vi.fn();
+      const coordinator = new PendingResumeCoordinator({
+        canRun: () => true,
+        run,
+        sessionIdentity: 'cleanup-before-new-episode',
+        onTerminalFailure: failures,
+        scheduleMicrotask: (callback) => callbacks.push(callback),
+      });
+      try {
+        coordinator.request();
+        runNextMicrotask(callbacks);
+        await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+        expect(signals[0]?.aborted).toBe(true);
+        expect(failures).toHaveBeenCalledOnce();
+        coordinator.request();
+        coordinator.request();
+        coordinator.notifyIdle();
+        expect(callbacks).toHaveLength(0);
+        expect(run).toHaveBeenCalledOnce();
+        finish();
+        await settleAsyncWork();
+        expect(callbacks).toHaveLength(1);
+        runNextMicrotask(callbacks);
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(signals[1]?.aborted).toBe(false);
+        second.resolve(completed());
+        await settleAsyncWork();
+        expect(failures).toHaveBeenCalledOnce();
+        expect(callbacks).toHaveLength(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        coordinator.dispose();
+        finish();
+        second.resolve(completed());
+        await settleAsyncWork();
+      }
+    }
+  );
+
+  it('does not restart an exhausted attempt without a new wake', async () => {
+    const callbacks: Array<() => void> = [];
+    const first = deferred<PendingResumeRunResult>();
+    const run = vi.fn(() => first.promise);
+    const failures = vi.fn();
+    const coordinator = new PendingResumeCoordinator({
+      canRun: () => true,
+      run,
+      onTerminalFailure: failures,
+      scheduleMicrotask: (callback) => callbacks.push(callback),
+    });
+    try {
+      coordinator.request();
+      runNextMicrotask(callbacks);
+      await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+      coordinator.notifyIdle();
+      first.resolve(replaySafeFailure());
+      await settleAsyncWork();
+      expect(run).toHaveBeenCalledOnce();
+      expect(failures).toHaveBeenCalledOnce();
+      expect(callbacks).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      first.resolve(completed());
+    }
+  });
+
+  it('discards a retained wake when disposed during exhausted attempt cleanup', async () => {
+    const callbacks: Array<() => void> = [];
+    const first = deferred<PendingResumeRunResult>();
+    const run = vi.fn(() => first.promise);
+    const failures = vi.fn();
+    const coordinator = new PendingResumeCoordinator({
+      canRun: () => true,
+      run,
+      onTerminalFailure: failures,
+      scheduleMicrotask: (callback) => callbacks.push(callback),
+    });
+    coordinator.request();
+    runNextMicrotask(callbacks);
+    await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+    coordinator.request();
+    coordinator.dispose();
+    first.resolve(completed());
+    await settleAsyncWork();
+    coordinator.notifyIdle();
+    coordinator.request();
+    expect(run).toHaveBeenCalledOnce();
+    expect(failures).toHaveBeenCalledOnce();
+    expect(callbacks).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('waits for the foreground owner after exhausted attempt cleanup releases', async () => {
+    const callbacks: Array<() => void> = [];
+    const first = deferred<PendingResumeRunResult>();
+    let idle = true;
+    const run = vi
+      .fn<() => Promise<PendingResumeRunResult>>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(completed());
+    const coordinator = new PendingResumeCoordinator({
+      canRun: () => idle,
+      run,
+      scheduleMicrotask: (callback) => callbacks.push(callback),
+    });
+    try {
+      coordinator.request();
+      runNextMicrotask(callbacks);
+      await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+      coordinator.request();
+      idle = false;
+      first.resolve(completed());
+      await settleAsyncWork();
+      expect(callbacks).toHaveLength(0);
+      expect(run).toHaveBeenCalledOnce();
+      idle = true;
+      coordinator.notifyIdle();
+      expect(callbacks).toHaveLength(1);
+      runNextMicrotask(callbacks);
+      await settleAsyncWork();
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      first.resolve(completed());
+    }
+  });
+
+  it('retains a wake requested synchronously by the deadline callback until cleanup', async () => {
+    const callbacks: Array<() => void> = [];
+    const first = deferred<PendingResumeRunResult>();
+    const run = vi
+      .fn<() => Promise<PendingResumeRunResult>>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(completed());
+    const coordinator = new PendingResumeCoordinator({
+      canRun: () => true,
+      run,
+      onTerminalFailure: () => coordinator.request(),
+      scheduleMicrotask: (callback) => callbacks.push(callback),
+    });
+    try {
+      coordinator.request();
+      runNextMicrotask(callbacks);
+      await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+      expect(callbacks).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
+      expect(vi.getTimerCount()).toBe(0);
+      first.resolve(completed());
+      await settleAsyncWork();
+      expect(callbacks).toHaveLength(1);
+      runNextMicrotask(callbacks);
+      await settleAsyncWork();
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      first.resolve(completed());
+    }
+  });
+
   it('aborts at the absolute deadline and ignores the late result by attempt token', async () => {
     const callbacks: Array<() => void> = [];
     const firstRun = deferred<PendingResumeRunResult>();
@@ -671,12 +850,12 @@ describe('PendingResumeCoordinator', () => {
     });
 
     coordinator.request();
-    runNextMicrotask(callbacks);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(signals[1]?.aborted).toBe(false);
-
+    expect(callbacks).toHaveLength(0);
+    expect(run).toHaveBeenCalledOnce();
     firstRun.resolve(completed());
     await settleAsyncWork();
+    runNextMicrotask(callbacks);
+    expect(run).toHaveBeenCalledTimes(2);
     expect(signals[1]?.aborted).toBe(false);
     expect(terminalFailures).toHaveBeenCalledOnce();
 

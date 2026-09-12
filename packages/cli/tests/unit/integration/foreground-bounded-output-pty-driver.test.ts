@@ -8,6 +8,7 @@ import {
   latchForegroundBoundedPtyMarkers,
   latchPtyEvidence,
   latchPtyMarker,
+  latestCompleteStandardPtyFrame,
   parseForegroundBoundedOutputPtyEvidence,
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
@@ -128,6 +129,85 @@ describe('foreground bounded output PTY driver', () => {
       })
     ).toBe(false);
     expect(isCompleteRawPtyMarkerEvidence(null)).toBe(false);
+  });
+
+  it('uses the latest complete standard redraw instead of stale side-panel text', () => {
+    const previous = '\u001b[2K\u001b[GAnswering...\nBash active\n\u001b[2A\u001b[5G';
+    const current =
+      '\u001b[2K\u001b[1A\u001b[2K\u001b[GBash active\ncomposer\n\u001b[1A\u001b[5G';
+    expect(latestCompleteStandardPtyFrame(previous + current)).toBe(
+      'Bash active\ncomposer\n'
+    );
+  });
+
+  it('ignores an incomplete redraw rather than claiming the side panel disappeared', () => {
+    const previous = '\u001b[2K\u001b[GAnswering...\nBash active\n\u001b[2A\u001b[5G';
+    const partial = '\u001b[2K\u001b[G';
+    expect(latestCompleteStandardPtyFrame(previous + partial)).toContain(
+      'Answering...'
+    );
+    expect(
+      latestCompleteStandardPtyFrame(previous + partial + 'Bash active\n')
+    ).toContain('Answering...');
+    expect(
+      latestCompleteStandardPtyFrame(previous + partial + 'Bash active\n\u001b[5')
+    ).toContain('Answering...');
+    expect(
+      latestCompleteStandardPtyFrame(previous + partial + 'Bash active\n\u001b[5G')
+    ).toBe('Bash active\n');
+  });
+
+  it('does not accept a cursor-only update or bare text as a complete redraw', () => {
+    expect(latestCompleteStandardPtyFrame('Bash active\ncomposer')).toBeUndefined();
+    expect(
+      latestCompleteStandardPtyFrame('\u001b[1G\u001b[2A\u001b[5G')
+    ).toBeUndefined();
+  });
+
+  it('retains the panel when the latest complete redraw still contains it', () => {
+    const current =
+      '\u001b[2K\u001b[G\u001b[36mAnswering...\u001b[0m\r\nBash active\r\n\u001b[2A\u001b[5G';
+    expect(latestCompleteStandardPtyFrame(current)).toBe(
+      'Answering...\r\nBash active\r\n'
+    );
+  });
+
+  it('completes redraws without cursor positioning at the next erase sequence', () => {
+    const erase = '\u001b[2K\u001b[1A'.repeat(6) + '\u001b[2K\u001b[G';
+    const previous = `${erase}Answering...\r\nBash active\r\n`;
+    const current =
+      '  正在执行 1 个工具 Bash · Esc 取消\r\n\r\n' +
+      '╭────────────╮\r\n│ > 输入命令 │\r\n╰────────────╯\r\n' +
+      '  yolo mode on · deepseek-v4-flash\r\n';
+
+    expect(latestCompleteStandardPtyFrame(previous + erase + current)).toBe(
+      'Answering...\r\nBash active\r\n'
+    );
+    expect(latestCompleteStandardPtyFrame(previous + erase + current + erase)).toBe(
+      current
+    );
+  });
+
+  it('waits for every byte of a chunked erase boundary before completing a frame', () => {
+    const erase = '\u001b[2K\u001b[1A'.repeat(2) + '\u001b[2K\u001b[G';
+    const current = 'Bash active\r\ncomposer\r\n';
+    const output = erase + current;
+
+    for (let length = 0; length < erase.length; length++) {
+      expect(
+        latestCompleteStandardPtyFrame(output + erase.slice(0, length))
+      ).toBeUndefined();
+    }
+    expect(latestCompleteStandardPtyFrame(output + erase)).toBe(current);
+  });
+
+  it('retains a complete panel frame while the next no-cursor frame is partial', () => {
+    const erase = '\u001b[2K\u001b[1A\u001b[2K\u001b[G';
+    const panel = '\u001b[36mAnswering...\u001b[0m\r\nBash active\r\n';
+
+    expect(
+      latestCompleteStandardPtyFrame(erase + panel + erase + 'Bash active\r\n')
+    ).toBe('Answering...\r\nBash active\r\n');
   });
 
   it('retains only the latest bounded ANSI evidence', () => {

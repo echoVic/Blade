@@ -122,6 +122,27 @@ export function isCompleteRawPtyMarkerEvidence(value: unknown): boolean {
   );
 }
 
+export function latestCompleteStandardPtyFrame(output: string): string | undefined {
+  const frameStart = '\u001b[2K\u001b[G';
+  let latest: string | undefined;
+  let start = output.indexOf(frameStart);
+  while (start >= 0) {
+    const contentStart = start + frameStart.length;
+    const next = output.indexOf(frameStart, contentStart);
+    const candidate = output.slice(contentStart, next < 0 ? undefined : next);
+    const cursor = [...candidate.matchAll(/\[\d+G/g)].find(
+      (match) => candidate[match.index - 1] === '\u001b'
+    );
+    if (cursor) {
+      latest = stripVTControlCharacters(candidate.slice(0, cursor.index - 1));
+    } else if (next >= 0) {
+      latest = stripVTControlCharacters(candidate);
+    }
+    start = next;
+  }
+  return latest;
+}
+
 export function projectForegroundBoundedPtyOutput(output: string): string {
   const plain = [...stripVTControlCharacters(output)]
     .filter((character) => {

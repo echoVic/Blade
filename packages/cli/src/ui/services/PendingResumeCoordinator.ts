@@ -193,17 +193,19 @@ export class PendingResumeCoordinator {
     this.activeAttemptToken = attemptToken;
     this.activeRunController = controller;
 
-    const result = await this.options.run(controller.signal);
-    if (
-      this.disposed ||
-      generation !== this.generation ||
-      this.activeAttemptToken !== attemptToken
-    ) {
-      return;
+    let result: PendingResumeRunResult;
+    try {
+      result = await this.options.run(controller.signal);
+    } finally {
+      if (this.activeAttemptToken === attemptToken) {
+        this.activeAttemptToken = null;
+        this.activeRunController = null;
+        if (!this.disposed && generation !== this.generation) {
+          this.scheduleIfRunnable();
+        }
+      }
     }
-
-    this.activeAttemptToken = null;
-    this.activeRunController = null;
+    if (this.disposed || generation !== this.generation) return;
     if (result.status === 'completed') {
       const newerWakeRequested = this.wakeEpoch !== attemptWakeEpoch;
       this.clearEpisode();
@@ -323,8 +325,6 @@ export class PendingResumeCoordinator {
     this.requested = false;
     this.waitingForIdle = false;
     this.scheduledToken = null;
-    this.activeAttemptToken = null;
-    this.activeRunController = null;
     this.clearOwnedTimer('retry');
     this.clearOwnedTimer('deadline');
     this.resetEpisodeBudget();

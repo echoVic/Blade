@@ -16,7 +16,10 @@ import {
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildProcessRecordingAcpClient } from './acp/ChildProcessRecordingAcpClient.js';
-import { waitForPtyExit } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  latestCompleteStandardPtyFrame,
+  waitForPtyExit,
+} from './foregroundBoundedOutputPtyDriver.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
@@ -160,9 +163,17 @@ async function runPty(input: Input) {
       'TUI side question did not start'
     );
     plain = '';
+    output = '';
     terminal.write('\u001b');
     await waitFor(
-      () => plain.includes('Bash') && !plain.includes('Answering...'),
+      () => {
+        const frame = latestCompleteStandardPtyFrame(output);
+        return (
+          frame !== undefined &&
+          frame.includes('Bash') &&
+          !frame.includes('Answering...')
+        );
+      },
       'First Escape did not dismiss the side question',
       3_000
     );
@@ -273,8 +284,16 @@ async function runPty(input: Input) {
       cleanupComplete: true,
     };
   } catch (error) {
+    const frame = latestCompleteStandardPtyFrame(output);
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; terminal=${plain.slice(-6_000)}`
+      `${error instanceof Error ? error.message : String(error)}; terminal=${JSON.stringify(
+        {
+          outputChars: output.length,
+          completeFrameSeen: frame !== undefined,
+          mainToolVisible: frame?.includes('Bash') ?? false,
+          sidePanelVisible: frame?.includes('Answering...') ?? false,
+        }
+      )}`
     );
   } finally {
     if (!exited) {

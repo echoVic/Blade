@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { PENDING_RESUME_RECOVERY_BUDGET_MS } from '../../../src/agent/runtime/PendingResumeRecoveryPolicy.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
@@ -26,6 +27,8 @@ import { HookManager } from '../../../src/hooks/HookManager.js';
 import { resetWorkspaceIdentityCache } from '../../../src/security/WorkspaceIdentity.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
+import { Bus } from '../../../src/server/bus.js';
+import { taskFailureForCode } from '../../../src/context/taskFailure.js';
 import {
   ensureStoreInitialized,
   getState,
@@ -111,6 +114,253 @@ afterAll(() => {
   if (originalConfig) getState().config.actions.setConfig(originalConfig);
   if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
   else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+});
+
+describeReal('TUI pending-resume deadline drain (real API)', () => {
+  for (const model of models) {
+    it.skipIf(process.platform === 'win32')(
+      `${model.model} retains the timed-out attempt until initialization settles`,
+      { retry: 0, timeout: 270_000 },
+      async () => {
+        if (!model.baseURL) throw new Error('Missing deadline Provider');
+        const rootPath = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-resume-deadline-'))
+        );
+        const workspace = path.join(rootPath, 'workspace');
+        const storage = path.join(rootPath, 'storage');
+        const sessionId = `resume-deadline-${Date.now()}`;
+        const prompt = 'Reply exactly DEADLINE_DRAIN_RECOVERED and do not use tools.';
+        const previousStore = getState();
+        const previousKeys = snapshotProviderKeyEnvironment();
+        const previousMemory = process.env.BLADE_AUTO_MEMORY;
+        const hookManager = HookManager.getInstance();
+        const hooksEnabled = hookManager.isEnabled();
+        const proxy = await startRecordingProviderProxy(model.baseURL);
+        let renderer: ReactDOM.Root | undefined;
+        let container: HTMLDivElement | undefined;
+        let hook: ReturnType<typeof useCommandHandler> | undefined;
+        let runtime: SessionRuntime | undefined;
+        let writer: Awaited<ReturnType<typeof open>> | undefined;
+        let fifo: string | undefined;
+        const errors: unknown[] = [];
+        const wait = async (
+          predicate: () => boolean | Promise<boolean>,
+          message: string,
+          timeout = 30_000
+        ) => {
+          const deadline = Date.now() + timeout;
+          while (Date.now() < deadline) {
+            if (await predicate()) return;
+            await act(async () => {
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            });
+          }
+          throw new Error(message);
+        };
+        function Harness() {
+          hook = useCommandHandler(undefined, undefined, undefined, 2);
+          return null;
+        }
+        try {
+          process.env.BLADE_STORAGE_ROOT = storage;
+          process.env.BLADE_AUTO_MEMORY = '1';
+          hookManager.disable();
+          const base = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
+          const config: RuntimeConfig = {
+            ...base,
+            permissionMode: PermissionMode.DEFAULT,
+            providerForegroundRecoveryMs: 0,
+            hooks: { ...base.hooks, enabled: false },
+            disableAllHooks: true,
+            mcpServers: {},
+            models: base.models.map((entry) => ({
+              ...entry,
+              overrides: { ...entry.overrides, maxRetries: 0 },
+            })),
+          };
+          getState().config.actions.setConfig(config);
+          await mkdir(workspace, { recursive: true });
+          await writeCredentialFreeWorkspaceConfig(workspace, config);
+          await WorkspaceTrustService.getInstance().trust(workspace);
+          await SessionService.createSessionMetadata(sessionId, workspace, {
+            title: 'Resume deadline drain',
+            taskStatus: 'completed',
+            selectedModelId: config.currentModelId,
+            permissionMode: 'default',
+          });
+          runtime = await SessionRuntime.create({
+            sessionId,
+            workspaceRoot: workspace,
+            permissionMode: PermissionMode.DEFAULT,
+            mcpServers: {},
+            agents: [],
+          });
+          const queued = await runtime.enqueueSteering(prompt, {
+            allowBeforeTurn: true,
+          });
+          if (!queued.accepted || !queued.messageId)
+            throw new Error('Deadline input was not durably queued');
+          await new PersistentStore(workspace).saveMessage(
+            sessionId,
+            'user',
+            prompt,
+            null,
+            { inboxMessageId: queued.messageId }
+          );
+          await runtime.dispose();
+          runtime = undefined;
+          const transcript = getSessionFilePath(workspace, sessionId);
+          const memoryDir = path.join(path.dirname(transcript), 'memory');
+          await mkdir(memoryDir, { recursive: true });
+          fifo = path.join(memoryDir, 'MEMORY.md');
+          await promisify(execFile)('mkfifo', [fifo]);
+          vanillaStore.setState((state) => ({
+            ...state,
+            session: {
+              ...state.session,
+              sessionId,
+              workspaceRoot: workspace,
+              messages: [],
+              restoredContextMessages: null,
+              error: null,
+            },
+            command: {
+              ...state.command,
+              isProcessing: false,
+              abortController: null,
+              followUpPresentations: {},
+            },
+          }));
+          container = document.createElement('div');
+          document.body.appendChild(container);
+          renderer = ReactDOM.createRoot(container);
+          const mountedAt = Date.now();
+          await act(async () => {
+            renderer!.render(<Harness />);
+          });
+          await wait(async () => {
+            try {
+              writer = await open(fifo!, constants.O_WRONLY | constants.O_NONBLOCK);
+              return true;
+            } catch (error) {
+              if (error instanceof Error && 'code' in error && error.code === 'ENXIO')
+                return false;
+              throw error;
+            }
+          }, 'Pending Runtime did not enter FIFO initialization');
+          const oldController = getState().command.abortController;
+          expect(oldController).not.toBeNull();
+          await wait(
+            () => oldController?.signal.aborted === true,
+            'Real pending recovery deadline did not abort',
+            PENDING_RESUME_RECOVERY_BUDGET_MS + 5_000
+          );
+          const deadlineMs = Date.now() - mountedAt;
+          expect(deadlineMs).toBeGreaterThanOrEqual(PENDING_RESUME_RECOVERY_BUDGET_MS);
+          expect(getState().session.error).toBe(
+            `恢复排队指令失败: ${taskFailureForCode('timeout').message}`
+          );
+          expect(proxy.forwardedRequestNumbers).toEqual([]);
+          await act(async () => {
+            getState().command.actions.abort('user-cancel');
+            Bus.publish(
+              { sessionId, projectPath: workspace },
+              'subagent.completion.queued',
+              {}
+            );
+            await Promise.resolve();
+          });
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          });
+          expect(getState().command.abortController).toBe(oldController);
+          expect(proxy.forwardedRequestNumbers).toEqual([]);
+          expect(
+            readSessionEvents(transcript).filter(
+              (event) => event.type === 'turn_started'
+            )
+          ).toHaveLength(0);
+          await rename(fifo, `${fifo}.draining`);
+          fifo = undefined;
+          await writer!.writeFile('Release timed-out initialization.\n');
+          await writer!.close();
+          writer = undefined;
+          await wait(
+            async () =>
+              !getState().command.isProcessing &&
+              !(await SessionRuntime.hasPendingInbox(workspace, sessionId)),
+            'Retained wake did not finish after old initialization settled',
+            90_000
+          );
+          const events = readSessionEvents(transcript);
+          expect(events.filter((event) => event.type === 'turn_started')).toHaveLength(
+            1
+          );
+          expect(
+            events.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          expect(
+            events.filter((event) => event.type === 'inbox_acknowledged')
+          ).toHaveLength(1);
+          expect(proxy.forwardedRequestNumbers).toEqual([1]);
+          expect(
+            getState()
+              .session.messages.filter((message) => message.role === 'assistant')
+              .map((message) => message.content)
+          ).toEqual(['DEADLINE_DRAIN_RECOVERED']);
+          assertNoSecrets(
+            {
+              transcript: await readFile(transcript, 'utf8'),
+              messages: getState().session.messages,
+            },
+            [model.apiKey]
+          );
+          console.log(
+            `[pending-deadline-drain] ${JSON.stringify({ model: model.model, deadlineMs, oldControllerRetained: true, oneDurableTurn: true, providerRequests: proxy.forwardedRequestNumbers })}`
+          );
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          if (fifo)
+            await rename(fifo, `${fifo}.cleanup`).catch((error: unknown) => {
+              errors.push(error);
+            });
+          if (writer)
+            await writer.close().catch((error: unknown) => {
+              errors.push(error);
+            });
+          if (renderer)
+            await act(async () => {
+              renderer!.unmount();
+            });
+          const cleanup = await Promise.allSettled([
+            runtime?.dispose(),
+            hook?.cleanupAgent(),
+            proxy.close(),
+          ]);
+          for (const result of cleanup)
+            if (result.status === 'rejected') errors.push(result.reason);
+          container?.remove();
+          vanillaStore.setState(previousStore, true);
+          if (hooksEnabled) hookManager.enable();
+          else hookManager.disable();
+          if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+          else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+          if (previousMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+          else process.env.BLADE_AUTO_MEMORY = previousMemory;
+          restoreProviderKeyEnvironment(previousKeys);
+          if (cleanup.every((result) => result.status === 'fulfilled'))
+            await rm(rootPath, { recursive: true, force: true });
+        }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1)
+          throw new AggregateError(
+            errors,
+            'Deadline drain trajectory and cleanup failed'
+          );
+      }
+    );
+  }
 });
 
 describeReal('TUI pending-resume Session handoff (real API)', () => {

@@ -81,6 +81,8 @@ or tool execution starts, Blade does not replay the whole pending turn, which
 prevents duplicate `Write`, shell, network, or other side effects. Attempt or
 time exhaustion becomes `exhausted`; non-retryable failures become `failed`.
 
+At the absolute deadline, TUI cancels and reports `exhausted` immediately but retains the active attempt's ownership until its Promise finishes cleanup. New wakeups are coalesced without starting another attempt during that interval; after cleanup, foreground-idle checks still apply. No new wake means no restart, and disposal drops any retained wake. This barrier does not extend the 120-second recovery budget or promise interruption of blocked file reads. Real Hook/Runtime tests keep the actual 120-second deadline and verify that a new wake cannot replace a command controller whose initialization is still pending.
+
 Recovery state contains only bounded fields and never persists raw Provider
 errors, request bodies, paths, headers, or credentials. Web SSE uses
 `pending.resume`; ACP uses `session_info_update._meta["blade/pendingResume"]`.

@@ -81,6 +81,12 @@ input、Goal 和 preflight continuation 投影同一生命周期与硬期限，�
 就不会重放整个 pending turn；这避免重复 `Write`、Shell、网络请求或其他副作用。达到
 attempt 或时间上限后进入 `exhausted`，不可重试错误进入 `failed`。
 
+TUI 在绝对 deadline 到达时立即取消并报告 `exhausted`，但仍保留当前尝试的运行所有权，
+直到其 Promise 完成收尾。期间收到的新唤醒只合并、不启动第二个尝试；收尾后仍需满足
+前台空闲条件。没有新唤醒不会重新开始，卸载则丢弃保留的唤醒。此屏障不延长 120 秒
+恢复预算，也不承诺强制中断阻塞的文件读取。真实 Hook/Runtime 测试保持实际 120 秒期限，
+验证超时后的新唤醒不能替换尚在初始化的命令控制器。
+
 该状态只投影有界字段，不保存 Provider 原始错误、请求正文、路径、headers 或
 credential。Web SSE 使用 `pending.resume`；ACP 使用
 `session_info_update._meta["blade/pendingResume"]`。恢复 payload 只暴露 phase、kind、
