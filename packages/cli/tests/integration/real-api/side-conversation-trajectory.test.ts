@@ -80,7 +80,7 @@ async function reserveSidePort(): Promise<number> {
   return address.port;
 }
 
-async function startSideCancellationProxy(baseURL: string) {
+async function startSideCancellationProxy(baseURL: string, heldRequestNumber = 1) {
   const operations = new Set<Promise<void>>();
   const controllers = new Set<AbortController>();
   const forwarded: number[] = [];
@@ -140,7 +140,7 @@ async function startSideCancellationProxy(baseURL: string) {
             -32_768
           );
           if (
-            requestNumber === 1 &&
+            requestNumber === heldRequestNumber &&
             !stoppedOnce &&
             /"(?:content|reasoning_content)"\s*:\s*"[^"\s]/.test(prefix)
           ) {
@@ -304,7 +304,7 @@ const cancellationModels = isRealApiTestEnabled()
 
 async function runSideCancellationTrajectory(
   model: TestModelConfig,
-  action: 'dismiss' | 'shutdown'
+  action: 'dismiss' | 'shutdown' | 'replace-draft'
 ): Promise<void> {
   if (!model.baseURL) throw new Error('Missing real side-question Provider');
   const root = await realpath(
@@ -313,7 +313,8 @@ async function runSideCancellationTrajectory(
   const workspace = path.join(root, 'workspace');
   const storageRoot = path.join(root, 'storage');
   const home = path.join(root, 'home');
-  const proxy = await startSideCancellationProxy(model.baseURL);
+  const heldRequestNumber = action === 'replace-draft' ? 2 : 1;
+  const proxy = await startSideCancellationProxy(model.baseURL, heldRequestNumber);
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   const processes: Array<{
     child: ChildProcess;
@@ -474,20 +475,34 @@ async function runSideCancellationTrajectory(
     const transcriptPath = findSessionTranscript(storageRoot, session.sessionId);
     const before = await readFile(transcriptPath);
     const panel = page.locator('[data-blade-side-conversation]');
-    await composer.fill(
-      '/btw Reply with exactly SIDE_CANCEL_FIRST and do not use tools.'
-    );
-    await page.locator('[data-blade-submit]').click();
+    const sideComposer = page.locator('textarea[name="side-conversation-composer"]');
+    const heldQuestion = 'Reply with exactly SIDE_CANCEL_FIRST and do not use tools.';
+    if (action === 'replace-draft') {
+      await composer.fill('/btw Reply exactly DRAFT_READY and do not use tools.');
+      await page.locator('[data-blade-submit]').click();
+      await panel
+        .getByText('DRAFT_READY', { exact: true })
+        .waitFor({ state: 'visible', timeout: 90_000 });
+      await sideComposer.fill(heldQuestion);
+      await sideComposer.press('Enter');
+    } else {
+      await composer.fill(`/btw ${heldQuestion}`);
+      await page.locator('[data-blade-submit]').click();
+    }
     await panel.locator('[role="status"]').waitFor({ state: 'visible' });
     await waitForSideCondition(
-      () => proxy.held.includes(1),
+      () => proxy.held.includes(heldRequestNumber),
       'Real Provider content never reached the side-question barrier',
       90_000
     );
-    expect(proxy.forwarded).toEqual([1]);
+    expect(proxy.forwarded).toEqual(action === 'replace-draft' ? [1, 2] : [1]);
     const stoppedAt = Date.now();
     cancellingSideRequest = true;
-    if (action === 'dismiss') {
+    if (action === 'replace-draft') {
+      await page
+        .getByRole('button', { name: 'New side conversation', exact: true })
+        .click();
+    } else if (action === 'dismiss') {
       await page
         .getByRole('button', { name: 'Dismiss side conversation', exact: true })
         .click();
@@ -497,7 +512,7 @@ async function runSideCancellationTrajectory(
       child.kill('SIGTERM');
     }
     await waitForSideCondition(
-      () => proxy.cancelled.includes(1) && proxy.active() === 0,
+      () => proxy.cancelled.includes(heldRequestNumber) && proxy.active() === 0,
       'Side request was not cancelled before the shutdown grace deadline',
       3_000
     );
@@ -524,6 +539,15 @@ async function runSideCancellationTrajectory(
     }
     cancellingSideRequest = false;
     expect(await readFile(transcriptPath)).toEqual(before);
+    if (action === 'replace-draft') {
+      expect(await panel.getAttribute('data-status')).toBe('idle');
+      expect(await sideComposer.inputValue()).toBe('');
+      await sideComposer.fill('New unsent draft');
+      await page
+        .getByRole('button', { name: 'Dismiss side conversation', exact: true })
+        .click();
+      await panel.waitFor({ state: 'detached' });
+    }
     const followUpResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
@@ -546,8 +570,9 @@ async function runSideCancellationTrajectory(
     );
     expect(await panel.innerText()).toContain('SIDE_CANCEL_FOLLOWUP');
     expect(await readFile(transcriptPath)).toEqual(before);
-    expect(proxy.forwarded).toEqual([1, 2]);
-    expect(proxy.completed).toEqual([2]);
+    expect(proxy.forwarded).toEqual(action === 'replace-draft' ? [1, 2, 3] : [1, 2]);
+    expect(proxy.completed).toEqual(action === 'replace-draft' ? [1, 3] : [2]);
+    if (action === 'replace-draft') expect(await sideComposer.inputValue()).toBe('');
     expect(proxy.failures).toEqual([]);
     expect(faults).toEqual([]);
     expect(child.exitCode).toBeNull();
@@ -594,7 +619,7 @@ describe.skipIf(!isRealApiTestEnabled())(
   'Side conversation cancellation production Chromium',
   () => {
     for (const model of cancellationModels) {
-      it.for(['dismiss', 'shutdown'] as const)(
+      it.for(['dismiss', 'shutdown', 'replace-draft'] as const)(
         `${model.model} cancels on %s without changing the main transcript`,
         { timeout: 240_000 },
         async (action, context) => {
@@ -1473,6 +1498,32 @@ for (const mode of ['production', 'development'] as const) {
             await panel
               .getByText('IME_SIDE_DONE', { exact: true })
               .waitFor({ state: 'visible', timeout: 90_000 });
+            expect(sideRequests).toBe(2);
+            await page
+              .locator('textarea[name="side-conversation-composer"]')
+              .fill('Discarded side draft');
+            await page
+              .getByRole('button', { name: 'Dismiss side conversation', exact: true })
+              .click();
+            await answer.evaluate((element) => {
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              const selection = window.getSelection();
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+              document.dispatchEvent(new Event('selectionchange'));
+            });
+            await page
+              .getByRole('button', { name: 'Ask in side conversation', exact: true })
+              .click();
+            await page
+              .locator('textarea[name="side-conversation-composer"]')
+              .waitFor({ state: 'visible' });
+            expect(
+              await page
+                .locator('textarea[name="side-conversation-composer"]')
+                .inputValue()
+            ).toBe('');
             expect(sideRequests).toBe(2);
             await page
               .getByRole('button', { name: 'Dismiss side conversation', exact: true })

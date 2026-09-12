@@ -18,7 +18,10 @@ import {
 } from 'react';
 import { useT } from '@/i18n';
 import { useSessionStore } from '@/store/session';
-import type { SideConversationMessage } from '@/store/session/types';
+import type {
+  SideConversationMessage,
+  SideConversationState,
+} from '@/store/session/types';
 
 const MarkdownRenderer = lazy(() =>
   import('./MarkdownRenderer').then((module) => ({
@@ -44,13 +47,27 @@ function legacyMessages(
   ];
 }
 
+function sideDraftOwner(side: SideConversationState | null): string | null {
+  return side
+    ? JSON.stringify([
+        side.sessionRef.projectPath,
+        side.sessionRef.sessionId,
+        side.requestId,
+      ])
+    : null;
+}
+
 export function SideConversationPanel() {
   const t = useT();
   const sideConversation = useSessionStore((state) => state.sideConversation);
   const ask = useSessionStore((state) => state.askSideConversation);
   const startNew = useSessionStore((state) => state.openSideConversation);
   const dismiss = useSessionStore((state) => state.dismissSideConversation);
-  const [draft, setDraft] = useState('');
+  const owner = sideDraftOwner(sideConversation);
+  const [draftState, setDraftState] = useState({ owner, text: '' });
+  const draft = draftState.owner === owner ? draftState.text : '';
+  if (draftState.owner !== owner) setDraftState({ owner, text: '' });
+  const setDraft = (text: string) => setDraftState({ owner, text });
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -81,8 +98,16 @@ export function SideConversationPanel() {
     const question = draft.trim();
     if (!question || sideConversation.status === 'loading') return;
     setDraft('');
-    void ask(question).then((accepted) => {
-      if (!accepted) setDraft(question);
+    const pending = ask(question);
+    const requestOwner = sideDraftOwner(useSessionStore.getState().sideConversation);
+    void pending.then((accepted) => {
+      if (
+        !accepted &&
+        requestOwner !== null &&
+        sideDraftOwner(useSessionStore.getState().sideConversation) === requestOwner
+      ) {
+        setDraftState({ owner: requestOwner, text: question });
+      }
     });
   };
 

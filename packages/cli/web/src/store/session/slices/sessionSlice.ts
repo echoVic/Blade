@@ -264,7 +264,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     const normalizedSelection = selectedText?.trim();
     set({
       sideConversation: {
-        requestId: `draft-${Date.now()}`,
+        requestId: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         sessionRef,
         question: '',
         ...(normalizedSelection ? { selectedText: normalizedSelection } : {}),

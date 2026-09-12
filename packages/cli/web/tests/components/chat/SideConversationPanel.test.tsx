@@ -12,6 +12,7 @@ vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
 
 import { SideConversationPanel } from '../../../src/components/chat/SideConversationPanel';
 import { setLocale } from '../../../src/i18n';
+import { sessionService } from '../../../src/services/sessionService';
 import { useSessionStore } from '../../../src/store/session';
 
 const actualAskSideConversation = useSessionStore.getState().askSideConversation;
@@ -20,8 +21,10 @@ const actualOpenSideConversation = useSessionStore.getState().openSideConversati
 describe('SideConversationPanel', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
+  let previousStore: ReturnType<typeof useSessionStore.getState>;
 
   beforeEach(() => {
+    previousStore = useSessionStore.getState();
     setLocale('en');
     useSessionStore.setState({ sideConversation: null });
     container = document.createElement('div');
@@ -38,6 +41,8 @@ describe('SideConversationPanel', () => {
       openSideConversation: actualOpenSideConversation,
       sideConversation: null,
     });
+    useSessionStore.setState(previousStore, true);
+    vi.restoreAllMocks();
     container.remove();
   });
 
@@ -120,6 +125,189 @@ describe('SideConversationPanel', () => {
     );
     expect(useSessionStore.getState().messages).toBe(messages);
   });
+
+  it.each(['reopen', 'replacement', 'session', 'workspace', 'same-tick'] as const)(
+    'does not carry an unsent draft across %s',
+    async (transition) => {
+      if (transition === 'same-tick') vi.spyOn(Date, 'now').mockReturnValue(1234);
+      const ref = { sessionId: 'draft-owner', projectPath: '/tmp/draft-owner' };
+      useSessionStore.setState({
+        currentSessionRef: ref,
+        currentSessionId: ref.sessionId,
+        isTemporarySession: false,
+      });
+      expect(useSessionStore.getState().openSideConversation('Original context')).toBe(
+        true
+      );
+      await act(async () => root.render(<SideConversationPanel />));
+      const textarea = container.querySelector('textarea');
+      if (!textarea) throw new Error('Draft composer missing');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value'
+        )?.set?.call(textarea, 'Old workspace draft');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      if (transition === 'reopen') {
+        await act(async () => useSessionStore.getState().dismissSideConversation());
+      }
+      await act(async () => {
+        if (transition === 'session' || transition === 'workspace') {
+          const next =
+            transition === 'session'
+              ? { ...ref, sessionId: 'other-session' }
+              : { ...ref, projectPath: '/tmp/other-workspace' };
+          useSessionStore.setState({
+            currentSessionRef: next,
+            currentSessionId: next.sessionId,
+          });
+        }
+        useSessionStore.getState().openSideConversation('Replacement context');
+      });
+      expect(container.querySelector('textarea')?.value).toBe('');
+      expect(container.textContent).toContain('Replacement context');
+    }
+  );
+
+  it.each([
+    'reopen',
+    'new-button',
+    'selection',
+    'session',
+    'workspace',
+    'dismissed',
+  ] as const)('does not restore a late failed draft into %s', async (transition) => {
+    let rejectRequest!: (error: Error) => void;
+    const response = new Promise<
+      Awaited<ReturnType<typeof sessionService.askSideQuestion>>
+    >((_resolve, reject) => {
+      rejectRequest = reject;
+    });
+    const ask = vi
+      .spyOn(sessionService, 'askSideQuestion')
+      .mockReturnValueOnce(response);
+    const ref = { sessionId: 'request-owner', projectPath: '/tmp/request-owner' };
+    useSessionStore.setState({
+      currentSessionRef: ref,
+      currentSessionId: ref.sessionId,
+      isTemporarySession: false,
+    });
+    useSessionStore.getState().openSideConversation();
+    await act(async () => root.render(<SideConversationPanel />));
+    const textarea = container.querySelector('textarea');
+    if (!textarea) throw new Error('Request composer missing');
+    const setValue = (input: HTMLTextAreaElement, value: string) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value'
+      )?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await act(async () => {
+      setValue(textarea, 'Old pending question');
+    });
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      );
+    });
+    expect(ask).toHaveBeenCalledOnce();
+    expect(useSessionStore.getState().sideConversation?.status).toBe('loading');
+    await act(async () => {
+      if (transition === 'new-button') {
+        container
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="New side conversation"]'
+          )
+          ?.click();
+      } else {
+        if (transition === 'reopen' || transition === 'dismissed')
+          useSessionStore.getState().dismissSideConversation();
+        if (transition === 'session' || transition === 'workspace') {
+          const next =
+            transition === 'session'
+              ? { ...ref, sessionId: 'new-session' }
+              : { ...ref, projectPath: '/tmp/new-workspace' };
+          useSessionStore.setState({
+            currentSessionRef: next,
+            currentSessionId: next.sessionId,
+          });
+        }
+        if (transition !== 'dismissed')
+          useSessionStore.getState().openSideConversation('New context');
+      }
+    });
+    if (transition !== 'dismissed') {
+      const input = container.querySelector('textarea');
+      if (!input) throw new Error('Replacement composer missing');
+      await act(async () => {
+        setValue(input, 'New unsent question');
+      });
+    }
+    await act(async () => {
+      rejectRequest(new Error('Late request failure'));
+      await response.catch(() => undefined);
+    });
+    if (transition === 'dismissed') {
+      expect(container.querySelector('textarea')).toBeNull();
+      await act(async () => {
+        useSessionStore.getState().openSideConversation();
+      });
+      expect(container.querySelector('textarea')?.value).toBe('');
+    } else {
+      expect(container.querySelector('textarea')?.value).toBe('New unsent question');
+      expect(useSessionStore.getState().sideConversation?.status).toBe('idle');
+    }
+    expect(container.textContent).not.toContain('Late request failure');
+  });
+
+  it.each(['rejected', 'validation', 'accepted'] as const)(
+    'keeps same-panel draft semantics when a request is %s',
+    async (outcome) => {
+      const ref = { sessionId: 'same-owner', projectPath: '/tmp/same-owner' };
+      useSessionStore.setState({
+        currentSessionRef: ref,
+        currentSessionId: ref.sessionId,
+        isTemporarySession: false,
+      });
+      useSessionStore.getState().openSideConversation();
+      const ask = vi.spyOn(sessionService, 'askSideQuestion');
+      if (outcome === 'accepted')
+        ask.mockResolvedValueOnce({
+          response: 'ANSWER',
+          durationMs: 1,
+          modelId: 'test-model',
+        });
+      else ask.mockRejectedValueOnce(new Error('Current request failure'));
+      const question =
+        outcome === 'validation' ? 'x'.repeat(40_000) : 'Current question';
+      await act(async () => root.render(<SideConversationPanel />));
+      const input = container.querySelector('textarea');
+      if (!input) throw new Error('Same-panel composer missing');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value'
+        )?.set?.call(input, question);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => {
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+      });
+      expect(container.querySelector('textarea')?.value).toBe(
+        outcome === 'accepted' ? '' : question
+      );
+      if (outcome === 'validation') expect(ask).not.toHaveBeenCalled();
+      if (outcome === 'accepted') expect(container.textContent).toContain('ANSWER');
+      if (outcome === 'rejected')
+        expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+          'Current request failure'
+        );
+    }
+  );
 
   it.each(
     (['native', 'legacy', 'lifecycle'] as const).flatMap((composition) =>

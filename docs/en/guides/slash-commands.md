@@ -252,7 +252,11 @@ historical reference; neither it nor history is promoted to system instructions.
 On Web, the side conversation panel supports follow-up questions while it remains
 open. That temporary history is cleared when the panel closes and is never written
 to the main Session. Selecting text in the main conversation can also open the panel
-with that passage attached as quoted context.
+with that passage attached as quoted context. Unsent drafts also belong only to the
+current panel and are discarded on dismissal, replacement, or Session/workspace
+changes. Late failure from a cancelled or replaced request cannot restore text into
+a new panel. Failure or validation rejection of the current request retains its
+draft for editing and retry.
 
 During input-method composition, the Web main composer, side conversation, and
 annotation editor leave keys to the input method: candidate-confirmation Enter
