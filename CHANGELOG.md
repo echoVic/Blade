@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.174] - 2026-09-13
+
+### Fixed
+- Prioritize local Bash and ACP-local finalization failures over timeout/cancellation, including managed foreground candidates. Retain the original stop flags and failed-cleanup lease instead of reporting only a normal timeout or abort.
+- Preserve bounded output accounting and the canonical finalization category without exposing raw cleanup errors or changing retry and process termination budgets.
+
+### Tests
+- Reproduce real lease-removal failures with directory permissions across direct Bash, managed foreground, and ACP-local paths; cover cancellation/error ordering, lease retention, and subsequent successful commands.
+- Verify real DeepSeek Flash/Pro Chromium requests, durable tool results, error cards, and reload behavior with an actual Bash timeout followed by failed lease removal.
+
 ## [0.10.173] - 2026-09-13
 
 ### Fixed
