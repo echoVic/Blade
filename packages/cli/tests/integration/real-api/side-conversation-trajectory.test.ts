@@ -967,6 +967,15 @@ describe.skipIf(!isRealApiTestEnabled())(
                 systemContainsQuestion:
                   systemContent.includes('CATALOG_SIDE_FOLLOWUP') ||
                   systemContent.includes('MAIN_MUST_NOT_RUN'),
+                historicalMainQuoted: providerRequest.messages
+                  .slice(0, -1)
+                  .filter((message) => message.role === 'user')
+                  .every(
+                    (message) =>
+                      typeof message.content === 'string' &&
+                      message.content.startsWith('<main_conversation_reference>\n') &&
+                      message.content.endsWith('\n</main_conversation_reference>')
+                  ),
                 lastIsUser: lastMessage?.role === 'user',
                 lastHasSideQuestion:
                   lastContent?.includes('CATALOG_SIDE_FOLLOWUP') === true,
@@ -982,6 +991,7 @@ describe.skipIf(!isRealApiTestEnabled())(
               expect(boundaryEvidence).toMatchObject({
                 systemHasSideScope: true,
                 systemContainsQuestion: false,
+                historicalMainQuoted: true,
                 lastIsUser: true,
                 lastHasSideQuestion: true,
                 lastHasCancelledMain: false,

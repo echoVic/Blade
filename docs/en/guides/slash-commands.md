@@ -244,8 +244,10 @@ explicitly.
 
 A static system instruction scopes the request to the current side question. Earlier
 conversation remains reference context, not an unfinished or cancelled main task to
-resume. User questions and history retain their original roles rather than being
-promoted to system instructions.
+resume. Historical user text is explicitly quoted inside `main_conversation_reference`
+in the side Provider request, with delimiters escaped. Roles, images, metadata, and
+the durable parent transcript are preserved. The current question stays outside the
+historical reference; neither it nor history is promoted to system instructions.
 
 On Web, the side conversation panel supports follow-up questions while it remains
 open. That temporary history is cleared when the panel closes and is never written

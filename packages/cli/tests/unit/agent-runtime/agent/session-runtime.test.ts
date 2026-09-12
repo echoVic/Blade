@@ -615,7 +615,8 @@ describe('SessionRuntime', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'user',
-          content: 'Persisted parent message',
+          content:
+            '<main_conversation_reference>\nPersisted parent message\n</main_conversation_reference>',
         }),
       ])
     );

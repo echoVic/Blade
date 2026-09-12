@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.172] - 2026-09-13
+
+### Fixed
+- Mark historical user text as quoted main-conversation reference in side requests, rather than relying on system scope alone to distinguish an unanswered main task from the current question. Escape reference delimiters while preserving roles, images, metadata, and the durable parent transcript.
+
+### Tests
+- Cover plain-text and multimodal history, delimiter escaping, and unchanged parent data. Check the actual Provider reference boundary while retaining the original conflicting main request and exact follow-up answer assertions.
+
 ## [0.10.171] - 2026-09-12
 
 ### Fixed
