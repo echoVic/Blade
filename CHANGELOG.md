@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.170] - 2026-09-12
+
+### Fixed
+- Keep input-method composition keys out of Web main-composer, side-conversation, and annotation shortcuts. Candidate confirmation no longer sends incomplete drafts, Escape no longer dismisses an active editor, and candidate navigation does not recall input history.
+- Clear composition ownership on completion, blur, and editor reopening while preserving deliberate submission, multiline input, and select-all.
+
+### Tests
+- Add failing-first composition regressions and verify real Chromium composition with DeepSeek Flash/Pro in both production and development GUI builds. Assert no premature HTTP requests, exact replies, unchanged main JSONL for side questions, local-only annotations, and zero browser faults.
+
 ## [0.10.169] - 2026-09-12
 
 ### Fixed
