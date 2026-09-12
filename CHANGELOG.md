@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.167] - 2026-09-12
+
+### Fixed
+- Drain both parallel side-conversation preparation operations before releasing Runtime ownership when either fails. Preserve the first error and keep successful preparation parallel.
+
+### Tests
+- Cover context/prompt failure, late sibling failure, disposal barriers, and both successful completion orders.
+- Verify real DeepSeek Flash/Pro Chromium recovery after a damaged context record while memory reading is held by a FIFO, with no early response or failed-operation Provider call.
+
 ## [0.10.166] - 2026-09-12
 
 ### Fixed
