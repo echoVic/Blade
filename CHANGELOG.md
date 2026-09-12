@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.173] - 2026-09-13
+
+### Fixed
+- Bind Web side-conversation drafts to their Session, workspace, and request. Dismissal or replacement no longer carries unsent text into a new panel, and late cancelled-request failures cannot overwrite its draft.
+- Keep same-panel failure and validation recovery, and distinguish panels opened within the same millisecond.
+
+### Tests
+- Add failing-first draft ownership regressions and a production Chromium old-version comparison. Verify real DeepSeek Flash/Pro request replacement, bounded cancellation, exact follow-up answers, unchanged main JSONL, and draft clearing in production/development GUI flows.
+
 ## [0.10.172] - 2026-09-13
 
 ### Fixed
