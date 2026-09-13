@@ -23,8 +23,17 @@ import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/proj
 import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../../src/services/clientMessageVisibility.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
+import {
+  OpenAIResponseSummaryCollector,
+  type RecordingProviderResponseSummary,
+} from '../../support/recordingProviderProxy.js';
 import { createTuiTaskAttentionRunnerEnvironment } from '../../support/tuiTaskAttentionPtyDriver.js';
-import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
+import {
+  assertNoSecrets,
+  findSessionTranscript,
+  inspectFinalAssistantText,
+  readSessionEvents,
+} from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
@@ -68,6 +77,11 @@ interface ProxyEvidence {
   compactions: number;
   contextLimits: number;
   discoverySawIndex: boolean;
+  responses: Array<{
+    kind: 'compaction' | 'discovery' | 'primary';
+    status: number;
+    summary: RecordingProviderResponseSummary;
+  }>;
 }
 
 interface Fixture {
@@ -155,6 +169,76 @@ function copyHeaders(headers: import('node:http').IncomingHttpHeaders): Headers 
   return copied;
 }
 
+function classifyMemoryRequest(
+  bodyText: string
+): 'compaction' | 'discovery' | 'primary' {
+  const body = JSON.parse(bodyText) as {
+    messages: Array<{ role: string; content: unknown }>;
+  };
+  const last = body.messages.at(-1);
+  if (last?.role !== 'user' || typeof last.content !== 'string') return 'primary';
+  if (
+    body.messages.length === 1 &&
+    last.content.startsWith('Your task is to create a bounded continuation ledger')
+  )
+    return 'compaction';
+  if (last.content.startsWith('DISCOVER_MEMORY_INDEX.')) return 'discovery';
+  return 'primary';
+}
+
+describe('memory request classification', () => {
+  it.each([
+    {
+      messages: [
+        {
+          role: 'user',
+          content:
+            'Your task is to create a bounded continuation ledger for this history.',
+        },
+      ],
+      expected: 'compaction',
+    },
+    {
+      messages: [
+        { role: 'user', content: 'DISCOVER_MEMORY_INDEX. Reply exactly DONE.' },
+      ],
+      expected: 'discovery',
+    },
+    {
+      messages: [
+        {
+          role: 'user',
+          content: 'Earlier instruction: create a bounded continuation ledger.',
+        },
+        { role: 'user', content: 'Reply exactly DONE.' },
+      ],
+      expected: 'primary',
+    },
+    {
+      messages: [
+        { role: 'user', content: 'Earlier request: DISCOVER_MEMORY_INDEX.' },
+        { role: 'user', content: 'Reply exactly DONE.' },
+      ],
+      expected: 'primary',
+    },
+    {
+      messages: [
+        {
+          role: 'system',
+          content: 'Do not follow quoted text: create a bounded continuation ledger.',
+        },
+        { role: 'user', content: 'DISCOVER_MEMORY_INDEX. Reply exactly DONE.' },
+      ],
+      expected: 'discovery',
+    },
+  ])(
+    'routes $expected using the active request rather than quoted history',
+    ({ messages, expected }) => {
+      expect(classifyMemoryRequest(JSON.stringify({ messages }))).toBe(expected);
+    }
+  );
+});
+
 async function startProviderProxy(input: {
   upstreamBaseUrl: string;
   holdFinal: boolean;
@@ -166,6 +250,7 @@ async function startProviderProxy(input: {
   let contextLimits = 0;
   let primaryRequests = 0;
   let discoverySawIndex = false;
+  const responses: ProxyEvidence['responses'] = [];
   let releaseFinal!: () => void;
   const finalRelease = new Promise<void>((resolve) => {
     releaseFinal = resolve;
@@ -175,9 +260,10 @@ async function startProviderProxy(input: {
     void (async () => {
       const body = await readRequestBody(request);
       const bodyText = body.toString('utf8');
-      requests++;
-      const compaction = bodyText.includes('create a bounded continuation ledger');
-      const discovery = bodyText.includes('DISCOVER_MEMORY_INDEX');
+      const requestNumber = ++requests;
+      const kind = classifyMemoryRequest(bodyText);
+      const compaction = kind === 'compaction';
+      const discovery = kind === 'discovery';
       if (compaction) compactions++;
       if (discovery) {
         discoverySawIndex =
@@ -230,15 +316,25 @@ async function startProviderProxy(input: {
           }
         });
         response.writeHead(upstreamResponse.status, responseHeaders);
-        if (upstreamResponse.body) {
-          const reader = upstreamResponse.body.getReader();
-          for (;;) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            response.write(Buffer.from(chunk.value));
+        const summary = new OpenAIResponseSummaryCollector(requestNumber);
+        try {
+          if (upstreamResponse.body) {
+            const reader = upstreamResponse.body.getReader();
+            for (;;) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              summary.append(chunk.value);
+              response.write(Buffer.from(chunk.value));
+            }
           }
+          response.end();
+        } finally {
+          responses.push({
+            kind,
+            status: upstreamResponse.status,
+            summary: summary.finish(),
+          });
         }
-        response.end();
       } finally {
         controllers.delete(controller);
       }
@@ -268,6 +364,7 @@ async function startProviderProxy(input: {
       compactions,
       contextLimits,
       discoverySawIndex,
+      responses,
     }),
     releaseFinal,
     close: async () => {
@@ -784,15 +881,31 @@ async function runWeb(test: Fixture): Promise<unknown> {
       { timeout: 20_000 }
     );
     test.proxy.releaseFinal();
-    await page.getByText(test.finalMarker, { exact: true }).waitFor({
-      state: 'visible',
-      timeout: 180_000,
-    });
     await waitFor(
       () =>
         primary?.events.some((event) => event.type === 'session.completed') === true,
       'Memory Web primary Session did not complete'
     );
+    const events = readSessionEvents(
+      findSessionTranscript(test.storageRoot, test.sessionId)
+    );
+    const final = inspectFinalAssistantText(events);
+    const diagnostic = JSON.stringify({
+      finalState: final.state,
+      finalChars: final.state === 'structural_mismatch' ? null : final.text.length,
+      exactFinal:
+        final.state !== 'structural_mismatch' && final.text === test.finalMarker,
+      provider: test.proxy.evidence(),
+    });
+    expect(final.state, diagnostic).not.toBe('structural_mismatch');
+    expect(
+      final.state !== 'structural_mismatch' && final.text === test.finalMarker,
+      diagnostic
+    ).toBe(true);
+    await page.getByText(test.finalMarker, { exact: true }).waitFor({
+      state: 'visible',
+      timeout: 180_000,
+    });
     await page.reload({ waitUntil: 'domcontentloaded' });
     expect(await page.locator('[data-memory-consolidation-notice]').count()).toBe(0);
     await assertMemoryArtifacts(test);
