@@ -17,13 +17,17 @@ import { chromium } from 'playwright';
 import { describe, expect, it, type TestContext, vi } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
 import { TurnActivityProjectionSchema } from '../../../src/api/turnActivitySchemas.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
-import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
+import {
+  type RecordingProviderProxy,
+  startRecordingProviderProxy,
+} from '../../support/recordingProviderProxy.js';
 import { createTuiTaskAttentionRunnerEnvironment } from '../../support/tuiTaskAttentionPtyDriver.js';
 import {
   assertNoSecrets,
@@ -710,6 +714,421 @@ function summarizeTurnActivityRequests(requestBodies: readonly string[]) {
   });
 }
 
+type TurnActivityProviderEvidence = Pick<
+  RecordingProviderProxy,
+  'requestBodies' | 'forwardedRequestNumbers' | 'responseSummaries' | 'requestLifecycle'
+>;
+
+const EMPTY_FINAL_CORRECTION_TEXT =
+  'The previous response was empty after successful tool execution. ' +
+  "Return a non-empty final response that directly completes the user's request. " +
+  'Do not call tools unless unfinished work requires another tool action.';
+
+function assertTurnActivityProviderTrajectory(
+  proxy: TurnActivityProviderEvidence,
+  events: readonly SessionEvent[]
+): void {
+  const responses = [...proxy.responseSummaries].sort(
+    (left, right) => left.requestNumber - right.requestNumber
+  );
+  const diagnostic = JSON.stringify({
+    requests: summarizeTurnActivityRequests(proxy.requestBodies),
+    responses,
+    lifecycle: proxy.requestLifecycle.map(({ requestNumber, phase, statusClass }) => ({
+      requestNumber,
+      phase,
+      statusClass,
+    })),
+  });
+  const count = proxy.requestBodies.length;
+  expect(count === 2 || count === 3, diagnostic).toBe(true);
+  expect(proxy.forwardedRequestNumbers, diagnostic).toEqual(
+    Array.from({ length: count }, (_, index) => index + 1)
+  );
+  expect(new Set(proxy.requestBodies).size, diagnostic).toBe(count);
+  expect(responses, diagnostic).toHaveLength(count);
+  for (const [index, response] of responses.entries()) {
+    expect(response, diagnostic).toMatchObject({
+      requestNumber: index + 1,
+      finishReasons: [index === 0 ? 'tool_calls' : 'stop'],
+      done: true,
+      parseStatus: 'complete',
+      ...(index === 0 ? {} : { toolCallDeltas: 0 }),
+    });
+    expect(
+      proxy.requestLifecycle.filter(
+        (entry) =>
+          entry.requestNumber === index + 1 &&
+          ['headers_received', 'body_completed', 'downstream_ended', 'failed'].includes(
+            entry.phase
+          )
+      ),
+      diagnostic
+    ).toEqual([
+      { requestNumber: index + 1, phase: 'headers_received', statusClass: 2 },
+      { requestNumber: index + 1, phase: 'body_completed' },
+      { requestNumber: index + 1, phase: 'downstream_ended' },
+    ]);
+  }
+  expect(responses[0]!.toolCallDeltas, diagnostic).toBeGreaterThan(0);
+  expect(responses.at(-1)!.contentChars, diagnostic).toBeGreaterThan(0);
+
+  const messages = proxy.requestBodies.map((body) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      throw new Error('Invalid Provider request evidence');
+    }
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !('messages' in parsed) ||
+      !Array.isArray(parsed.messages) ||
+      !parsed.messages.every(
+        (message: unknown) =>
+          message && typeof message === 'object' && !Array.isArray(message)
+      )
+    ) {
+      throw new Error('Invalid Provider message evidence');
+    }
+    return parsed.messages as Record<string, unknown>[];
+  });
+  const initial = messages[0]!;
+  const afterTool = messages[1]!;
+  expect(afterTool.length, diagnostic).toBe(initial.length + 2);
+  expect(
+    JSON.stringify(afterTool.slice(0, initial.length)) === JSON.stringify(initial),
+    diagnostic
+  ).toBe(true);
+  const assistant = afterTool.at(-2)!;
+  const result = afterTool.at(-1)!;
+  expect(assistant.role === 'assistant' && result.role === 'tool', diagnostic).toBe(
+    true
+  );
+  const calls = assistant.tool_calls;
+  if (!Array.isArray(calls) || calls.length !== 1) {
+    throw new Error('Expected one native tool call in Provider evidence');
+  }
+  const call: unknown = calls[0];
+  if (
+    !call ||
+    typeof call !== 'object' ||
+    !('id' in call) ||
+    typeof call.id !== 'string' ||
+    !('function' in call) ||
+    !call.function ||
+    typeof call.function !== 'object' ||
+    !('name' in call.function) ||
+    call.function.name !== 'Bash'
+  ) {
+    throw new Error('Expected a native Bash call in Provider evidence');
+  }
+  expect(result.tool_call_id === call.id, diagnostic).toBe(true);
+  const results = events.filter(
+    (event) => event.type === 'part_created' && event.data.partType === 'tool_result'
+  );
+  expect(results.length, diagnostic).toBe(1);
+  const toolResult = results[0]!;
+  if (toolResult.type !== 'part_created')
+    throw new Error('Missing durable tool result');
+  const payload = toolResult.data.payload;
+  expect(
+    Boolean(
+      payload &&
+        typeof payload === 'object' &&
+        !Array.isArray(payload) &&
+        payload.toolCallId === call.id &&
+        payload.toolName === 'Bash' &&
+        payload.error === null
+    ),
+    diagnostic
+  ).toBe(true);
+  const completions = events.filter((event) => event.type === 'turn_completed');
+  expect(completions.length, diagnostic).toBe(1);
+  expect(completions[0]!.data, diagnostic).toMatchObject({
+    turnsCount: count,
+    toolCallsCount: 1,
+  });
+  expect(
+    events.some((event) => event.type === 'turn_aborted'),
+    diagnostic
+  ).toBe(false);
+  expect(events.indexOf(toolResult), diagnostic).toBeLessThan(
+    events.indexOf(completions[0]!)
+  );
+  const corrections = events.filter((event) => {
+    if (event.type !== 'message_created') return false;
+    const metadata = event.data.metadata;
+    return (
+      metadata &&
+      typeof metadata === 'object' &&
+      !Array.isArray(metadata) &&
+      metadata.emptyFinalCorrection === true
+    );
+  });
+  expect(corrections.length, diagnostic).toBe(count - 2);
+  if (count === 2) return;
+
+  expect(responses[1]!.contentChars, diagnostic).toBe(0);
+  const correction = corrections[0]!;
+  if (correction.type !== 'message_created')
+    throw new Error('Missing durable correction');
+  const metadata = correction.data.metadata;
+  expect(
+    Boolean(
+      correction.data.role === 'user' &&
+        metadata &&
+        typeof metadata === 'object' &&
+        !Array.isArray(metadata) &&
+        metadata.clientVisible === false
+    ),
+    diagnostic
+  ).toBe(true);
+  expect(correction.data.parentMessageId === call.id, diagnostic).toBe(true);
+  const parts = events.filter(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.messageId === correction.data.messageId &&
+      event.data.partType === 'text'
+  );
+  expect(parts.length, diagnostic).toBe(1);
+  const part = parts[0]!;
+  if (part.type !== 'part_created') throw new Error('Missing durable correction text');
+  const text = part.data.payload;
+  expect(
+    Boolean(
+      text &&
+        typeof text === 'object' &&
+        !Array.isArray(text) &&
+        text.text === EMPTY_FINAL_CORRECTION_TEXT
+    ),
+    diagnostic
+  ).toBe(true);
+  expect(
+    JSON.stringify(messages[2]) ===
+      JSON.stringify([
+        ...afterTool,
+        { role: 'user', content: EMPTY_FINAL_CORRECTION_TEXT },
+      ]),
+    diagnostic
+  ).toBe(true);
+  expect(events.indexOf(toolResult), diagnostic).toBeLessThan(
+    events.indexOf(correction)
+  );
+  expect(events.indexOf(correction), diagnostic).toBeLessThan(events.indexOf(part));
+  expect(events.indexOf(part), diagnostic).toBeLessThan(
+    events.indexOf(completions[0]!)
+  );
+}
+
+function createProviderTrajectoryFixture(corrected: boolean): {
+  proxy: TurnActivityProviderEvidence;
+  events: SessionEvent[];
+} {
+  const correctionText = EMPTY_FINAL_CORRECTION_TEXT;
+  const messages = [{ role: 'user', content: 'Call Bash.' }];
+  const afterTool = [
+    ...messages,
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        {
+          id: 'call-bash',
+          type: 'function',
+          function: { name: 'Bash', arguments: '{}' },
+        },
+      ],
+    },
+    { role: 'tool', content: 'done', tool_call_id: 'call-bash' },
+  ];
+  const count = corrected ? 3 : 2;
+  const base = {
+    sessionId: 'session-test',
+    timestamp: '2026-09-13T00:00:00.000Z',
+    cwd: '/workspace',
+    version: '0.10.176',
+  };
+  const events: SessionEvent[] = [
+    {
+      ...base,
+      id: 'tool-result',
+      type: 'part_created',
+      data: {
+        partId: 'call-bash',
+        messageId: 'call-bash',
+        partType: 'tool_result',
+        payload: {
+          toolName: 'Bash',
+          toolCallId: 'call-bash',
+          output: 'done',
+          error: null,
+        },
+        createdAt: base.timestamp,
+      },
+    },
+    ...(corrected
+      ? [
+          {
+            ...base,
+            id: 'correction',
+            type: 'message_created' as const,
+            data: {
+              messageId: 'correction',
+              role: 'user' as const,
+              parentMessageId: 'call-bash',
+              createdAt: base.timestamp,
+              metadata: { clientVisible: false, emptyFinalCorrection: true },
+            },
+          },
+        ]
+      : []),
+    ...(corrected
+      ? [
+          {
+            ...base,
+            id: 'correction-text',
+            type: 'part_created' as const,
+            data: {
+              partId: 'correction-text',
+              messageId: 'correction',
+              partType: 'text' as const,
+              payload: { text: correctionText },
+              createdAt: base.timestamp,
+            },
+          },
+        ]
+      : []),
+    {
+      ...base,
+      id: 'turn-complete',
+      type: 'turn_completed',
+      data: {
+        turnId: 'turn-test',
+        completedAt: base.timestamp,
+        turnsCount: count,
+        toolCallsCount: 1,
+        durationMs: 1,
+      },
+    },
+  ];
+  return {
+    events,
+    proxy: {
+      requestBodies: [
+        JSON.stringify({ messages }),
+        JSON.stringify({ messages: afterTool }),
+        ...(corrected
+          ? [
+              JSON.stringify({
+                messages: [...afterTool, { role: 'user', content: correctionText }],
+              }),
+            ]
+          : []),
+      ],
+      forwardedRequestNumbers: Array.from({ length: count }, (_, index) => index + 1),
+      responseSummaries: Array.from({ length: count }, (_, index) => ({
+        requestNumber: index + 1,
+        contentChars: index === count - 1 ? 5 : 0,
+        reasoningChars: 0,
+        toolCallDeltas: index === 0 ? 1 : 0,
+        finishReasons: [index === 0 ? 'tool_calls' : 'stop'],
+        done: true,
+        parseStatus: 'complete',
+      })),
+      requestLifecycle: Array.from({ length: count }, (_, index) => [
+        {
+          requestNumber: index + 1,
+          phase: 'headers_received' as const,
+          statusClass: 2,
+        },
+        { requestNumber: index + 1, phase: 'body_completed' as const },
+        { requestNumber: index + 1, phase: 'downstream_ended' as const },
+      ]).flat(),
+    },
+  };
+}
+
+describe('turn activity provider trajectory contract', () => {
+  it.each([false, true])(
+    'accepts only evidenced completion (corrected: %s)',
+    (corrected) => {
+      const { proxy, events } = createProviderTrajectoryFixture(corrected);
+      expect(() => assertTurnActivityProviderTrajectory(proxy, events)).not.toThrow();
+    }
+  );
+
+  it.each([
+    'nonempty',
+    'truncated',
+    'incomplete',
+    'tool-repeat',
+    'duplicate-request',
+    'missing-correction',
+    'fourth-request',
+    'failed-response',
+    'missing-downstream',
+    'visible-correction',
+    'wrong-parent',
+    'wrong-text',
+    'late-correction',
+    'extra-message',
+    'failed-tool',
+    'wrong-turn-count',
+  ] as const)('rejects unexplained recovery: %s', (failure) => {
+    const { proxy, events } = createProviderTrajectoryFixture(true);
+    const second = proxy.responseSummaries[1]!;
+    if (failure === 'nonempty') second.contentChars = 1;
+    if (failure === 'truncated') second.finishReasons = ['length'];
+    if (failure === 'incomplete') second.parseStatus = 'incomplete';
+    if (failure === 'tool-repeat') proxy.responseSummaries[2]!.toolCallDeltas = 1;
+    if (failure === 'duplicate-request')
+      proxy.requestBodies[2] = proxy.requestBodies[1]!;
+    if (failure === 'fourth-request') proxy.requestBodies.push(proxy.requestBodies[2]!);
+    if (failure === 'failed-response') proxy.requestLifecycle[3]!.statusClass = 5;
+    if (failure === 'missing-downstream') proxy.requestLifecycle.splice(5, 1);
+    const correction = events[1]!;
+    const text = events[2]!;
+    const tool = events[0]!;
+    const completion = events[3]!;
+    if (
+      correction.type !== 'message_created' ||
+      text.type !== 'part_created' ||
+      tool.type !== 'part_created' ||
+      completion.type !== 'turn_completed'
+    ) {
+      throw new Error('Unexpected trajectory fixture');
+    }
+    if (failure === 'missing-correction') events.splice(1, 2);
+    if (failure === 'visible-correction')
+      correction.data.metadata = { emptyFinalCorrection: true, clientVisible: true };
+    if (failure === 'wrong-parent') correction.data.parentMessageId = 'wrong-call';
+    if (failure === 'wrong-text') text.data.payload = { text: 'PRIVATE_WRONG_TEXT' };
+    if (failure === 'late-correction')
+      events.splice(1, 2, completion, correction, text);
+    if (failure === 'extra-message')
+      proxy.requestBodies[2] = JSON.stringify({
+        messages: [{ role: 'user', content: 'PRIVATE_EXTRA_MESSAGE' }],
+      });
+    if (failure === 'failed-tool')
+      tool.data.payload = {
+        toolCallId: 'call-bash',
+        toolName: 'Bash',
+        error: 'PRIVATE_ERROR',
+      };
+    if (failure === 'wrong-turn-count') completion.data.turnsCount = 2;
+    let rejected: unknown;
+    try {
+      assertTurnActivityProviderTrajectory(proxy, events);
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toBeInstanceOf(Error);
+    expect(String(rejected)).not.toContain('PRIVATE_');
+  });
+});
+
 describe('turn activity request evidence', () => {
   it('distinguishes request replay from an added corrective message without retaining text', () => {
     const initial = JSON.stringify({
@@ -1286,6 +1705,35 @@ describeTrajectory('turn activity empty-final recovery (real API)', () => {
           expect(final.state).not.toBe('structural_mismatch');
           if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
           expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
+          assertTurnActivityProviderTrajectory(proxy, events);
+          const responses = [...proxy.responseSummaries].sort(
+            (left, right) => left.requestNumber - right.requestNumber
+          );
+          expect(responses).toMatchObject([
+            {
+              requestNumber: 1,
+              finishReasons: ['tool_calls'],
+              done: true,
+              parseStatus: 'complete',
+            },
+            {
+              requestNumber: 2,
+              contentChars: 0,
+              toolCallDeltas: 0,
+              finishReasons: ['stop'],
+              done: true,
+              parseStatus: 'complete',
+            },
+            {
+              requestNumber: 3,
+              toolCallDeltas: 0,
+              finishReasons: ['stop'],
+              done: true,
+              parseStatus: 'complete',
+            },
+          ]);
+          expect(responses[0]?.toolCallDeltas).toBeGreaterThan(0);
+          expect(responses[2]?.contentChars).toBeGreaterThan(0);
           expect(proxy.stopSequenceRequestNumbers).toEqual([2]);
           expect(proxy.jsonOnlyRequestNumbers).toEqual([]);
           expect(proxy.injectedRequestNumbers).toEqual([]);
@@ -1311,13 +1759,14 @@ describeTrajectory('turn activity empty-final recovery (real API)', () => {
               statusClass: 2,
             }))
           );
-          assertNoSecrets({ evidence, requests, events }, [model.apiKey]);
+          assertNoSecrets({ evidence, requests, responses, events }, [model.apiKey]);
           console.log(
             `[empty-final-recovery] ${JSON.stringify({
               model: model.model,
               surface,
               requests: proxy.forwardedRequestNumbers,
               stopSequenceRequests: proxy.stopSequenceRequestNumbers,
+              responses,
               executions: 1,
               durableCorrections: corrections.length,
             })}`
@@ -1474,19 +1923,11 @@ describeTrajectory('turn activity surface matrix (real API)', () => {
             }
             expect(final.text).toBe(marker);
           }
-          const requestEvidence = JSON.stringify({
-            requests: summarizeTurnActivityRequests(proxy.requestBodies),
-            lifecycle: proxy.requestLifecycle.map(
-              ({ requestNumber, phase, statusClass }) => ({
-                requestNumber,
-                phase,
-                statusClass,
-              })
-            ),
-          });
-          expect(proxy.requestBodies.length, requestEvidence).toBe(2);
-          expect(proxy.forwardedRequestNumbers.length, requestEvidence).toBe(2);
-          assertNoSecrets({ evidence, transcript }, [model.apiKey]);
+          assertTurnActivityProviderTrajectory(proxy, events);
+          assertNoSecrets(
+            { evidence, transcript, responses: proxy.responseSummaries },
+            [model.apiKey]
+          );
         } finally {
           await proxy.close();
           await removeTestDirectory(root);

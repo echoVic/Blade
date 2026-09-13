@@ -1754,6 +1754,7 @@ describe('durable ACP recovery diagnostics', () => {
       injectedRequestNumbers: [],
       jsonOnlyRequestNumbers: [],
       stopSequenceRequestNumbers: [],
+      responseSummaries: [],
       forwardedRequestNumbers: [11, 12],
       requestLifecycle: [
         { requestNumber: 11, phase: 'headers_received', statusClass: 2 },

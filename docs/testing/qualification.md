@@ -1216,6 +1216,18 @@ model `maxRetries=0`、一次 Bash 调用、连续 thinking/tool/responding/clea
 Web 必须在工具仍被 host barrier 阻塞时 reload，并从 SSE `connected.turnActivity` 恢复
 活动状态；重连快照断言完成后才释放工具，两个独立 SSE 探针都收到终态清除后才收集
 证据，不能用页面活动条消失代替探针到达。PTY 必须从真实 terminal capture 观察状态，
-不得读取内部 store 代替。详细命令、
-逐格耗时、隐私与清理结果见
+不得读取内部 store 代替。
+
+常规路径需要两次 Provider 请求；只在第二次完整 SSE 响应为 `stop`、正文为空且没有工具
+增量时，才允许一次额外的空回复纠正。第三次请求必须只在原消息后追加精确的纠正文本，
+该文本必须先以 `clientVisible=false`、`emptyFinalCorrection=true` 持久化并连接到唯一
+成功 Bash 结果，终态记录仍只能包含一次工具执行。非空、截断、不完整响应、重复请求、
+额外工具或第四次请求均不能作为该纠正通过。代理只记录有界响应计数与完成类别，不保留
+响应正文、推理文本或工具参数，且保持原始流式字节透传。
+
+独立八格恢复矩阵只对第二次上游请求设置固定文本提示与 `stop`，让真实 Provider 产生
+空正文；不替换响应，后续请求不注入。必须观察一次持久化纠正、精确终答及一次真实 Bash
+副作用。关闭注入的负向对照必须因缺失纠正证据而失败，不能靠 framework retry 取绿灯。
+
+详细命令、逐格耗时、隐私与清理结果见
 [当前回合活动状态资格验证证据](./turn-activity-surface-evidence.md)。

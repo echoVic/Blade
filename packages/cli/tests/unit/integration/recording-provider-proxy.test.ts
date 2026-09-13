@@ -1,6 +1,9 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
+import {
+  OpenAIResponseSummaryCollector,
+  startRecordingProviderProxy,
+} from '../../support/recordingProviderProxy.js';
 
 vi.unmock('http');
 vi.unmock('node:http');
@@ -78,6 +81,104 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+describe('OpenAI response summary collection', () => {
+  it('counts split UTF-8 SSE deltas without retaining their content', () => {
+    const collector = new OpenAIResponseSummaryCollector(3);
+    const frames = [
+      {
+        choices: [
+          { delta: { reasoning_content: 'PRIVATE_REASONING' }, finish_reason: null },
+        ],
+      },
+      {
+        choices: [
+          {
+            delta: {
+              content: '中文PRIVATE_TEXT',
+              tool_calls: [
+                {
+                  index: 0,
+                  function: { name: 'PRIVATE_TOOL', arguments: 'PRIVATE_ARGUMENTS' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ];
+    const bytes = Buffer.from(
+      frames.map((frame) => `data: ${JSON.stringify(frame)}\r\n\r\n`).join('') +
+        'data: [DONE]\r\n\r\n'
+    );
+    for (const byte of bytes) collector.append(Uint8Array.of(byte));
+    const summary = collector.finish();
+    expect(summary).toEqual({
+      requestNumber: 3,
+      contentChars: 14,
+      reasoningChars: 17,
+      toolCallDeltas: 1,
+      finishReasons: ['tool_calls'],
+      done: true,
+      parseStatus: 'complete',
+    });
+    expect(JSON.stringify(summary)).not.toContain('PRIVATE_');
+    expect(JSON.stringify(collector)).not.toContain('PRIVATE_');
+  });
+
+  it.each(['stop', 'length'] as const)(
+    'distinguishes an empty %s response',
+    (finishReason) => {
+      const collector = new OpenAIResponseSummaryCollector(2);
+      collector.append(
+        Buffer.from(
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\ndata: [DONE]\n\n`
+        )
+      );
+      expect(collector.finish()).toMatchObject({
+        contentChars: 0,
+        finishReasons: [finishReason],
+        done: true,
+        parseStatus: 'complete',
+      });
+    }
+  );
+
+  it('does not call an unterminated stream complete', () => {
+    const collector = new OpenAIResponseSummaryCollector(1);
+    collector.append(Buffer.from('data: {"choices":[{"delta":{"content":"x"}}]}\n\n'));
+    expect(collector.finish()).toMatchObject({
+      contentChars: 1,
+      done: false,
+      parseStatus: 'incomplete',
+    });
+  });
+
+  it('drops unknown finish reasons and malformed data without leaking them', () => {
+    const collector = new OpenAIResponseSummaryCollector(1);
+    collector.append(
+      Buffer.from(
+        'data: PRIVATE_BAD_JSON\n\ndata: {"choices":[{"delta":{},"finish_reason":"PRIVATE_REASON"}]}\n\ndata: [DONE]\n\n'
+      )
+    );
+    const summary = collector.finish();
+    expect(summary).toMatchObject({
+      finishReasons: ['unknown'],
+      done: true,
+      parseStatus: 'invalid',
+    });
+    expect(JSON.stringify(summary)).not.toContain('PRIVATE_');
+  });
+
+  it('bounds an oversized unterminated SSE event', () => {
+    const collector = new OpenAIResponseSummaryCollector(1);
+    collector.append(Buffer.from(`data: ${'PRIVATE_'.repeat(20_000)}`));
+    expect(collector.finish().parseStatus).toBe('limit_exceeded');
+    expect(JSON.stringify(collector)).not.toContain('PRIVATE_');
+  });
+});
 
 describe('recording Provider proxy one-shot failure injection', () => {
   it('injects one fixed 503 before forwarding the next exact-path request', async () => {
@@ -390,6 +491,68 @@ describe('recording Provider proxy one-shot failure injection', () => {
     expect(new TextDecoder().decode(second.value)).toBe('data: second\n\n');
     await reader.read();
     expect(proxy.requestLifecycle.at(-1)?.phase).toBe('downstream_ended');
+  });
+
+  it('records response summaries while forwarding the original stream incrementally', async () => {
+    const releaseTail = deferred<void>();
+    const firstFrame =
+      'data: {"choices":[{"delta":{"content":"PRIVATE_TEXT"},"finish_reason":null}]}\n\n';
+    const lastFrames =
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+    const upstreamServer = createServer((_request, response) => {
+      response.setHeader('content-type', 'text/event-stream');
+      response.write(firstFrame);
+      void releaseTail.promise.then(() => response.end(lastFrames));
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstreamServer.once('error', reject);
+      upstreamServer.listen(0, '127.0.0.1', resolve);
+    });
+    closers.push(async () => {
+      releaseTail.resolve();
+      upstreamServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    });
+    const address = upstreamServer.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test port');
+    const proxy = await startRecordingProviderProxy(
+      `http://127.0.0.1:${address.port}/v1`
+    );
+    closers.unshift(proxy.close);
+    try {
+      const response = await fetch(`${proxy.baseUrl}/chat/completions`, {
+        method: 'POST',
+      });
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Missing response body');
+      const first = await reader.read();
+      expect(new TextDecoder().decode(first.value)).toBe(firstFrame);
+      expect(proxy.responseSummaries).toEqual([]);
+      releaseTail.resolve();
+      let received = firstFrame;
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        received += new TextDecoder().decode(chunk.value);
+      }
+      expect(received).toBe(firstFrame + lastFrames);
+      expect(proxy.responseSummaries).toEqual([
+        {
+          requestNumber: 1,
+          contentChars: 12,
+          reasoningChars: 0,
+          toolCallDeltas: 0,
+          finishReasons: ['stop'],
+          done: true,
+          parseStatus: 'complete',
+        },
+      ]);
+      expect(JSON.stringify(proxy.responseSummaries)).not.toContain('PRIVATE_');
+    } finally {
+      releaseTail.resolve();
+    }
   });
 
   it('injects exactly once when matching requests arrive concurrently', async () => {

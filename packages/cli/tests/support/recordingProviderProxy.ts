@@ -17,6 +17,155 @@ export interface RecordingProviderRequestLifecycle {
   errorCode?: string;
 }
 
+export interface RecordingProviderResponseSummary {
+  requestNumber: number;
+  contentChars: number;
+  reasoningChars: number;
+  toolCallDeltas: number;
+  finishReasons: string[];
+  done: boolean;
+  parseStatus: 'complete' | 'incomplete' | 'invalid' | 'limit_exceeded' | 'unsupported';
+}
+
+export class OpenAIResponseSummaryCollector {
+  #decoder = new TextDecoder('utf-8', { fatal: true });
+  #pending = '';
+  #contentChars = 0;
+  #reasoningChars = 0;
+  #toolCallDeltas = 0;
+  #finishReasons = new Set<string>();
+  #done = false;
+  #invalid = false;
+  #limitExceeded = false;
+  #sawChoices = false;
+
+  constructor(private readonly requestNumber: number) {}
+
+  append(chunk: Uint8Array): void {
+    if (this.#limitExceeded) return;
+    try {
+      for (let offset = 0; offset < chunk.length; offset += 16_384) {
+        this.#pending += this.#decoder.decode(chunk.subarray(offset, offset + 16_384), {
+          stream: true,
+        });
+        let boundary = /\r?\n\r?\n/.exec(this.#pending);
+        while (boundary) {
+          const frame = this.#pending.slice(0, boundary.index);
+          this.#pending = this.#pending.slice(boundary.index + boundary[0].length);
+          if (Buffer.byteLength(frame) > 65_536) {
+            this.#limitExceeded = true;
+            this.#pending = '';
+            return;
+          }
+          this.#observeFrame(frame);
+          boundary = /\r?\n\r?\n/.exec(this.#pending);
+        }
+        if (Buffer.byteLength(this.#pending) > 65_536) {
+          this.#limitExceeded = true;
+          this.#pending = '';
+          return;
+        }
+      }
+    } catch {
+      this.#invalid = true;
+      this.#pending = '';
+    }
+  }
+
+  #observeFrame(frame: string): void {
+    const lines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
+    if (lines.length === 0) return;
+    const data = lines.map((line) => line.slice(5).replace(/^ /, '')).join('\n');
+    if (this.#done) {
+      this.#invalid = true;
+      return;
+    }
+    if (data === '[DONE]') {
+      this.#done = true;
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      this.#invalid = true;
+      return;
+    }
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !('choices' in parsed) ||
+      !Array.isArray(parsed.choices)
+    )
+      return;
+    this.#sawChoices = true;
+    for (const choice of parsed.choices) {
+      if (!choice || typeof choice !== 'object') {
+        this.#invalid = true;
+        continue;
+      }
+      const delta: unknown = 'delta' in choice ? choice.delta : undefined;
+      if (delta && typeof delta === 'object') {
+        if ('content' in delta && typeof delta.content === 'string') {
+          this.#contentChars += delta.content.length;
+        }
+        if (
+          'reasoning_content' in delta &&
+          typeof delta.reasoning_content === 'string'
+        ) {
+          this.#reasoningChars += delta.reasoning_content.length;
+        }
+        if ('tool_calls' in delta && Array.isArray(delta.tool_calls)) {
+          this.#toolCallDeltas += delta.tool_calls.length;
+        }
+      }
+      const reason: unknown =
+        'finish_reason' in choice ? choice.finish_reason : undefined;
+      if (reason !== undefined && reason !== null) {
+        if (
+          typeof reason === 'string' &&
+          ['stop', 'length', 'tool_calls', 'function_call', 'content_filter'].includes(
+            reason
+          )
+        ) {
+          this.#finishReasons.add(reason);
+        } else {
+          this.#finishReasons.add('unknown');
+          this.#invalid = true;
+        }
+      }
+    }
+  }
+
+  finish(): RecordingProviderResponseSummary {
+    try {
+      this.#pending += this.#decoder.decode();
+    } catch {
+      this.#invalid = true;
+    }
+    const incomplete =
+      this.#pending.trim().length > 0 || !this.#done || this.#finishReasons.size === 0;
+    this.#pending = '';
+    return {
+      requestNumber: this.requestNumber,
+      contentChars: this.#contentChars,
+      reasoningChars: this.#reasoningChars,
+      toolCallDeltas: this.#toolCallDeltas,
+      finishReasons: [...this.#finishReasons],
+      done: this.#done,
+      parseStatus: this.#limitExceeded
+        ? 'limit_exceeded'
+        : this.#invalid
+          ? 'invalid'
+          : !this.#sawChoices
+            ? 'unsupported'
+            : incomplete
+              ? 'incomplete'
+              : 'complete',
+    };
+  }
+}
+
 export interface RecordingProviderProxy {
   baseUrl: string;
   requestBodies: string[];
@@ -29,6 +178,7 @@ export interface RecordingProviderProxy {
   stopSequenceRequestNumbers: number[];
   forwardedRequestNumbers: number[];
   requestLifecycle: RecordingProviderRequestLifecycle[];
+  responseSummaries: RecordingProviderResponseSummary[];
   maxInFlight: number;
   releaseHeld(): void;
   close(): Promise<void>;
@@ -78,6 +228,7 @@ export async function startRecordingProviderProxy(
   const stopSequenceRequestNumbers: number[] = [];
   const forwardedRequestNumbers: number[] = [];
   const requestLifecycle: RecordingProviderRequestLifecycle[] = [];
+  const responseSummaries: RecordingProviderResponseSummary[] = [];
   let matchingRequestHeld = false;
   let injectionConsumed = false;
   let requestCount = 0;
@@ -107,6 +258,7 @@ export async function startRecordingProviderProxy(
     maxInFlight = Math.max(maxInFlight, inFlight);
 
     void (async () => {
+      let summary: OpenAIResponseSummaryCollector | undefined;
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of request) {
@@ -247,11 +399,17 @@ export async function startRecordingProviderProxy(
             response.setHeader(name, value);
           }
         });
+        if (
+          upstreamResponse.headers.get('content-type')?.includes('text/event-stream')
+        ) {
+          summary = new OpenAIResponseSummaryCollector(requestNumber);
+        }
         const reader = upstreamResponse.body?.getReader();
         if (reader) {
           while (true) {
             const chunk = await reader.read();
             if (chunk.done) break;
+            summary?.append(chunk.value);
             if (!response.write(Buffer.from(chunk.value))) {
               await new Promise<void>((resolve, reject) => {
                 const cleanup = () => {
@@ -276,6 +434,8 @@ export async function startRecordingProviderProxy(
         response.end();
         recordLifecycle({ requestNumber, phase: 'downstream_ended' });
       } finally {
+        if (summary && responseSummaries.length < 128)
+          responseSummaries.push(summary.finish());
         inFlight = Math.max(0, inFlight - 1);
         requestFinishedAt.push(Date.now());
       }
@@ -328,6 +488,7 @@ export async function startRecordingProviderProxy(
     stopSequenceRequestNumbers,
     forwardedRequestNumbers,
     requestLifecycle,
+    responseSummaries,
     get maxInFlight() {
       return maxInFlight;
     },

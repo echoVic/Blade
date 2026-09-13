@@ -160,11 +160,13 @@ async function startProvider(input: {
   finalMarker: string;
   discoveryMarker: string;
   holdFinal: boolean;
+  compactionObservedFile?: string;
 }): Promise<FixtureProvider> {
   let requestCount = 0;
   let compactionRequests = 0;
   let primaryRequests = 0;
   let discoverySawIndex = false;
+  let closed = false;
   let releaseFinal!: () => void;
   const finalRelease = new Promise<void>((resolve) => {
     releaseFinal = resolve;
@@ -179,6 +181,19 @@ async function startProvider(input: {
       requestCount++;
       if (body.includes('create a bounded continuation ledger')) {
         compactionRequests++;
+        if (input.compactionObservedFile) {
+          await waitFor(
+            () =>
+              closed ||
+              access(input.compactionObservedFile!).then(
+                () => true,
+                () => false
+              ),
+            'PTY did not acknowledge compaction rendering',
+            10_000
+          );
+          if (closed) return;
+        }
         writeTextCompletion(response, summaryResponse(), 1_000);
         return;
       }
@@ -219,6 +234,7 @@ async function startProvider(input: {
     evidence: () => ({ requestCount, compactionRequests, discoverySawIndex }),
     releaseFinal,
     close: async () => {
+      closed = true;
       releaseFinal();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
@@ -263,7 +279,14 @@ async function createFixture(
   const discoveryMarker = `MEMORY_DISCOVERY_${nonce}`;
   const safeEntry = `prefer deterministic compaction checks ${nonce}`;
   const secret = `sk-${randomBytes(12).toString('hex')}`;
-  const provider = await startProvider({ finalMarker, discoveryMarker, holdFinal });
+  const provider = await startProvider({
+    finalMarker,
+    discoveryMarker,
+    holdFinal,
+    ...(surface === 'pty'
+      ? { compactionObservedFile: path.join(root, 'compaction-rendered') }
+      : {}),
+  });
   await writeFile(
     path.join(home, '.blade', 'config.json'),
     `${JSON.stringify(
@@ -588,6 +611,7 @@ async function runPty(test: Fixture): Promise<void> {
       home: test.home,
       storageRoot: test.storageRoot,
       memoryDir,
+      compactionObservedFile: path.join(test.root, 'compaction-rendered'),
       sessionId: test.sessionId,
       discoverySessionId: `memory-discovery-${randomBytes(6).toString('hex')}`,
       historyReady: test.historyReady,
@@ -862,6 +886,43 @@ async function runWeb(test: Fixture): Promise<void> {
     server.kill('SIGTERM');
   }
 }
+
+describe('compaction fixture render barrier', () => {
+  it('keeps the summary pending until the terminal acknowledges its rendered state', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-compaction-barrier-'));
+    roots.push(root);
+    const observedFile = path.join(root, 'observed');
+    const provider = await startProvider({
+      finalMarker: 'FINAL',
+      discoveryMarker: 'DISCOVERY',
+      holdFinal: false,
+      compactionObservedFile: observedFile,
+    });
+    let settled = false;
+    const response = fetch(`${provider.baseUrl}/chat/completions`, {
+      method: 'POST',
+      body: 'create a bounded continuation ledger',
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+    try {
+      await waitFor(
+        () => provider.evidence().compactionRequests === 1,
+        'No compaction request',
+        1_000
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      await writeFile(observedFile, 'rendered');
+      expect((await response).status).toBe(200);
+    } finally {
+      await writeFile(observedFile, 'rendered');
+      await response;
+      await provider.close();
+    }
+  });
+});
 
 describe
   .skipIf(process.platform === 'win32')

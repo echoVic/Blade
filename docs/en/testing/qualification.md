@@ -495,6 +495,24 @@ while a host barrier keeps the tool active and restore activity from SSE
 `connected.turnActivity`. Release the tool only after asserting that reconnect snapshot,
 and collect evidence only after both independent SSE probes receive terminal clear;
 the activity strip disappearing does not prove delivery to the probes. PTY must observe
-the state in a real terminal capture rather than reading an internal store. Commands,
-per-cell timings, privacy, and cleanup are in
+the state in a real terminal capture rather than reading an internal store.
+
+The ordinary path requires two Provider requests. Exactly one empty-final correction is
+allowed only when the second complete SSE response ends with `stop`, contains no text,
+and emits no tool deltas. The third request must append only the exact correction to
+the existing messages. That correction must already be persisted with
+`clientVisible=false` and `emptyFinalCorrection=true`, parented to the sole successful
+Bash result; terminal accounting must still show one tool execution. Nonempty, truncated,
+or incomplete responses, duplicate requests, additional tools, and a fourth request do
+not qualify. The proxy retains only bounded counts and completion categories, never
+response text, reasoning, or tool arguments, and forwards the original streaming bytes.
+
+A separate eight-cell recovery matrix sets a fixed text prompt and `stop` only on the
+second upstream request so the real Provider produces an empty response. It never
+replaces responses or modifies subsequent requests. Each cell requires one durable
+correction, an exact final answer, and one real Bash side effect. A negative control
+without injection must fail for missing correction evidence, not pass through framework
+retries.
+
+Commands, per-cell timings, privacy, and cleanup are in
 [Active Turn Activity Qualification Evidence](./turn-activity-surface-evidence.md).

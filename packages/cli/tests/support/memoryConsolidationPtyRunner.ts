@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
@@ -21,6 +21,7 @@ interface RunnerInput {
   home: string;
   storageRoot: string;
   memoryDir: string;
+  compactionObservedFile?: string;
   sessionId: string;
   discoverySessionId: string;
   historyReady: string;
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   process.env.HOME = input.home;
   process.env.BLADE_STORAGE_ROOT = input.storageRoot;
   process.env.BLADE_AUTO_MEMORY = '1';
+  const compactionMarker = new ArmedPtyMarkerLatch('正在压缩上下文');
   const finalMarker = new ArmedPtyMarkerLatch(input.marker);
   const discoveryMarker = new ArmedPtyMarkerLatch(input.discoveryMarker);
   const secret = new ArmedPtyMarkerLatch(input.secret);
@@ -120,6 +122,7 @@ async function main(): Promise<void> {
     });
   });
   terminal.onData((chunk) => {
+    compactionMarker.observe(stripVTControlCharacters(chunk));
     finalMarker.observe(chunk);
     discoveryMarker.observe(chunk);
     secret.observe(chunk);
@@ -142,7 +145,16 @@ async function main(): Promise<void> {
     await writeBracketedPaste(terminal, input.prompt);
     await new Promise((resolve) => setTimeout(resolve, 250));
     finalMarker.arm();
+    compactionMarker.arm();
     terminal.write('\r');
+    if (input.compactionObservedFile) {
+      await waitFor(
+        () => compactionMarker.seen,
+        'PTY did not render compaction',
+        10_000
+      );
+      await writeFile(input.compactionObservedFile, 'rendered', { mode: 0o600 });
+    }
     await waitFor(
       () =>
         finalMarker.seen &&
@@ -291,7 +303,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         success: true,
         finalMarkerSeen: finalMarker.seen,
-        compactionRendered: plainOutput.includes('正在压缩上下文'),
+        compactionRendered: compactionMarker.seen,
         memoryNoticeSeen,
         discoveryIndexLoaded: true,
         discoveryMarkerSeen: discoveryMarker.seen,
