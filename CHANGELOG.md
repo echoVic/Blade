@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.176] - 2026-09-13
+
+### Fixed
+- Report ACP client terminal kill/release failures instead of returning successful completion or only timeout/cancellation. Preserve final output and stop reasons, without replaying commands, falling back locally, or leaking raw client errors.
+- Keep handed-off ACP tasks running until cleanup settles, coalesce concurrent termination and Session cleanup, and expose terminal cleanup failures through TaskOutput and KillShell.
+
+### Tests
+- Add protocol regressions for cleanup rejection, blocking cleanup, concurrent and repeated termination, background state, no-fallback behavior, and recovery.
+- Verify real DeepSeek Flash/Pro commands through production ACP stdio with client-side kill/release rejection, exactly one failed tool update, durable failure metadata, and no command replay.
+- Record bounded Provider response summaries and distinguish one durably evidenced empty-final correction from request replay. Qualify real empty-response recovery across Headless, ACP, raw PTY TUI, and Chromium without repeating Bash.
+- Wait for the PTY to observe compaction before releasing the deterministic summary response, and latch that observation across redraws instead of racing a short-lived status.
+
 ## [0.10.175] - 2026-09-13
 
 ### Tests
