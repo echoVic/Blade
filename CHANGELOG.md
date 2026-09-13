@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.179] - 2026-09-13
+
+### Fixed
+- Preserve explicitly reported tool finalization failures when cancellation arrives during execution, post-tool hooks, LSP synchronization, or automatic verification. Keep the original error and cleanup metadata instead of replacing them with generic cancellation; the turn still ends as cancelled.
+- Leave ordinary cancellation, pending-input recovery, process cleanup budgets, and command replay behavior unchanged.
+
+### Tests
+- Cover all four cancellation checkpoints and reject false, string, inherited, missing, or successful-result finalization markers.
+- Verify real DeepSeek Flash/Pro ACP kill/release failures during cancellation and Chromium stop interactions with failed local lease cleanup, durable errors, same-session follow-ups, and no repeated Bash command. Check completed-history reloads after follow-up and synchronize error-card interaction with cancellation history refresh.
+- Classify compaction qualification requests by the active request instead of matching quoted history. Require exact durable Web replies and retain bounded Provider response summaries so reasoning-only or extra-text responses cannot pass as completion.
+
 ## [0.10.178] - 2026-09-13
 
 ### Fixed
