@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.180] - 2026-09-13
+
+### Fixed
+- Keep expanded Web tool groups and details visible when cancellation or history synchronization replaces live message identities. Store expansion only within the current conversation view, respect explicit collapse, and discard removed tool records.
+- Merge live and durable timeline references to the same tool call into one card while retaining the latest result and original message data.
+
+### Tests
+- Cover history replacement, temporary loading, explicit collapse, removed tools, Session isolation, and duplicate live/durable tool projections.
+- Verify real DeepSeek Flash/Pro Chromium cancellation in production and development builds, with one visible Bash card, retained expanded failure details, exact follow-up replies, no command replay, and zero browser faults. Confirm the expansion regression fails against a deduplication-only build.
+
 ## [0.10.179] - 2026-09-13
 
 ### Fixed
