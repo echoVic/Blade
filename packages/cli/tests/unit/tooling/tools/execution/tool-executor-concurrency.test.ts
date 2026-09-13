@@ -9,7 +9,7 @@ import type { AutoVerifyRuntime } from '../../../../../src/tools/execution/AutoV
 import { ConcurrencyScheduler } from '../../../../../src/tools/execution/ConcurrencyScheduler.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
-import type { Tool } from '../../../../../src/tools/types/ToolTypes.js';
+import type { Tool, ToolResult } from '../../../../../src/tools/types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../../../../src/tools/types/ToolTypes.js';
 
 function deferred<T>() {
@@ -339,6 +339,151 @@ describe('ToolExecutor concurrency contract', () => {
     });
     expect(events).toEqual(['write-dispatched', 'readback-classified']);
   });
+
+  it.each(['execution', 'post-hook', 'lsp', 'auto-verify'] as const)(
+    'preserves finalization failure when cancellation occurs during %s',
+    async (phase) => {
+      const reached = deferred<void>();
+      const release = deferred<void>();
+      const pause = async () => {
+        reached.resolve();
+        await release.promise;
+      };
+      const failure: ToolResult = {
+        success: false,
+        llmContent: 'ACP terminal finalization failed',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'ACP terminal finalization failed',
+        },
+        metadata: {
+          finalization_failed: true,
+          execution_host_failure: 'finalization',
+          aborted: true,
+        },
+      };
+      const registry = new ToolRegistry();
+      registry.register(
+        createTool({
+          name: 'FinalizationFailure',
+          displayName: 'FinalizationFailure',
+          kind: ToolKind.Execute,
+          schema: Type.Unknown(),
+          description: { short: 'classified finalization outcome' },
+          async execute() {
+            if (phase === 'execution') await pause();
+            return failure;
+          },
+        })
+      );
+      if (phase === 'post-hook') {
+        const hooks = HookManager.getInstance();
+        hooks.loadConfig({ enabled: true }, '/tmp/finalization-boundary');
+        hooks.registerFunction(
+          HookEvent.PostToolUse,
+          undefined,
+          async () => {
+            await pause();
+            return {};
+          },
+          { projectDir: '/tmp/finalization-boundary' }
+        );
+      }
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        ...(phase === 'lsp' ? { lspManager: { afterToolUse: pause } } : {}),
+        ...(phase === 'auto-verify' ? { autoVerifyRuntime: { verify: pause } } : {}),
+      });
+      const controller = new AbortController();
+      const result = executor.execute(
+        'FinalizationFailure',
+        {},
+        {
+          signal: controller.signal,
+          sessionId: 'finalization-boundary',
+          workspaceRoot: '/tmp/finalization-boundary',
+        }
+      );
+      try {
+        await reached.promise;
+        controller.abort();
+        release.resolve();
+        await expect(result).resolves.toMatchObject({
+          success: false,
+          llmContent: failure.llmContent,
+          error: failure.error,
+          metadata: {
+            finalization_failed: true,
+            execution_host_failure: 'finalization',
+            aborted: true,
+          },
+        });
+        expect(
+          executor.getExecutionHistory().at(-1)?.result.metadata?.finalization_failed
+        ).toBe(true);
+      } finally {
+        release.resolve();
+        await result;
+        executor.dispose();
+      }
+    }
+  );
+
+  it.each(['false', 'string', 'prototype', 'success', 'missing'] as const)(
+    'does not preserve an invalid finalization marker: %s',
+    async (marker) => {
+      const reached = deferred<void>();
+      const release = deferred<void>();
+      const metadata: Record<string, unknown> =
+        marker === 'prototype' ? Object.create({ finalization_failed: true }) : {};
+      if (marker !== 'prototype' && marker !== 'missing') {
+        metadata.finalization_failed =
+          marker === 'false' ? false : marker === 'string' ? 'true' : true;
+      }
+      const registry = new ToolRegistry();
+      registry.register(
+        createTool({
+          name: 'UnclassifiedFinalization',
+          displayName: 'UnclassifiedFinalization',
+          kind: ToolKind.Execute,
+          schema: Type.Unknown(),
+          description: { short: 'unclassified result cancellation' },
+          async execute() {
+            reached.resolve();
+            await release.promise;
+            return {
+              success: marker === 'success',
+              llmContent: 'unclassified',
+              metadata,
+            };
+          },
+        })
+      );
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+      });
+      const controller = new AbortController();
+      const result = executor.execute(
+        'UnclassifiedFinalization',
+        {},
+        { signal: controller.signal }
+      );
+      try {
+        await reached.promise;
+        controller.abort();
+        release.resolve();
+        await expect(result).resolves.toMatchObject({
+          success: false,
+          error: { message: '任务已被用户中止' },
+          metadata: { shouldExitLoop: true },
+        });
+      } finally {
+        release.resolve();
+        await result;
+        executor.dispose();
+      }
+    }
+  );
 
   it('does not treat prototype metadata as a classified side-effect outcome', async () => {
     const release = deferred<void>();

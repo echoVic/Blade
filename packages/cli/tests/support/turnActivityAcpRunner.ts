@@ -16,6 +16,7 @@ interface RunnerInput {
   secret: string;
   releaseFile: string;
   cleanupFailure?: 'kill' | 'release';
+  cleanupCancellation?: boolean;
   creationCancellation?: 'reject' | 'late';
   reasoningEffort?: 'high';
 }
@@ -206,11 +207,23 @@ async function run(input: RunnerInput) {
       await connection.cancel({ sessionId: created.sessionId });
       await connection.setSessionMode({ sessionId: created.sessionId, modeId: 'yolo' });
       finishCreation();
+    } else if (input.cleanupCancellation) {
+      await waitFor(
+        () => client.activeTerminalCount() === 1,
+        'ACP cleanup cancellation terminal did not start',
+        30_000
+      );
+      await connection.cancel({ sessionId: created.sessionId });
     } else if (input.cleanupFailure !== 'kill') {
       await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     }
     const result = await prompt;
-    if (result.stopReason !== (input.creationCancellation ? 'cancelled' : 'end_turn')) {
+    if (
+      result.stopReason !==
+      (input.creationCancellation || input.cleanupCancellation
+        ? 'cancelled'
+        : 'end_turn')
+    ) {
       throw new Error(`Unexpected turn activity ACP stop reason: ${result.stopReason}`);
     }
     const projections = activityProjections(client);
@@ -274,12 +287,13 @@ async function run(input: RunnerInput) {
             : []
         )
         .join('');
-      if (text.trim() !== input.marker)
+      if (!input.cleanupCancellation && text.trim() !== input.marker)
         throw new Error('ACP cleanup final response mismatch');
       if (
         client.createRequests.length !== 1 ||
         client.releaseAttempts !== 1 ||
-        client.killAttempts !== (input.cleanupFailure === 'kill' ? 1 : 0)
+        client.killAttempts !==
+          (input.cleanupCancellation || input.cleanupFailure === 'kill' ? 1 : 0)
       ) {
         throw new Error('ACP cleanup requests were repeated');
       }
@@ -293,6 +307,39 @@ async function run(input: RunnerInput) {
       await client.close();
       if (client.activeTerminalCount() !== 0)
         throw new Error('Fixture terminals remained after cleanup');
+      if (input.cleanupCancellation) {
+        const updateIndex = client.sessionUpdates.length;
+        const followup = await connection.prompt({
+          sessionId: created.sessionId,
+          prompt: [
+            {
+              type: 'text',
+              text: `If the cancelled Bash reported ACP terminal finalization failed, reply exactly ${input.marker}. Otherwise reply UNEXPECTED_RESULT. Do not call tools.`,
+            },
+          ],
+        });
+        const answer = client.sessionUpdates
+          .slice(updateIndex)
+          .flatMap(({ update }) =>
+            update.sessionUpdate === 'agent_message_chunk' &&
+            update.content.type === 'text'
+              ? [update.content.text]
+              : []
+          )
+          .join('');
+        if (
+          followup.stopReason !== 'end_turn' ||
+          answer.trim() !== input.marker ||
+          client.createRequests.length !== 1
+        ) {
+          throw new Error(
+            'ACP cleanup cancellation recovery lost the failure or replayed the command'
+          );
+        }
+        if (JSON.stringify(client.sessionUpdates).includes(input.secret)) {
+          throw new Error('ACP cleanup cancellation recovery leaked credentials');
+        }
+      }
     }
 
     let creationEvidence:

@@ -74,6 +74,10 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   同时保留 `timeout`/`aborted` 与 `finalization_failed` 标记；不再只显示普通超时或取消。
   清理成功时原有分类不变，权限恢复后新命令不会误删旧 lease；不自动重放失败命令，也不改变
   进程终止预算或 orphan reaper 的身份检查。ACP 客户端 terminal 的清理失败按下面的协议边界处理。
+- 取消发生在工具执行、PostToolUse、LSP 同步或自动验证期间时，执行层保留工具已明确
+  报告的清理失败，不将其覆盖为普通取消。原错误与 `finalization_failed=true` 进入
+  持久化结果和界面，并供下一回合读取；当前回合仍按取消结束。未报告清理失败时保持
+  原有取消行为，也不改变 pending input 的确认、队列或恢复策略。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - eligible 前台 Bash 默认等待 15 秒；若仍在运行且原 timeout 更晚，会把同一 PID 原子

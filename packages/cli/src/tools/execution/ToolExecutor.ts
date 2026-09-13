@@ -920,7 +920,12 @@ function hasClassifiedSideEffectOutcome(result: ToolResult): boolean {
   if (!result.metadata || typeof result.metadata !== 'object') {
     return false;
   }
-  return Object.hasOwn(result.metadata, 'sideEffectsUncertain');
+  return (
+    Object.hasOwn(result.metadata, 'sideEffectsUncertain') ||
+    (result.success === false &&
+      Object.hasOwn(result.metadata, 'finalization_failed') &&
+      result.metadata.finalization_failed === true)
+  );
 }
 
 export interface ExecutionStats {
