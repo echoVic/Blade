@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.177] - 2026-09-13
+
+### Fixed
+- Keep side-conversation completion and errors from stealing focus from another editor. Cancel obsolete deferred focus callbacks and respect a user focus change before autofocus runs.
+
+### Tests
+- Reproduce focus stealing with controlled animation frames and production Chromium. Verify main-composer focus and draft preservation with real DeepSeek Flash/Pro in production and development GUI, plus exact browser-to-Provider questions after preparation failure.
+
 ## [0.10.176] - 2026-09-13
 
 ### Fixed
