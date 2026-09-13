@@ -10,7 +10,7 @@ Blade Code 会在 Goal 模式中持久跟踪 Bash 执行宿主故障，避免自
 - `timeout`：前台命令达到 hard timeout；
 - `admission`：受管进程准入或释放失败；
 - `spawn`：shell 子进程未成功创建；
-- `finalization`：本地进程组收尾或 durable lease 删除失败；若同时发生 timeout/abort，收尾失败分类优先，原停止原因仍保留为结果标记；
+- `finalization`：本地进程组收尾、durable lease 删除或 ACP 客户端 terminal kill/release 失败；若同时发生 timeout/abort，收尾失败分类优先，原停止原因仍保留为结果标记；
 - `sandbox_start`：必需 sandbox 未能启动；
 - `terminal`：ACP terminal transport 在产生命令结果前不可用。
 

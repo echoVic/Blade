@@ -1007,10 +1007,16 @@ async function executeWithAcpTerminal(
     if (result.failureKind === 'finalization') {
       return {
         success: false,
-        llmContent: 'Command process group could not be finalized',
+        llmContent:
+          result.transport === 'acp'
+            ? 'ACP terminal finalization failed'
+            : 'Command process group could not be finalized',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: 'Foreground command finalization failed',
+          message:
+            result.transport === 'acp'
+              ? 'ACP terminal finalization failed'
+              : 'Foreground command finalization failed',
         },
         metadata: {
           command,

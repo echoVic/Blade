@@ -21,6 +21,9 @@ import {
   isAcpRemoteFileSystem,
   isExplicitUnknownAcpSession,
 } from '../../../../src/acp/AcpServiceContext.js';
+import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { killShellTool } from '../../../../src/tools/builtin/shell/killShell.js';
+import { taskOutputTool } from '../../../../src/tools/builtin/task/taskOutput.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import { ControlledTerminalClient } from '../../../support/acp/ControlledTerminalClient.js';
 import {
@@ -1071,6 +1074,386 @@ describe('AcpServiceContext session isolation', () => {
     expect(client.callOrder.lastIndexOf('output')).toBeLessThan(
       client.callOrder.indexOf('release')
     );
+  });
+
+  it.each([
+    { ending: 'completed', failure: 'release' },
+    { ending: 'timeout', failure: 'kill' },
+    { ending: 'timeout', failure: 'release' },
+    { ending: 'aborted', failure: 'kill' },
+    { ending: 'aborted', failure: 'release' },
+    { ending: 'failed', failure: 'release' },
+    { ending: 'timeout', failure: 'both' },
+  ] as const)(
+    'reports ACP cleanup failure for $ending with failed $failure',
+    async ({ ending, failure }) => {
+      class FailingCleanupClient extends ControlledTerminalClient {
+        override async killTerminal(
+          params: acp.KillTerminalRequest
+        ): Promise<acp.KillTerminalResponse> {
+          await super.killTerminal(params);
+          if (failure === 'kill' || failure === 'both')
+            throw new Error('PRIVATE_KILL_FAILURE');
+          return {};
+        }
+        override async releaseTerminal(
+          params: acp.ReleaseTerminalRequest
+        ): Promise<acp.ReleaseTerminalResponse> {
+          await super.releaseTerminal(params);
+          if (failure === 'release' || failure === 'both')
+            throw new Error('PRIVATE_RELEASE_FAILURE');
+          return {};
+        }
+      }
+      const client = new FailingCleanupClient();
+      client.enqueueOutput({ output: 'preserved-output', truncated: false });
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        'session-a',
+        { terminal: true },
+        '/workspace/a'
+      );
+      const directory = await mkdtemp(join(tmpdir(), 'blade-acp-cleanup-failure-'));
+      const marker = join(directory, 'must-not-run-locally');
+      const controller = new AbortController();
+      try {
+        if (ending === 'completed') client.resolveWait({ exitCode: 0 });
+        const resultPromise = getTerminalService('session-a').execute(
+          `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(marker)}, 'bad')`)}`,
+          {
+            timeout: ending === 'timeout' ? 30 : 5_000,
+            signal: controller.signal,
+            allowLocalFallback: true,
+          }
+        );
+        await vi.waitFor(() => expect(client.waitRequests).toHaveLength(1));
+        if (ending === 'aborted') controller.abort();
+        if (ending === 'failed') client.rejectWait(new Error('PRIVATE_WAIT_FAILURE'));
+        const result = await resultPromise;
+        expect(result).toMatchObject({
+          success: false,
+          error: 'ACP terminal finalization failed',
+          failureKind: 'finalization',
+          transport: 'acp',
+          stdout: 'preserved-output',
+          capture: { stdout: { accountingComplete: true } },
+        });
+        if (ending === 'timeout' || ending === 'aborted')
+          expect(result.terminationReason).toBe(ending);
+        else expect(result.terminationReason).toBeUndefined();
+        expect(client.createRequests).toHaveLength(1);
+        expect(client.killRequests).toHaveLength(ending === 'completed' ? 0 : 1);
+        expect(client.releaseRequests).toHaveLength(1);
+        expect(client.callOrder.lastIndexOf('output')).toBeLessThan(
+          client.callOrder.indexOf('release')
+        );
+        expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+        await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        controller.abort();
+        client.resolveWait({ exitCode: 0 });
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(['completed', 'kill'] as const)(
+    'exposes handed-off ACP cleanup failure after %s',
+    async (ending) => {
+      class FailingReleaseClient extends ControlledTerminalClient {
+        override async releaseTerminal(
+          params: acp.ReleaseTerminalRequest
+        ): Promise<acp.ReleaseTerminalResponse> {
+          await super.releaseTerminal(params);
+          throw new Error('PRIVATE_BACKGROUND_RELEASE_FAILURE');
+        }
+      }
+      const client = new FailingReleaseClient();
+      client.enqueueOutput({ output: 'background-output', truncated: false });
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        'session-a',
+        { terminal: true },
+        '/workspace/a'
+      );
+      const manager = BackgroundShellManager.getInstance();
+      try {
+        const result = await getTerminalService('session-a').execute(
+          'background-command',
+          {
+            foregroundHandoffMs: 1,
+            timeout: 5_000,
+            durableOwnership: { sessionId: 'session-a', projectPath: '/workspace/a' },
+          }
+        );
+        const id = result.background?.shellId;
+        if (!id) throw new Error('ACP terminal was not handed off');
+        const completion = manager.waitForCompletion(id, 'session-a');
+        if (ending === 'completed') client.resolveWait({ exitCode: 0 });
+        else {
+          const killed = await killShellTool.execute({ shell_id: id }, undefined, {
+            sessionId: 'session-a',
+          });
+          expect(killed.success).toBe(false);
+        }
+        await completion;
+        expect(manager.getProcess(id, 'session-a')).toMatchObject({
+          status: 'error',
+          finalizationFailed: true,
+        });
+        const output = await taskOutputTool.execute(
+          { task_id: id, block: false, timeout: 100 },
+          undefined,
+          { sessionId: 'session-a' }
+        );
+        expect(output.success).toBe(true);
+        expect(output.llmContent).toMatchObject({
+          status: 'error',
+          finalization_failed: true,
+          error: 'ACP terminal finalization failed',
+          stdout: 'background-output',
+        });
+        const repeatedKill = await killShellTool.execute({ shell_id: id }, undefined, {
+          sessionId: 'session-a',
+        });
+        expect(repeatedKill.success).toBe(false);
+        expect(client.releaseRequests).toHaveLength(1);
+        client.resolveWait({ exitCode: 0 });
+        await Promise.resolve();
+        expect(manager.getProcess(id, 'session-a')?.status).toBe('error');
+        expect(JSON.stringify(output)).not.toContain('PRIVATE_');
+        expect(manager.getAdmissionStats().sessions['session-a']).toBeUndefined();
+      } finally {
+        client.resolveWait({ exitCode: 0 });
+        await manager.killSession('session-a');
+      }
+    }
+  );
+
+  it.each([false, true])(
+    'joins concurrent ACP termination until release settles (failure: %s)',
+    async (failRelease) => {
+      let finishRelease!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        finishRelease = resolve;
+      });
+      class PendingReleaseClient extends ControlledTerminalClient {
+        override async releaseTerminal(
+          params: acp.ReleaseTerminalRequest
+        ): Promise<acp.ReleaseTerminalResponse> {
+          await super.releaseTerminal(params);
+          await barrier;
+          if (failRelease) throw new Error('PRIVATE_PENDING_RELEASE');
+          return {};
+        }
+      }
+      const client = new PendingReleaseClient();
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        'session-a',
+        { terminal: true },
+        '/workspace/a'
+      );
+      const manager = BackgroundShellManager.getInstance();
+      const pending: Promise<unknown>[] = [];
+      try {
+        const result = await getTerminalService('session-a').execute(
+          'background-command',
+          {
+            foregroundHandoffMs: 1,
+            timeout: 5_000,
+            durableOwnership: { sessionId: 'session-a', projectPath: '/workspace/a' },
+          }
+        );
+        const id = result.background?.shellId;
+        if (!id) throw new Error('ACP terminal was not handed off');
+        const settled: string[] = [];
+        const first = killShellTool
+          .execute({ shell_id: id }, undefined, { sessionId: 'session-a' })
+          .then((value) => {
+            settled.push('first');
+            return value;
+          });
+        pending.push(first);
+        await vi.waitFor(() => expect(client.releaseRequests).toHaveLength(1));
+        const second = killShellTool
+          .execute({ shell_id: id }, undefined, { sessionId: 'session-a' })
+          .then((value) => {
+            settled.push('second');
+            return value;
+          });
+        const disposal = manager.killSession('session-a').then(() => {
+          settled.push('disposed');
+        });
+        pending.push(second, disposal);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toEqual([]);
+        expect(manager.getProcess(id, 'session-a')?.status).toBe('running');
+        expect(manager.getAdmissionStats().sessions['session-a']?.active).toBe(1);
+        finishRelease();
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        await disposal;
+        expect(firstResult.success).toBe(!failRelease);
+        expect(secondResult.success).toBe(!failRelease);
+        expect(client.killRequests).toHaveLength(1);
+        expect(client.releaseRequests).toHaveLength(1);
+        expect(manager.getProcess(id, 'session-a')).toBeUndefined();
+        expect(manager.getAdmissionStats().sessions['session-a']).toBeUndefined();
+      } finally {
+        finishRelease();
+        client.resolveWait({ exitCode: 0 });
+        await Promise.allSettled(pending);
+        await manager.killSession('session-a');
+      }
+    }
+  );
+
+  it('does not carry ACP cleanup failure into the next execution', async () => {
+    class RecoveringReleaseClient extends ControlledTerminalClient {
+      rejectRelease = true;
+      override async releaseTerminal(
+        params: acp.ReleaseTerminalRequest
+      ): Promise<acp.ReleaseTerminalResponse> {
+        await super.releaseTerminal(params);
+        if (this.rejectRelease) throw new Error('PRIVATE_RELEASE_FAILURE');
+        return {};
+      }
+    }
+    const client = new RecoveringReleaseClient();
+    client.resolveWait({ exitCode: 0 });
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+    const service = getTerminalService('session-a');
+    await expect(service.execute('first-command')).resolves.toMatchObject({
+      success: false,
+      failureKind: 'finalization',
+    });
+    client.rejectRelease = false;
+    const recovered = await service.execute('second-command');
+    expect(recovered).toMatchObject({ success: true, exitCode: 0, transport: 'acp' });
+    expect(recovered.failureKind).toBeUndefined();
+    expect(recovered.terminationReason).toBeUndefined();
+    expect(client.createRequests.map((request) => request.command)).toEqual([
+      'first-command',
+      'second-command',
+    ]);
+    expect(client.releaseRequests).toHaveLength(2);
+  });
+
+  it('waits for a rejected kill before reading final output and releasing ACP resources', async () => {
+    let finishKill!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      finishKill = resolve;
+    });
+    class BlockingKillClient extends ControlledTerminalClient {
+      override async killTerminal(
+        params: acp.KillTerminalRequest
+      ): Promise<acp.KillTerminalResponse> {
+        await super.killTerminal(params);
+        await barrier;
+        throw new Error('PRIVATE_DELAYED_KILL');
+      }
+    }
+    const client = new BlockingKillClient();
+    client.enqueueOutput({ output: 'final-output', truncated: false });
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+    let settled = false;
+    const controller = new AbortController();
+    const execution = getTerminalService('session-a')
+      .execute('waiting-command', { signal: controller.signal })
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await vi.waitFor(() => expect(client.waitRequests).toHaveLength(1));
+      controller.abort();
+      await vi.waitFor(() => expect(client.killRequests).toHaveLength(1));
+      expect(client.releaseRequests).toHaveLength(0);
+      expect(settled).toBe(false);
+      finishKill();
+      await expect(execution).resolves.toMatchObject({
+        success: false,
+        failureKind: 'finalization',
+        terminationReason: 'aborted',
+        stdout: 'final-output',
+      });
+      expect(client.callOrder.indexOf('kill')).toBeLessThan(
+        client.callOrder.lastIndexOf('output')
+      );
+      expect(client.callOrder.lastIndexOf('output')).toBeLessThan(
+        client.callOrder.indexOf('release')
+      );
+      expect(client.releaseRequests).toHaveLength(1);
+    } finally {
+      finishKill();
+      controller.abort();
+      client.resolveWait({ exitCode: 0 });
+      await execution;
+    }
+  });
+
+  it('keeps ACP finalization pending until a rejected release has settled', async () => {
+    let finishRelease!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    class BlockingReleaseClient extends ControlledTerminalClient {
+      override async releaseTerminal(
+        params: acp.ReleaseTerminalRequest
+      ): Promise<acp.ReleaseTerminalResponse> {
+        await super.releaseTerminal(params);
+        await barrier;
+        throw new Error('PRIVATE_DELAYED_RELEASE');
+      }
+    }
+    const client = new BlockingReleaseClient();
+    client.resolveWait({ exitCode: 0 });
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+    let settled = false;
+    const execution = getTerminalService('session-a')
+      .execute('completed')
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await vi.waitFor(() => expect(client.releaseRequests).toHaveLength(1));
+      expect(settled).toBe(false);
+      finishRelease();
+      await expect(execution).resolves.toMatchObject({
+        success: false,
+        failureKind: 'finalization',
+      });
+      expect(client.releaseRequests).toHaveLength(1);
+    } finally {
+      finishRelease();
+      await execution;
+    }
   });
 
   it('does not let a stalled ACP output read defeat terminal timeout cleanup', async () => {

@@ -484,8 +484,11 @@ class AcpTerminalService implements TerminalService {
 
       const finalizeTerminal = (outcome: RaceOutcome) => {
         terminalFinalization ??= (async (): Promise<TerminalExecuteResult> => {
+          let finalizationFailed = false;
           if (outcome.type !== 'completed') {
-            await activeTerminal.kill().catch(() => undefined);
+            await activeTerminal.kill().catch(() => {
+              finalizationFailed = true;
+            });
           }
           await stopPolling();
           const finalRead = outputReadStalled
@@ -502,7 +505,9 @@ class AcpTerminalService implements TerminalService {
           } else {
             capture.markAccountingIncomplete();
           }
-          await activeTerminal.release().catch(() => undefined);
+          await activeTerminal.release().catch(() => {
+            finalizationFailed = true;
+          });
           capture.finish();
           const snapshot = capture.snapshot();
 
@@ -513,8 +518,9 @@ class AcpTerminalService implements TerminalService {
               snapshot.stdout.content,
               snapshot.stderr.content
             );
-            const status: BackgroundShellStatus =
-              outcome.type === 'completed'
+            const status: BackgroundShellStatus = finalizationFailed
+              ? 'error'
+              : outcome.type === 'completed'
                 ? 'exited'
                 : outcome.type === 'timeout'
                   ? 'timed_out'
@@ -526,8 +532,10 @@ class AcpTerminalService implements TerminalService {
             manager.completeExternalProcess(candidateId, this.sessionId, {
               status,
               exitCode: outcome.type === 'completed' ? outcome.exitCode : null,
-              errorMessage:
-                outcome.type === 'failed'
+              ...(finalizationFailed ? { finalizationFailed: true } : {}),
+              errorMessage: finalizationFailed
+                ? 'ACP terminal finalization failed'
+                : outcome.type === 'failed'
                   ? outcome.error instanceof Error
                     ? outcome.error.message
                     : 'ACP terminal unavailable'
@@ -537,12 +545,16 @@ class AcpTerminalService implements TerminalService {
           }
 
           return {
-            success: outcome.type === 'completed' && outcome.exitCode === 0,
+            success:
+              !finalizationFailed &&
+              outcome.type === 'completed' &&
+              outcome.exitCode === 0,
             stdout: snapshot.stdout.content,
             stderr: snapshot.stderr.content,
             exitCode: outcome.type === 'completed' ? outcome.exitCode : null,
-            error:
-              outcome.type === 'timeout'
+            error: finalizationFailed
+              ? 'ACP terminal finalization failed'
+              : outcome.type === 'timeout'
                 ? 'Command timed out'
                 : outcome.type === 'aborted' || outcome.type === 'killed'
                   ? 'Command was aborted'
@@ -551,14 +563,26 @@ class AcpTerminalService implements TerminalService {
                       ? `ACP terminal unavailable: ${outcome.error.message}`
                       : 'ACP terminal unavailable'
                     : undefined,
-            failureKind:
-              outcome.type === 'timeout'
+            failureKind: finalizationFailed
+              ? 'finalization'
+              : outcome.type === 'timeout'
                 ? 'timeout'
                 : outcome.type === 'aborted' || outcome.type === 'killed'
                   ? 'aborted'
                   : outcome.type === 'failed'
                     ? 'unavailable'
                     : undefined,
+            ...(finalizationFailed &&
+            (outcome.type === 'timeout' ||
+              outcome.type === 'aborted' ||
+              outcome.type === 'killed')
+              ? {
+                  terminationReason:
+                    outcome.type === 'timeout'
+                      ? ('timeout' as const)
+                      : ('aborted' as const),
+                }
+              : {}),
             transport: 'acp',
             capture: snapshot,
           };

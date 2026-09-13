@@ -47,6 +47,22 @@ export const killShellTool = createTool({
       };
     }
 
+    if (result.finalizationFailed) {
+      return {
+        success: false,
+        llmContent: 'Shell finalization failed',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Shell finalization failed',
+        },
+        metadata: {
+          ...result,
+          finalization_failed: true,
+          summary: 'Shell finalization failed',
+        },
+      };
+    }
+
     if (!result.success && !result.alreadyExited) {
       return {
         success: false,

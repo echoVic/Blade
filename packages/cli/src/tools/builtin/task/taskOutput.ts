@@ -259,6 +259,15 @@ async function handleShellOutput(
     task_id: snapshot.id,
     type: 'shell',
     status: snapshot.status,
+    ...(snapshot.finalizationFailed
+      ? {
+          finalization_failed: true,
+          error:
+            snapshot.transport === 'acp'
+              ? 'ACP terminal finalization failed'
+              : 'Shell finalization failed',
+        }
+      : {}),
     command: snapshot.command,
     pid: snapshot.pid,
     exit_code: snapshot.exitCode,

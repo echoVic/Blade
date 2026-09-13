@@ -73,7 +73,7 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   无法完成收尾或删除 lease，返回 `execution_error` 和 `execution_host_failure=finalization`，
   同时保留 `timeout`/`aborted` 与 `finalization_failed` 标记；不再只显示普通超时或取消。
   清理成功时原有分类不变，权限恢复后新命令不会误删旧 lease；不自动重放失败命令，也不改变
-  进程终止预算或 orphan reaper 的身份检查。该契约不涵盖 ACP 客户端远程 terminal 的清理。
+  进程终止预算或 orphan reaper 的身份检查。ACP 客户端 terminal 的清理失败按下面的协议边界处理。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - eligible 前台 Bash 默认等待 15 秒；若仍在运行且原 timeout 更晚，会把同一 PID 原子
@@ -95,6 +95,13 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   KillShell 或 Session dispose 后依次 kill（需要时）、读取最终 output、release
   terminal。ACP 协议不提供 stdin 写入，因此交接后的 `WriteStdin` 返回明确 unsupported
   错误。
+- ACP 客户端 terminal 的 kill 或 release 拒绝时，Blade 仍尝试完成输出读取和 release，
+  最终返回规范 `ACP terminal finalization failed`，保留已有输出与 timeout/abort 原因，
+  不回退到本地执行或重放命令。交接后的任务标记为 `error` 与 `finalization_failed`；
+  `TaskOutput` 查询本身可成功，但载荷明确报告任务清理失败，`KillShell` 不将其当成成功。
+  并发终止和 Session 清理等待同一个清理 Promise，完成前保持运行状态和 admission。
+  清理成功后再次终止返回 `already_exited=true`；清理失败后再次终止仍报告失败，均不重复 RPC。
+  远端资源仍归客户端所有，清理拒绝不代表资源已释放，也不会触发对远端 PID 的本地终止。
 - 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
   shell lease 后，再等待 gate release byte 的 pipe write callback 成功，才返回 tool
   result 并放行实际 executable；lease 或 gate write 失败时用户命令零执行。lease 仅包含

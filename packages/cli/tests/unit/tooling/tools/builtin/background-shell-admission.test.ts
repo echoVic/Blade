@@ -131,6 +131,53 @@ describe('BackgroundShellManager admission', () => {
     expect(terminate).toHaveBeenCalledOnce();
     expect(terminate).toHaveBeenCalledWith('killed');
     expect(manager.getAdmissionStats().active).toBe(0);
+    await expect(manager.kill(candidate.id, 'session-a')).resolves.toMatchObject({
+      success: false,
+      alreadyExited: true,
+      status: 'killed',
+    });
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it('settles a rejected external termination once without leaking its error', async () => {
+    const manager = new BackgroundShellManager();
+    const terminate = vi.fn(async () => {
+      throw new Error('PRIVATE_TERMINATION_ERROR');
+    });
+    const candidate = manager.startExternalForegroundCandidate({
+      command: 'external',
+      sessionId: 'session-a',
+      terminate,
+    });
+    manager.promoteExternalForegroundCandidate(candidate.id, 'session-a', 1_000);
+    const [first, second] = await Promise.all([
+      manager.kill(candidate.id, 'session-a'),
+      manager.kill(candidate.id, 'session-a'),
+    ]);
+    await candidate.completion;
+    expect(first).toMatchObject({
+      success: false,
+      status: 'error',
+      finalizationFailed: true,
+    });
+    expect(second).toEqual(first);
+    expect(terminate).toHaveBeenCalledOnce();
+    const snapshot = manager.consumeOutput(candidate.id, 'session-a');
+    expect(snapshot).toMatchObject({
+      status: 'error',
+      finalizationFailed: true,
+      errorMessage: 'ACP terminal finalization failed',
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_TERMINATION_ERROR');
+    expect(manager.getAdmissionStats().active).toBe(0);
+    await expect(manager.kill(candidate.id, 'session-a')).resolves.toMatchObject({
+      success: false,
+      alreadyExited: true,
+      status: 'error',
+      finalizationFailed: true,
+    });
+    expect(terminate).toHaveBeenCalledOnce();
+    await manager.killSession('session-a');
   });
 
   it('rejects invalid limits', () => {

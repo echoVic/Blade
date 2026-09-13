@@ -98,6 +98,7 @@ interface ManagedBackgroundShellProcess extends BackgroundShellProcess {
   terminateExternal?: (reason: 'timeout' | 'aborted' | 'killed') => Promise<void>;
   terminalSettled: boolean;
   finalizationPromise?: Promise<boolean>;
+  externalTerminationPromise?: Promise<KillResult>;
 }
 
 export interface ShellOutputSnapshot {
@@ -129,6 +130,7 @@ export interface KillResult {
   success: boolean;
   alreadyExited: boolean;
   status: BackgroundShellStatus;
+  finalizationFailed?: boolean;
   pid?: number;
   exitCode?: number | null;
   signal?: string | null;
@@ -610,6 +612,7 @@ export class BackgroundShellManager {
       exitCode?: number | null;
       signal?: string | null;
       errorMessage?: string;
+      finalizationFailed?: boolean;
     }
   ): void {
     const processInfo = this.getOwnedProcess(shellId, sessionId);
@@ -625,6 +628,7 @@ export class BackgroundShellManager {
     processInfo.exitCode = outcome.exitCode;
     processInfo.signal = outcome.signal;
     processInfo.errorMessage = outcome.errorMessage;
+    if (outcome.finalizationFailed) processInfo.finalizationFailed = true;
     processInfo.endTime = Date.now();
     processInfo.releaseAdmission();
     processInfo.resolveCompletion();
@@ -822,44 +826,59 @@ export class BackgroundShellManager {
     processInfo: ManagedBackgroundShellProcess,
     reason: 'timeout' | 'aborted' | 'killed' = 'killed'
   ): Promise<KillResult> {
+    if (processInfo.externalTerminationPromise)
+      return processInfo.externalTerminationPromise;
     if (processInfo.status !== 'running') {
       return {
         success: false,
         alreadyExited: true,
         status: processInfo.status,
+        ...(processInfo.finalizationFailed ? { finalizationFailed: true } : {}),
         pid: processInfo.pid,
         exitCode: processInfo.exitCode,
         signal: processInfo.signal,
       };
     }
 
+    if (processInfo.terminateExternal) {
+      const terminateExternal = processInfo.terminateExternal;
+      processInfo.externalTerminationPromise = Promise.resolve()
+        .then(async () => {
+          try {
+            await terminateExternal(reason);
+          } catch {
+            this.completeExternalProcess(processInfo.id, processInfo.sessionId, {
+              status: 'error',
+              finalizationFailed: true,
+              errorMessage: 'ACP terminal finalization failed',
+            });
+          }
+          processInfo.releaseAdmission();
+          return {
+            success: processInfo.status !== 'error',
+            alreadyExited: false,
+            status: processInfo.status,
+            ...(processInfo.finalizationFailed ? { finalizationFailed: true } : {}),
+            pid: processInfo.pid,
+            exitCode: processInfo.exitCode,
+            signal: processInfo.signal,
+          };
+        })
+        .finally(() => {
+          processInfo.externalTerminationPromise = undefined;
+        });
+      return processInfo.externalTerminationPromise;
+    }
     processInfo.status =
       reason === 'timeout' ? 'timed_out' : reason === 'aborted' ? 'aborted' : 'killed';
     processInfo.endTime = Date.now();
-    if (processInfo.terminateExternal) {
-      try {
-        await processInfo.terminateExternal(reason);
-      } catch (error) {
-        processInfo.status = 'error';
-        processInfo.errorMessage =
-          error instanceof Error ? error.message : 'Failed to terminate ACP terminal';
-      }
-      processInfo.releaseAdmission();
-      return {
-        success: processInfo.status !== 'error',
-        alreadyExited: false,
-        status: processInfo.status,
-        pid: processInfo.pid,
-        exitCode: processInfo.exitCode,
-        signal: processInfo.signal,
-      };
-    }
     if (!processInfo.process) {
       processInfo.releaseAdmission();
       return {
         success: false,
         alreadyExited: true,
         status: processInfo.status,
+        ...(processInfo.finalizationFailed ? { finalizationFailed: true } : {}),
         pid: processInfo.pid,
         exitCode: processInfo.exitCode,
         signal: processInfo.signal,

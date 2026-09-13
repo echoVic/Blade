@@ -290,6 +290,51 @@ describe('Bash Tool', () => {
     expect(updateOutput.mock.calls.flat().join('\n')).not.toContain(sentinel);
   });
 
+  it('projects ACP cleanup failure as a remote terminal error without leaking client details', async () => {
+    class FailingReleaseClient extends ControlledTerminalClient {
+      override async releaseTerminal(
+        params: acp.ReleaseTerminalRequest
+      ): Promise<acp.ReleaseTerminalResponse> {
+        await super.releaseTerminal(params);
+        throw new Error('PRIVATE_ACP_RELEASE_DETAILS');
+      }
+    }
+    const sessionId = 'bash-acp-release-failure';
+    const client = new FailingReleaseClient();
+    const harness = createPairedAcpHarness(client);
+    client.enqueueOutput({ output: 'remote output', truncated: false });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      acpCapabilities,
+      '/workspace/acp'
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close()
+    );
+    const result = await bashTool.execute(
+      { command: 'printf remote', timeout: 10_000, env: {}, run_in_background: false },
+      undefined,
+      { sessionId, workspaceRoot: '/workspace/acp', foregroundCommandHandoffMs: 0 }
+    );
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: 'ACP terminal finalization failed',
+      error: { type: 'execution_error', message: 'ACP terminal finalization failed' },
+      metadata: {
+        finalization_failed: true,
+        execution_host_failure: 'finalization',
+        terminal_transport: 'acp',
+        stdout: 'remote output',
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_ACP_RELEASE_DETAILS');
+    expect(client.createRequests).toHaveLength(1);
+    expect(client.releaseRequests).toHaveLength(1);
+  });
+
   it('uses the remote execution root instead of the host state root', async () => {
     const sessionId = 'bash-acp-remote-root';
     const client = new ControlledTerminalClient();

@@ -11,7 +11,7 @@ Only host failures explicitly reported by the Bash adapter through typed metadat
 - `timeout`: a foreground command reaches its hard timeout;
 - `admission`: managed-process admission or release fails;
 - `spawn`: the shell process cannot be created;
-- `finalization`: local process-group finalization or durable lease removal fails; this category takes precedence over a concurrent timeout/abort while the original stop reason remains in result flags;
+- `finalization`: local process-group finalization, durable lease removal, or ACP client terminal kill/release fails; this category takes precedence over a concurrent timeout/abort while the original stop reason remains in result flags;
 - `sandbox_start`: a required sandbox cannot start;
 - `terminal`: the ACP terminal transport fails before producing a command result.
 
