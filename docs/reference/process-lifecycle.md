@@ -95,6 +95,10 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   KillShell 或 Session dispose 后依次 kill（需要时）、读取最终 output、release
   terminal。ACP 协议不提供 stdin 写入，因此交接后的 `WriteStdin` 返回明确 unsupported
   错误。
+- ACP terminal 服务在调用前检查取消信号：已取消时不发送 `terminal/create`。创建期间
+  取消且创建随后拒绝时，返回规范取消结果，不进入显式本地 fallback。创建请求仍等待
+  客户端响应；若迟到响应返回句柄，继续等待 kill、最终输出读取和 release 完成后返回，
+  不将该终端交接到后台。创建没有返回句柄时，Blade 无法证明客户端没有产生副作用。
 - ACP 客户端 terminal 的 kill 或 release 拒绝时，Blade 仍尝试完成输出读取和 release，
   最终返回规范 `ACP terminal finalization failed`，保留已有输出与 timeout/abort 原因，
   不回退到本地执行或重放命令。交接后的任务标记为 `error` 与 `finalization_failed`；

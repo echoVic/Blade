@@ -16,6 +16,7 @@ interface RunnerInput {
   secret: string;
   releaseFile: string;
   cleanupFailure?: 'kill' | 'release';
+  creationCancellation?: 'reject' | 'late';
   reasoningEffort?: 'high';
 }
 
@@ -126,9 +127,39 @@ async function run(input: RunnerInput) {
       return super.releaseTerminal(params);
     }
   }
-  const client = input.cleanupFailure
-    ? new CleanupFailureClient()
-    : new ChildBackedRecordingAcpClient();
+  let finishCreation!: () => void;
+  const creationBarrier = new Promise<void>((resolve) => {
+    finishCreation = resolve;
+  });
+  class CreationCancellationClient extends ChildBackedRecordingAcpClient {
+    creationStarted = false;
+    killAttempts = 0;
+    override async createTerminal(
+      params: acp.CreateTerminalRequest
+    ): Promise<acp.CreateTerminalResponse> {
+      if (input.creationCancellation === 'reject') {
+        this.createRequests.push(params);
+        this.creationStarted = true;
+        await creationBarrier;
+        throw new Error('PRIVATE_CREATE_REJECTED');
+      }
+      const result = await super.createTerminal(params);
+      this.creationStarted = true;
+      await creationBarrier;
+      return result;
+    }
+    override async killTerminal(
+      params: acp.KillTerminalRequest
+    ): Promise<acp.KillTerminalResponse> {
+      this.killAttempts++;
+      return super.killTerminal(params);
+    }
+  }
+  const client = input.creationCancellation
+    ? new CreationCancellationClient()
+    : input.cleanupFailure
+      ? new CleanupFailureClient()
+      : new ChildBackedRecordingAcpClient();
   const connection = new acp.ClientSideConnection(
     () => client,
     acp.ndJsonStream(
@@ -166,11 +197,20 @@ async function run(input: RunnerInput) {
         ),
       'ACP did not project active Bash before release'
     );
-    if (input.cleanupFailure !== 'kill') {
+    if (client instanceof CreationCancellationClient) {
+      await waitFor(
+        () => client.creationStarted,
+        'ACP terminal creation did not reach the barrier',
+        30_000
+      );
+      await connection.cancel({ sessionId: created.sessionId });
+      await connection.setSessionMode({ sessionId: created.sessionId, modeId: 'yolo' });
+      finishCreation();
+    } else if (input.cleanupFailure !== 'kill') {
       await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     }
     const result = await prompt;
-    if (result.stopReason !== 'end_turn') {
+    if (result.stopReason !== (input.creationCancellation ? 'cancelled' : 'end_turn')) {
       throw new Error(`Unexpected turn activity ACP stop reason: ${result.stopReason}`);
     }
     const projections = activityProjections(client);
@@ -255,6 +295,65 @@ async function run(input: RunnerInput) {
         throw new Error('Fixture terminals remained after cleanup');
     }
 
+    let creationEvidence:
+      | {
+          outcome: 'reject' | 'late';
+          attempts: number;
+          kills: number;
+          activeTerminals: number;
+          resumed: true;
+        }
+      | undefined;
+    if (input.creationCancellation && client instanceof CreationCancellationClient) {
+      if (
+        client.createRequests.length !== 1 ||
+        client.activeTerminalCount() !== 0 ||
+        client.killAttempts !== (input.creationCancellation === 'late' ? 1 : 0)
+      ) {
+        throw new Error(
+          'Cancelled ACP creation did not release exactly its owned resources'
+        );
+      }
+      if (serialized.includes('PRIVATE_'))
+        throw new Error('ACP creation cancellation leaked diagnostics');
+      const updateIndex = client.sessionUpdates.length;
+      const followup = await connection.prompt({
+        sessionId: created.sessionId,
+        prompt: [
+          {
+            type: 'text',
+            text: `Reply exactly ${input.marker}. Do not call any tools or repeat the cancelled command.`,
+          },
+        ],
+      });
+      if (followup.stopReason !== 'end_turn')
+        throw new Error('ACP did not recover after cancelled creation');
+      const finalText = client.sessionUpdates
+        .slice(updateIndex)
+        .flatMap(({ update }) =>
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text'
+            ? [update.content.text]
+            : []
+        )
+        .join('');
+      if (finalText.trim() !== input.marker || client.createRequests.length !== 1) {
+        throw new Error(
+          'ACP cancellation follow-up did not return the exact marker without replay'
+        );
+      }
+      if (JSON.stringify(client.sessionUpdates).includes(input.secret)) {
+        throw new Error('ACP cancellation recovery leaked credentials');
+      }
+      creationEvidence = {
+        outcome: input.creationCancellation,
+        attempts: client.createRequests.length,
+        kills: client.killAttempts,
+        activeTerminals: client.activeTerminalCount(),
+        resumed: true,
+      };
+    }
+
     child.kill('SIGTERM');
     const exit = await waitForChildExit(child);
     await connection.closed.catch(() => undefined);
@@ -275,6 +374,7 @@ async function run(input: RunnerInput) {
       sawBash: true,
       terminalClearSeen: true,
       ...(cleanupEvidence ? { cleanupFailure: cleanupEvidence } : {}),
+      ...(creationEvidence ? { creationCancellation: creationEvidence } : {}),
       terminalReleaseCount: [...client.releaseCounts.values()].reduce(
         (sum, count) => sum + count,
         0
@@ -282,6 +382,7 @@ async function run(input: RunnerInput) {
       processes: client.releasedProcesses,
     };
   } finally {
+    finishCreation();
     if (client instanceof CleanupFailureClient) client.failureEnabled = false;
     await client.close().catch(() => undefined);
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');

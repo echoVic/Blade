@@ -1501,6 +1501,115 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
   }
 });
 
+describeTrajectory('ACP terminal creation cancellation (real API)', () => {
+  for (const model of models) {
+    it.for(['reject', 'late'] as const)(
+      `${model.model} cancels pending terminal creation with %s and recovers`,
+      { timeout: 180_000 },
+      async (outcome, context) => {
+        expect(frameworkRetryBudget(context)).toBe(0);
+        if (!model.baseURL) throw new Error('Missing ACP cancellation Provider');
+        const root = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-acp-create-cancel-'))
+        );
+        const workspace = path.join(root, 'workspace');
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const proxy = await startRecordingProviderProxy(model.baseURL);
+        const marker = `ACP_CREATE_${outcome.toUpperCase()}_RECOVERED`;
+        try {
+          await mkdir(workspace, { recursive: true });
+          await writeRuntimeConfig(home, model, proxy.baseUrl);
+          await writeFile(
+            path.join(workspace, 'hold.cjs'),
+            'setInterval(() => {}, 1000);'
+          );
+          const evidence = await runRunner({
+            runner: acpRunner,
+            envName: 'BLADE_TURN_ACTIVITY_ACP_INPUT',
+            payload: {
+              cliEntry,
+              workspace,
+              home,
+              storageRoot,
+              marker,
+              releaseFile: path.join(root, 'unused-release'),
+              secret: model.apiKey,
+              prompt:
+                'Call Bash exactly once with command `node hold.cjs` and timeout 30000. Wait for its result before answering. Do not call other tools.',
+              creationCancellation: outcome,
+            },
+          });
+          expect(evidence).toMatchObject({
+            creationCancellation: {
+              outcome,
+              attempts: 1,
+              kills: outcome === 'late' ? 1 : 0,
+              activeTerminals: 0,
+              resumed: true,
+            },
+            terminalReleaseCount: outcome === 'late' ? 1 : 0,
+          });
+          const transcriptPath = findSessionTranscript(storageRoot, evidence.sessionId);
+          const events = readSessionEvents(transcriptPath);
+          expect(toolCallNames(events)).toEqual(['Bash']);
+          const results = events.filter(
+            (event) =>
+              event.type === 'part_created' && event.data.partType === 'tool_result'
+          );
+          expect(results).toMatchObject([
+            {
+              data: {
+                payload: {
+                  toolName: 'Bash',
+                  output: null,
+                  error: '任务已被用户中止',
+                  metadata: { shouldExitLoop: true },
+                },
+              },
+            },
+          ]);
+          expect(JSON.stringify(results)).not.toContain(
+            '"execution_host_failure":"terminal"'
+          );
+          expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(
+            1
+          );
+          expect(
+            events.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          const final = inspectFinalAssistantText(events);
+          expect(final.state).not.toBe('structural_mismatch');
+          if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
+          expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+          const followup = JSON.parse(proxy.requestBodies[1] ?? '{}') as {
+            messages: Array<{ role: string; content: unknown }>;
+          };
+          expect(
+            followup.messages
+              .filter((message) => message.role === 'tool')
+              .map((message) => message.content)
+          ).toEqual(['Error: 任务已被用户中止']);
+          assertNoSecrets(
+            {
+              evidence,
+              transcript: await readFile(transcriptPath, 'utf8'),
+              requests: proxy.requestBodies,
+            },
+            [model.apiKey]
+          );
+          console.log(
+            `[acp-creation-cancellation] ${JSON.stringify({ model: model.model, outcome, requests: proxy.forwardedRequestNumbers, terminalCreateCount: 1, recovered: true })}`
+          );
+        } finally {
+          await proxy.close();
+          await removeTestDirectory(root);
+        }
+      }
+    );
+  }
+});
+
 describeTrajectory('ACP terminal cleanup failure (real API)', () => {
   for (const model of models) {
     it.for(['kill', 'release'] as const)(

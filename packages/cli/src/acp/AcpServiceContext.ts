@@ -344,6 +344,17 @@ class AcpTerminalService implements TerminalService {
     command: string,
     options?: TerminalExecuteOptions
   ): Promise<TerminalExecuteResult> {
+    if (options?.signal?.aborted) {
+      return {
+        success: false,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error: 'Command was aborted',
+        failureKind: 'aborted',
+        transport: 'acp',
+      };
+    }
     let terminal:
       | Awaited<ReturnType<AgentSideConnection['createTerminal']>>
       | undefined;
@@ -670,6 +681,17 @@ class AcpTerminalService implements TerminalService {
       );
     } catch (error) {
       if (terminal) await terminal.release().catch(() => undefined);
+      if (!terminal && options?.signal?.aborted) {
+        return {
+          success: false,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error: 'Command was aborted',
+          failureKind: 'aborted',
+          transport: 'acp',
+        };
+      }
       if (this.remoteFileSystem || options?.allowLocalFallback !== true) {
         return {
           success: false,
