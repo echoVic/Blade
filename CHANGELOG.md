@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.178] - 2026-09-13
+
+### Fixed
+- Reject pre-aborted ACP terminal requests before sending terminal/create. Preserve cancellation when an in-flight create rejects, without entering local fallback or exposing the client's creation error.
+- Retain the existing late-handle cleanup barrier and finalization-failure classification; a cancelled creation still waits for the client response before reclaiming an acquired terminal.
+
+### Tests
+- Cover zero-create pre-cancellation, rejected creation with fallback on/off, late-handle cleanup, and subsequent execution through paired ACP SDK connections.
+- Verify real DeepSeek Flash/Pro production ACP cancellation during rejected or delayed creation, exactly one terminal request, released client resources, canonical cancellation history, and same-session recovery without command replay.
+
 ## [0.10.177] - 2026-09-13
 
 ### Fixed
