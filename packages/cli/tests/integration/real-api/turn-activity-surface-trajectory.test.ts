@@ -1271,10 +1271,15 @@ describe('turn activity Web evidence synchronization', () => {
 
 describeTrajectory('Bash finalization failure production Chromium (real API)', () => {
   for (const model of models) {
-    it.for(['timeout', 'cancel'] as const)(
-      `${model.model} reports cleanup failure after a real Bash %s`,
+    it.for([
+      { ending: 'timeout', mode: 'production', preserveExpansion: false },
+      { ending: 'cancel', mode: 'production', preserveExpansion: false },
+      { ending: 'cancel', mode: 'production', preserveExpansion: true },
+      { ending: 'cancel', mode: 'development', preserveExpansion: true },
+    ] as const)(
+      `${model.model} reports cleanup failure after a real Bash $ending ($mode, expanded: $preserveExpansion)`,
       { timeout: 240_000 },
-      async (ending, context) => {
+      async ({ ending, mode, preserveExpansion }, context) => {
         expect(frameworkRetryBudget(context)).toBe(0);
         if (!model.baseURL) throw new Error('Missing finalization Provider');
         const root = await realpath(
@@ -1294,6 +1299,10 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
         let leaseDirectory: string | undefined;
         let leaseFile: string | undefined;
         let toolPid: number | undefined;
+        let devChild: ChildProcess | undefined;
+        let devIdentity:
+          | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+          | undefined;
         let output = '';
         const faults: string[] = [];
         const errors: unknown[] = [];
@@ -1341,6 +1350,52 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
             'Finalization server not ready',
             30_000
           );
+          let guiOrigin = origin;
+          if (mode === 'development') {
+            const webRoot = path.resolve(import.meta.dirname, '../../../web');
+            const webPort = await reservePort();
+            const dependencyRoot = await realpath(
+              path.resolve(webRoot, '../../../node_modules')
+            );
+            devChild = spawn(
+              process.execPath,
+              [
+                '--input-type=module',
+                '--eval',
+                'import { createServer, searchForWorkspaceRoot } from "vite";' +
+                  `const server = await createServer({server: {host: "127.0.0.1", port: ${webPort}, strictPort: true, fs: {allow: [searchForWorkspaceRoot(process.cwd()), ${JSON.stringify(dependencyRoot)}]}}});` +
+                  'await server.listen();',
+              ],
+              {
+                cwd: webRoot,
+                env: {
+                  ...childEnvironment(home, storageRoot, model.apiKey),
+                  VITE_API_TARGET: origin,
+                },
+                detached: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              }
+            );
+            for (const stream of [devChild.stdout, devChild.stderr])
+              stream?.on('data', (chunk: Buffer) => {
+                output = (output + chunk.toString()).slice(-64_000);
+              });
+            if (!devChild.pid)
+              throw new Error('Finalization development server has no PID');
+            devIdentity = await captureForegroundGuiLauncherIdentity(devChild.pid);
+            guiOrigin = `http://127.0.0.1:${webPort}`;
+            await waitFor(
+              async () => {
+                try {
+                  return (await fetch(guiOrigin)).ok;
+                } catch {
+                  return false;
+                }
+              },
+              'Finalization development server not ready',
+              30_000
+            );
+          }
           const created = await fetch(`${origin}/sessions`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -1357,7 +1412,7 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
           page.on('console', (message) => {
             if (message.type() === 'error') faults.push(message.text());
           });
-          const url = new URL(origin);
+          const url = new URL(guiOrigin);
           url.searchParams.set('session', session.sessionId);
           url.searchParams.set('project', workspace);
           await page.goto(url.href, { waitUntil: 'domcontentloaded' });
@@ -1409,6 +1464,19 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
           leaseDirectory = path.dirname(leaseFile);
           const before = await readFile(leaseFile);
           await chmod(leaseDirectory, 0o500);
+          if (preserveExpansion) {
+            await page.locator('[data-agent-tool-group] > button').first().click();
+            const running = page.locator(
+              '[data-chat-history] [data-tool-name="Bash"][data-tool-status="running"]'
+            );
+            await running.waitFor({ state: 'visible' });
+            await running.locator('button[data-tool-call-id]').click();
+            expect(
+              await running
+                .locator('button[data-tool-call-id]')
+                .getAttribute('aria-expanded')
+            ).toBe('true');
+          }
           const cancellationHistory =
             ending === 'cancel'
               ? page.waitForResponse(
@@ -1482,15 +1550,28 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
             expect(response.ok()).toBe(true);
             expect(await response.finished()).toBeNull();
           }
-          await page
+          const failedGroup = page
             .locator('[data-agent-tool-group] > button')
-            .filter({ hasText: 'Executed 1 command · failed' })
-            .click();
+            .filter({ hasText: 'Executed 1 command · failed' });
+          await failedGroup.waitFor({ state: 'visible' });
+          if (preserveExpansion) {
+            expect(await failedGroup.getAttribute('aria-expanded')).toBe('true');
+          } else {
+            await failedGroup.click();
+          }
           const toolCard = page.locator(
             '[data-tool-name="Bash"][data-tool-status="error"]'
           );
           await toolCard.waitFor({ state: 'visible' });
-          await toolCard.locator('button[data-tool-call-id]').click();
+          if (preserveExpansion) {
+            expect(
+              await toolCard
+                .locator('button[data-tool-call-id]')
+                .getAttribute('aria-expanded')
+            ).toBe('true');
+          } else {
+            await toolCard.locator('button[data-tool-call-id]').click();
+          }
           expect(await toolCard.locator('[data-tool-output]').innerText()).toContain(
             'Foreground command finalization failed'
           );
@@ -1552,7 +1633,7 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
             model.apiKey,
           ]);
           console.log(
-            `[bash-finalization] ${JSON.stringify({ model: model.model, category: 'finalization', ending, leaseRetained: true, toolCalls: 1, providerRequests: proxy.forwardedRequestNumbers, faults })}`
+            `[bash-finalization] ${JSON.stringify({ model: model.model, category: 'finalization', ending, mode, preserveExpansion, leaseRetained: true, toolCalls: 1, providerRequests: proxy.forwardedRequestNumbers, faults })}`
           );
         } catch (error) {
           errors.push(error);
@@ -1564,6 +1645,7 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
           const cleanup = await Promise.allSettled([
             browser?.close(),
             child ? stopForegroundGuiLauncher(child, identity) : undefined,
+            devChild ? stopForegroundGuiLauncher(devChild, devIdentity) : undefined,
             proxy.close(),
           ]);
           for (const result of cleanup)

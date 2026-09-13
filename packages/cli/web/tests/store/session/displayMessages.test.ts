@@ -49,6 +49,47 @@ function assistant(id: string, content: AgentResponseContent): Message {
 }
 
 describe('projectMessagesForDisplay', () => {
+  it('projects a live and durable copy of one tool once with its latest status', () => {
+    const live = assistant(
+      'live',
+      agent(
+        [
+          { id: 'thinking-0', type: 'thinking', content: 'Working' },
+          { id: 'tool_group-1', type: 'tool_group', toolCallIds: ['bash-1'] },
+        ],
+        ['bash-1']
+      )
+    );
+    const durable = assistant(
+      'durable',
+      agent(
+        [
+          { id: 'text-0', type: 'text', content: 'Result received' },
+          { id: 'tool_group-1', type: 'tool_group', toolCallIds: ['bash-1', 'bash-2'] },
+        ],
+        ['bash-1', 'bash-2']
+      )
+    );
+    durable.agentContent!.toolCalls[0].status = 'error';
+    durable.agentContent!.toolCalls[0].output = 'Cleanup failed';
+    const source = structuredClone([live, durable]);
+    const [projected] = projectMessagesForDisplay([live, durable]);
+    expect(
+      projected.agentContent?.timeline?.flatMap((block) =>
+        block.type === 'tool_group' ? block.toolCallIds : []
+      )
+    ).toEqual(['bash-1', 'bash-2']);
+    expect(projected.agentContent?.toolCalls[0]).toMatchObject({
+      toolCallId: 'bash-1',
+      status: 'error',
+      output: 'Cleanup failed',
+    });
+    expect(
+      projected.agentContent?.timeline?.filter((block) => block.type === 'text')
+    ).toEqual([expect.objectContaining({ content: 'Result received' })]);
+    expect([live, durable]).toEqual(source);
+  });
+
   it('folds model-loop assistant records before timeline projection', () => {
     const projected = projectMessagesForDisplay([
       {

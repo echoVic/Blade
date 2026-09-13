@@ -2,15 +2,18 @@
 
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatList } from '../../../src/components/chat/ChatList';
 import { setLocale } from '../../../src/i18n';
+import type { Message } from '../../../src/store/session';
+import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 describe('ChatList loading history', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
 
   beforeEach(() => {
+    vi.stubGlobal('CSS', { escape: (value: string) => value });
     setLocale('en');
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -20,7 +23,129 @@ describe('ChatList loading history', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.unstubAllGlobals();
   });
+
+  it.each(['resync', 'loading', 'collapsed', 'removed', 'session'] as const)(
+    'keeps tool expansion owned across %s transitions',
+    async (transition) => {
+      const user: Message = {
+        id: 'user-1',
+        role: 'user',
+        content: 'Run a command',
+        timestamp: 1,
+      };
+      const live: Message = {
+        id: 'live-assistant',
+        role: 'assistant',
+        content: '',
+        timestamp: 2,
+        agentContent: {
+          timeline: [
+            { id: 'tool_group-0', type: 'tool_group', toolCallIds: ['call-bash'] },
+          ],
+          textBefore: '',
+          textAfter: '',
+          thinkingContent: '',
+          tasks: [],
+          subagent: null,
+          confirmation: null,
+          question: null,
+          toolCalls: [
+            {
+              toolCallId: 'call-bash',
+              toolName: 'Bash',
+              arguments: '{"command":"node hold.cjs"}',
+              status: 'running',
+              startTime: 2,
+            },
+          ],
+        },
+      };
+      const history = aggregateMessages([
+        { id: user.id, role: 'user', content: user.content, timestamp: 1 },
+        {
+          id: 'durable-assistant',
+          role: 'assistant',
+          content: '',
+          timestamp: 2,
+          thinkingContent: 'Waiting for the command',
+          tool_calls: [
+            {
+              id: 'call-bash',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{"command":"node hold.cjs"}' },
+            },
+          ],
+        },
+        {
+          id: 'tool-result',
+          role: 'tool',
+          content: 'Finalization failed',
+          timestamp: 3,
+          metadata: { toolCallId: 'call-bash', toolName: 'Bash', status: 'failed' },
+        },
+      ]);
+      await act(async () => root.render(<ChatList messages={[user, live]} />));
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[data-agent-tool-group] > button')!
+          .click()
+      );
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[data-tool-call-id="call-bash"]')!
+          .click()
+      );
+      expect(container.textContent).toContain('node hold.cjs');
+      if (transition === 'loading') {
+        await act(async () => root.render(<ChatList isLoading messages={[]} />));
+      } else if (transition === 'collapsed') {
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>('[data-tool-call-id="call-bash"]')!
+            .click()
+        );
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>('[data-agent-tool-group] > button')!
+            .click()
+        );
+      } else if (transition === 'removed') {
+        await act(async () => root.render(<ChatList messages={[user]} />));
+      }
+      await act(async () =>
+        root.render(
+          <ChatList
+            key={transition === 'session' ? 'other-session' : undefined}
+            messages={history}
+          />
+        )
+      );
+      const retained = transition === 'resync' || transition === 'loading';
+      expect(
+        container
+          .querySelector('[data-agent-tool-group] > button')
+          ?.getAttribute('aria-expanded')
+      ).toBe(String(retained));
+      if (!retained) {
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>('[data-agent-tool-group] > button')!
+            .click()
+        );
+      }
+      expect(
+        container
+          .querySelector('[data-tool-call-id="call-bash"]')
+          ?.getAttribute('aria-expanded')
+      ).toBe(String(retained));
+      if (retained)
+        expect(container.querySelector('[data-tool-output]')?.textContent).toContain(
+          'Finalization failed'
+        );
+    }
+  );
 
   it('replaces stale messages with an accessible conversation loading state', async () => {
     await act(async () => {

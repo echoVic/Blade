@@ -68,6 +68,18 @@ function joinLegacyText(left: string, right: string): string {
 function mergeTimelineAssistants(left: Message, right: Message): Message {
   const leftAgent = left.agentContent as AgentResponseContent;
   const rightAgent = right.agentContent as AgentResponseContent;
+  const seenToolCalls = new Set(leftAgent.toolCalls.map((tool) => tool.toolCallId));
+  const rightTimeline = getAgentTimeline(rightAgent).flatMap<AgentTimelineBlock>(
+    (block) => {
+      if (block.type !== 'tool_group') return [block];
+      const toolCallIds = block.toolCallIds.filter((id) => {
+        if (seenToolCalls.has(id)) return false;
+        seenToolCalls.add(id);
+        return true;
+      });
+      return toolCallIds.length > 0 ? [{ ...block, toolCallIds }] : [];
+    }
+  );
   return {
     ...left,
     ...(left.metadata || right.metadata
@@ -79,7 +91,7 @@ function mergeTimelineAssistants(left: Message, right: Message): Message {
     ],
     agentContent: {
       ...leftAgent,
-      timeline: [...getAgentTimeline(leftAgent), ...getAgentTimeline(rightAgent)],
+      timeline: [...getAgentTimeline(leftAgent), ...rightTimeline],
       textBefore: joinLegacyText(leftAgent.textBefore, rightAgent.textBefore),
       toolCalls: mergeToolCalls(leftAgent.toolCalls, rightAgent.toolCalls),
       textAfter: joinLegacyText(leftAgent.textAfter, rightAgent.textAfter),

@@ -8,7 +8,16 @@ import {
   MessageSquareQuote,
   RotateCcw,
 } from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  lazy,
+  memo,
+  Suspense,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { selectedConversationAnnotationsFromMetadata } from '@/lib/chatSelection';
@@ -41,6 +50,29 @@ import {
 } from './StructuredOutputReport';
 
 export type { Message };
+
+export const ToolExpansionContext = createContext<Map<string, Set<string>> | null>(
+  null
+);
+
+function useToolExpansion(kind: 'group' | 'detail', toolCallId: string) {
+  const cache = useContext(ToolExpansionContext);
+  const [expanded, setExpanded] = useState(
+    () => cache?.get(toolCallId)?.has(kind) ?? false
+  );
+  const toggle = () => {
+    const next = !expanded;
+    if (cache) {
+      const record = cache.get(toolCallId) ?? new Set<string>();
+      if (next) record.add(kind);
+      else record.delete(kind);
+      if (record.size > 0) cache.set(toolCallId, record);
+      else cache.delete(toolCallId);
+    }
+    setExpanded(next);
+  };
+  return { expanded, toggle };
+}
 
 interface ChatMessageProps {
   message: Message;
@@ -285,7 +317,7 @@ function fitToolOutputForCard(output: string): {
 }
 
 function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
-  const [expanded, setExpanded] = useState(false);
+  const { expanded, toggle } = useToolExpansion('detail', tool.toolCallId);
   const args = formatToolArguments(tool.arguments);
   const projectedOutput = tool.output ? fitToolOutputForCard(tool.output) : undefined;
 
@@ -300,7 +332,7 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
         type="button"
         aria-expanded={expanded}
         data-tool-call-id={tool.toolCallId}
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={toggle}
         className="w-full flex items-center justify-between px-3 py-2 bg-[hsl(var(--deck-surface-2))] hover:bg-[hsl(var(--deck-surface))] transition-colors"
       >
         <div className="flex gap-2 items-center min-w-0">
@@ -415,7 +447,7 @@ function ToolCallsGroup({
   toolCallIds: string[];
 }) {
   const t = useT();
-  const [expanded, setExpanded] = useState(false);
+  const { expanded, toggle } = useToolExpansion('group', toolCallIds[0]);
   const toolsById = useMemo(
     () => new Map(toolCalls.map((tool) => [tool.toolCallId, tool])),
     [toolCalls]
@@ -461,7 +493,7 @@ function ToolCallsGroup({
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={toggle}
         className="group flex min-h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left font-mono text-[11.5px] text-[hsl(var(--deck-ink-faint))] transition-colors hover:bg-[hsl(var(--deck-surface))]/65 hover:text-[hsl(var(--deck-ink-muted))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
       >
         {expanded ? (
@@ -921,7 +953,11 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
               {t('chat.subagent.loadingLogs')}
             </div>
           )}
-          {!loading && toolCalls.length > 0 && <ToolCallsList toolCalls={toolCalls} />}
+          {!loading && toolCalls.length > 0 && (
+            <ToolExpansionContext.Provider value={null}>
+              <ToolCallsList toolCalls={toolCalls} />
+            </ToolExpansionContext.Provider>
+          )}
           {resumedChild && (
             <div className="rounded-md border border-[#DDD6FE] bg-[#F5F3FF] p-2 text-[11px] font-mono text-[#5B21B6] dark:border-[#4C1D95] dark:bg-[#1E1B4B] dark:text-[#C4B5FD]">
               <div>

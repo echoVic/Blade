@@ -77,6 +77,15 @@ The Web UI supports all of Blade Code's core features:
 - 🔒 **Permission control** - Switch permission modes
 - 🌍 **Multilingual** - Switch between Chinese and English interfaces
 
+## Tool Execution Details
+
+Live updates and durable history for the same tool call merge into one card instead
+of duplicating commands. Expanded tool groups and details survive cancellation
+cleanup, history synchronization, and temporary loading within the current Session;
+explicit collapse is respected. Expansion state remains local to the view, is not
+written to Session history or browser storage, and resets on Session navigation or
+page reload.
+
 ## Task Board
 
 Open the "Task Board" from the left navigation. The board only shows top-level tasks

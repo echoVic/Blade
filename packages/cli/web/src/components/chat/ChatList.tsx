@@ -6,7 +6,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/store/session';
 import { projectMessagesForDisplay } from '@/store/session/utils/displayMessages';
-import { ChatMessage } from './ChatMessage';
+import { ChatMessage, ToolExpansionContext } from './ChatMessage';
 import { ChatSelectionToolbar } from './ChatSelectionToolbar';
 import {
   anchoredScrollTop,
@@ -55,6 +55,19 @@ function ChatListComponent({
     () => projectMessagesForDisplay(messages),
     [messages]
   );
+  const toolExpansion = useRef(new Map<string, Set<string>>());
+  useEffect(() => {
+    if (isLoading) return;
+    const toolCallIds = new Set(
+      messages.flatMap(
+        (message) =>
+          message.agentContent?.toolCalls.map((tool) => tool.toolCallId) ?? []
+      )
+    );
+    for (const id of toolExpansion.current.keys()) {
+      if (!toolCallIds.has(id)) toolExpansion.current.delete(id);
+    }
+  }, [messages, isLoading]);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
@@ -330,11 +343,12 @@ function ChatListComponent({
               prevMessage.role !== message.role ||
               prevMessage.role === 'user';
             return (
-              <ChatMessage
+              <ToolExpansionContext.Provider
                 key={message.id || `msg-${index}`}
-                message={message}
-                showAvatar={showAvatar}
-              />
+                value={toolExpansion.current}
+              >
+                <ChatMessage message={message} showAvatar={showAvatar} />
+              </ToolExpansionContext.Provider>
             );
           })}
         </div>
