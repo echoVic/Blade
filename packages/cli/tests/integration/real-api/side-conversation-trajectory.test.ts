@@ -1264,7 +1264,10 @@ for (const mode of ['production', 'development'] as const) {
           const workspace = path.join(root, 'workspace');
           const home = path.join(root, 'home');
           const storage = path.join(root, 'storage');
-          const proxy = await startRecordingProviderProxy(model.baseURL);
+          const proxy = await startRecordingProviderProxy(model.baseURL, {
+            holdRequestNumber: 3,
+            holdMs: 30_000,
+          });
           const processes: Array<{
             child: ChildProcess;
             identity?: Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>;
@@ -1495,9 +1498,27 @@ for (const mode of ['production', 'development'] as const) {
             await page
               .locator('textarea[name="side-conversation-composer"]')
               .press('Enter');
+            await waitForSideCondition(
+              () => proxy.heldRequestNumbers.includes(3),
+              'Side follow-up did not reach the Provider barrier'
+            );
+            await composer.fill('Main draft while the side reply is pending');
+            proxy.releaseHeld();
             await panel
               .getByText('IME_SIDE_DONE', { exact: true })
               .waitFor({ state: 'visible', timeout: 90_000 });
+            await settle();
+            expect(
+              await composer.evaluate((element) => document.activeElement === element)
+            ).toBe(true);
+            expect(await composer.inputValue()).toBe(
+              'Main draft while the side reply is pending'
+            );
+            await page.keyboard.insertText(' preserved');
+            expect(await composer.inputValue()).toBe(
+              'Main draft while the side reply is pending preserved'
+            );
+            await composer.fill('');
             expect(sideRequests).toBe(2);
             await page
               .locator('textarea[name="side-conversation-composer"]')
@@ -1831,9 +1852,33 @@ describe.skipIf(!isRealApiTestEnabled() || process.platform === 'win32')(
           await composer.fill(
             '/btw Reply exactly PREPARATION_RECOVERED and do not use tools.'
           );
+          expect(await composer.inputValue()).toBe(
+            '/btw Reply exactly PREPARATION_RECOVERED and do not use tools.'
+          );
+          expect(
+            await composer.evaluate((element) => document.activeElement === element)
+          ).toBe(true);
           await page.locator('[data-blade-submit]').click();
           const followup = await followupResponse;
           expect(followup.status()).toBe(200);
+          expect(followup.request().postDataJSON()).toEqual({
+            question: 'Reply exactly PREPARATION_RECOVERED and do not use tools.',
+            projectPath: workspace,
+          });
+          const providerRequest = JSON.parse(proxy.requestBodies.at(-1) ?? '{}') as {
+            messages: Array<{ role: string; content: unknown }>;
+          };
+          const finalQuestion = providerRequest.messages.at(-1);
+          expect(finalQuestion?.role).toBe('user');
+          expect(typeof finalQuestion?.content).toBe('string');
+          expect(
+            String(finalQuestion?.content).endsWith(
+              'Reply exactly PREPARATION_RECOVERED and do not use tools.'
+            )
+          ).toBe(true);
+          expect(String(finalQuestion?.content)).not.toContain(
+            'Explain the current state'
+          );
           expect(
             SideConversationResponseSchema.parse(await followup.json()).response.trim()
           ).toBe('PREPARATION_RECOVERED');

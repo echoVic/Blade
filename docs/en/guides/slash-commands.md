@@ -256,7 +256,9 @@ with that passage attached as quoted context. Unsent drafts also belong only to 
 current panel and are discarded on dismissal, replacement, or Session/workspace
 changes. Late failure from a cancelled or replaced request cannot restore text into
 a new panel. Failure or validation rejection of the current request retains its
-draft for editing and retry.
+draft for editing and retry. Side replies and errors do not steal focus while you
+are typing in the main composer or another editor; deferred autofocus also respects
+a focus change you make before it runs.
 
 During input-method composition, the Web main composer, side conversation, and
 annotation editor leave keys to the input method: candidate-confirmation Enter

@@ -81,7 +81,18 @@ export function SideConversationPanel() {
   useEffect(() => {
     composingRef.current = false;
     if (!sideConversation || sideConversation.status === 'loading') return;
-    requestAnimationFrame(() => inputRef.current?.focus());
+    const activeElement = document.activeElement;
+    if (
+      sideConversation.status !== 'idle' &&
+      activeElement instanceof HTMLElement &&
+      activeElement !== inputRef.current &&
+      activeElement.matches('input, textarea, select, [contenteditable="true"]')
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement === activeElement) inputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [
     sideConversation?.sessionRef,
     sideConversation?.selectedText,

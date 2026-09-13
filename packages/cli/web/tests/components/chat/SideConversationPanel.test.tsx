@@ -84,6 +84,113 @@ describe('SideConversationPanel', () => {
     expect(container.querySelector('[data-blade-side-conversation]')).toBeNull();
   });
 
+  it.each(['completed', 'error'] as const)(
+    'keeps the main composer focused when a side request becomes %s',
+    async (status) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        frames.delete(id);
+      });
+      const side = {
+        requestId: 'focus-request',
+        sessionRef: { sessionId: 'focus-session', projectPath: '/tmp/project' },
+        question: 'Pending question',
+        messages: [],
+        status: 'loading' as const,
+      };
+      useSessionStore.setState({ sideConversation: side });
+      await act(async () =>
+        root.render(
+          <>
+            <textarea data-main-composer />
+            <SideConversationPanel />
+          </>
+        )
+      );
+      const main = container.querySelector<HTMLTextAreaElement>('[data-main-composer]');
+      if (!main) throw new Error('Main composer missing');
+      main.focus();
+      await act(async () => {
+        useSessionStore.setState({ sideConversation: { ...side, status } });
+      });
+      await act(async () => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        for (const callback of callbacks) callback(0);
+      });
+      expect(document.activeElement).toBe(main);
+    }
+  );
+
+  it('does not run delayed autofocus after the user focuses another input', async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) =>
+      frames.delete(id)
+    );
+    useSessionStore.setState({
+      sideConversation: {
+        requestId: 'focus-open',
+        sessionRef: { sessionId: 'focus-session', projectPath: '/tmp/project' },
+        question: '',
+        messages: [],
+        status: 'idle',
+      },
+    });
+    await act(async () =>
+      root.render(
+        <>
+          <textarea data-main-composer />
+          <SideConversationPanel />
+        </>
+      )
+    );
+    const main = container.querySelector<HTMLTextAreaElement>('[data-main-composer]');
+    if (!main) throw new Error('Main composer missing');
+    main.focus();
+    await act(async () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      for (const callback of callbacks) callback(0);
+    });
+    expect(document.activeElement).toBe(main);
+  });
+
+  it('cancels delayed autofocus when a side request starts loading', async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) =>
+      frames.delete(id)
+    );
+    const side = {
+      requestId: 'focus-replaced',
+      sessionRef: { sessionId: 'focus-session', projectPath: '/tmp/project' },
+      question: '',
+      messages: [],
+      status: 'idle' as const,
+    };
+    useSessionStore.setState({ sideConversation: side });
+    await act(async () => root.render(<SideConversationPanel />));
+    expect(frames.size).toBe(1);
+    await act(async () =>
+      useSessionStore.setState({ sideConversation: { ...side, status: 'loading' } })
+    );
+    expect(frames.size).toBe(0);
+  });
+
   it('announces loading and error states without adding chat messages', async () => {
     const messages = useSessionStore.getState().messages;
     useSessionStore.setState({
