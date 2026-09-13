@@ -210,6 +210,99 @@ describe('recording Provider proxy one-shot failure injection', () => {
     expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
   });
 
+  it.each([false, true])(
+    'sets one upstream stop sequence without replacing responses (prompt: %s)',
+    async (replacePrompt) => {
+      const receivedBodies: unknown[] = [];
+      const upstreamServer = createServer((request, response) => {
+        void (async () => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          receivedBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+          response.setHeader('content-type', 'text/event-stream');
+          response.end('data: unchanged-stop-sequence-response\n\n');
+        })();
+      });
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.once('error', reject);
+        upstreamServer.listen(0, '127.0.0.1', resolve);
+      });
+      closers.push(async () => {
+        upstreamServer.closeAllConnections();
+        await new Promise<void>((resolve, reject) => {
+          upstreamServer.close((error) => (error ? reject(error) : resolve()));
+        });
+      });
+      const address = upstreamServer.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test port');
+      const proxy = await startRecordingProviderProxy(
+        `http://127.0.0.1:${address.port}/v1`,
+        {
+          stopSequenceOnce: {
+            requestNumber: 2,
+            stop: 'HELLO',
+            ...(replacePrompt ? { prompt: 'Reply exactly HELLO' } : {}),
+          },
+        }
+      );
+      closers.unshift(proxy.close);
+      const request = {
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'Call Bash.' }],
+        max_tokens: 4096,
+        stream: true,
+      };
+      for (let index = 0; index < 3; index++) {
+        const response = await fetch(`${proxy.baseUrl}/chat/completions`, {
+          method: 'POST',
+          body: JSON.stringify(request),
+          headers: { 'content-type': 'application/json' },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe(
+          'data: unchanged-stop-sequence-response\n\n'
+        );
+      }
+      expect(receivedBodies).toEqual([
+        request,
+        {
+          ...request,
+          stop: ['HELLO'],
+          ...(replacePrompt
+            ? { messages: [{ role: 'user', content: 'Reply exactly HELLO' }] }
+            : {}),
+        },
+        request,
+      ]);
+      expect(proxy.requestBodies.map((body) => JSON.parse(body))).toEqual([
+        request,
+        request,
+        request,
+      ]);
+      expect(proxy.injectedRequestNumbers).toEqual([]);
+      expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
+      expect(proxy.stopSequenceRequestNumbers).toEqual([2]);
+      expect(proxy.jsonOnlyRequestNumbers).toEqual([]);
+    }
+  );
+
+  it.each([
+    { requestNumber: 0, stop: 'STOP' },
+    { requestNumber: 1.5, stop: 'STOP' },
+    { requestNumber: 2, stop: '' },
+  ])('rejects invalid stop sequence options: %j', async (stopSequenceOnce) => {
+    await expect(
+      startRecordingProviderProxy('http://127.0.0.1:1/v1', { stopSequenceOnce }).then(
+        (proxy) => {
+          closers.unshift(proxy.close);
+          return proxy;
+        }
+      )
+    ).rejects.toThrow('Invalid one-shot Provider stop sequence');
+  });
+
   it('records a bounded structural lifecycle for a held upstream request', async () => {
     const secret = 'proxy-lifecycle-secret';
     const { proxy } = await createProxy({

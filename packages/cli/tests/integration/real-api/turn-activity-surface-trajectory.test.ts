@@ -17,6 +17,7 @@ import { chromium } from 'playwright';
 import { describe, expect, it, type TestContext, vi } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
 import { TurnActivityProjectionSchema } from '../../../src/api/turnActivitySchemas.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
   captureForegroundGuiLauncherIdentity,
@@ -658,6 +659,134 @@ function toolCallNames(events: ReturnType<typeof readSessionEvents>): string[] {
   });
 }
 
+function summarizeTurnActivityRequests(requestBodies: readonly string[]) {
+  return requestBodies.map((body, index) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = undefined;
+    }
+    const messages =
+      parsed &&
+      typeof parsed === 'object' &&
+      'messages' in parsed &&
+      Array.isArray(parsed.messages)
+        ? parsed.messages
+        : [];
+    const firstIndex = requestBodies.indexOf(body);
+    return {
+      requestNumber: index + 1,
+      duplicateOf: firstIndex < index ? firstIndex + 1 : null,
+      messages: messages.slice(-16).map((message: unknown) => {
+        const role =
+          message && typeof message === 'object' && 'role' in message
+            ? message.role
+            : undefined;
+        const content =
+          message && typeof message === 'object' && 'content' in message
+            ? message.content
+            : undefined;
+        const calls =
+          message && typeof message === 'object' && 'tool_calls' in message
+            ? message.tool_calls
+            : undefined;
+        return {
+          role:
+            typeof role === 'string' &&
+            ['system', 'user', 'assistant', 'tool'].includes(role)
+              ? role
+              : 'unknown',
+          contentChars: typeof content === 'string' ? content.length : 0,
+          toolCalls: Array.isArray(calls) ? calls.length : 0,
+          emptyFinalCorrection:
+            typeof content === 'string' &&
+            content.includes(
+              'The previous response was empty after successful tool execution.'
+            ),
+        };
+      }),
+    };
+  });
+}
+
+describe('turn activity request evidence', () => {
+  it('distinguishes request replay from an added corrective message without retaining text', () => {
+    const initial = JSON.stringify({
+      messages: [{ role: 'user', content: 'PRIVATE_PROMPT' }],
+    });
+    const corrected = JSON.stringify({
+      messages: [
+        { role: 'user', content: 'PRIVATE_PROMPT' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'PRIVATE_TOOL_ID' }] },
+        { role: 'tool', content: 'PRIVATE_OUTPUT' },
+        {
+          role: 'user',
+          content: 'The previous response was empty after successful tool execution.',
+        },
+      ],
+    });
+    const evidence = summarizeTurnActivityRequests([initial, initial, corrected]);
+    expect(evidence).toEqual([
+      {
+        requestNumber: 1,
+        duplicateOf: null,
+        messages: [
+          { role: 'user', contentChars: 14, toolCalls: 0, emptyFinalCorrection: false },
+        ],
+      },
+      {
+        requestNumber: 2,
+        duplicateOf: 1,
+        messages: [
+          { role: 'user', contentChars: 14, toolCalls: 0, emptyFinalCorrection: false },
+        ],
+      },
+      {
+        requestNumber: 3,
+        duplicateOf: null,
+        messages: [
+          { role: 'user', contentChars: 14, toolCalls: 0, emptyFinalCorrection: false },
+          {
+            role: 'assistant',
+            contentChars: 0,
+            toolCalls: 1,
+            emptyFinalCorrection: false,
+          },
+          { role: 'tool', contentChars: 14, toolCalls: 0, emptyFinalCorrection: false },
+          { role: 'user', contentChars: 64, toolCalls: 0, emptyFinalCorrection: true },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(evidence)).not.toContain('PRIVATE_');
+  });
+
+  it('does not echo malformed bodies or unrecognized role values', () => {
+    const evidence = summarizeTurnActivityRequests([
+      'PRIVATE_INVALID_JSON',
+      JSON.stringify({
+        messages: [{ role: 'PRIVATE_ROLE', content: 'PRIVATE_CONTENT' }],
+      }),
+    ]);
+    expect(evidence).toEqual([
+      { requestNumber: 1, duplicateOf: null, messages: [] },
+      {
+        requestNumber: 2,
+        duplicateOf: null,
+        messages: [
+          {
+            role: 'unknown',
+            contentChars: 15,
+            toolCalls: 0,
+            emptyFinalCorrection: false,
+          },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(evidence)).not.toContain('PRIVATE_');
+  });
+});
+
 describe('turn activity Web evidence synchronization', () => {
   it('waits for both independent SSE readers to observe terminal clear', async () => {
     const snapshot = {
@@ -953,6 +1082,255 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
   }
 });
 
+describeTrajectory('ACP terminal cleanup failure (real API)', () => {
+  for (const model of models) {
+    it.for(['kill', 'release'] as const)(
+      `${model.model} reports failed %s without replaying Bash`,
+      { timeout: 180_000 },
+      async (failure, context) => {
+        expect(frameworkRetryBudget(context)).toBe(0);
+        if (!model.baseURL) throw new Error('Missing cleanup Provider');
+        const root = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-acp-cleanup-'))
+        );
+        const workspace = path.join(root, 'workspace');
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const releaseFile = path.join(root, 'release');
+        const proxy = await startRecordingProviderProxy(model.baseURL);
+        const marker = `ACP_CLEANUP_${failure.toUpperCase()}_OBSERVED`;
+        const command = failure === 'kill' ? 'node hold.cjs' : 'node release.cjs';
+        try {
+          await mkdir(workspace, { recursive: true });
+          await writeRuntimeConfig(home, model, proxy.baseUrl);
+          await writeFile(
+            path.join(workspace, 'hold.cjs'),
+            'setInterval(()=>{},1000);'
+          );
+          await writeFile(
+            path.join(workspace, 'release.cjs'),
+            `const fs=require('fs');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(timer);process.stdout.write('DONE')}},25);`
+          );
+          const prompt = [
+            `Call Bash exactly once with command \`${command}\` and timeout ${failure === 'kill' ? 1000 : 10000}.`,
+            'Do not call any other tools or repeat the command after an error.',
+            `If the tool reports ACP terminal finalization failed, reply exactly ${marker}; otherwise reply UNEXPECTED_RESULT.`,
+          ].join('\n');
+          const evidence = await runRunner({
+            runner: acpRunner,
+            envName: 'BLADE_TURN_ACTIVITY_ACP_INPUT',
+            payload: {
+              cliEntry,
+              workspace,
+              home,
+              storageRoot,
+              prompt,
+              marker,
+              releaseFile,
+              secret: model.apiKey,
+              cleanupFailure: failure,
+            },
+          });
+          expect(evidence).toMatchObject({
+            cleanupFailure: {
+              failure,
+              killAttempts: failure === 'kill' ? 1 : 0,
+              releaseAttempts: 1,
+              failedUpdates: 1,
+            },
+            terminalReleaseCount: 1,
+          });
+          const transcriptPath = findSessionTranscript(storageRoot, evidence.sessionId);
+          const events = readSessionEvents(transcriptPath);
+          expect(toolCallNames(events)).toEqual(['Bash']);
+          const results = events.filter(
+            (event) =>
+              event.type === 'part_created' && event.data.partType === 'tool_result'
+          );
+          expect(results).toHaveLength(1);
+          expect(JSON.stringify(results)).toContain('"finalization_failed":true');
+          expect(JSON.stringify(results)).toContain(
+            '"execution_host_failure":"finalization"'
+          );
+          expect(JSON.stringify(results)).toContain('"terminal_transport":"acp"');
+          if (failure === 'kill')
+            expect(JSON.stringify(results)).toContain('"timeout":true');
+          expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+          const request = JSON.parse(proxy.requestBodies[1] ?? '{}') as {
+            messages: Array<{ role: string; content: unknown }>;
+          };
+          expect(
+            request.messages
+              .filter((message) => message.role === 'tool')
+              .map((message) => message.content)
+          ).toEqual(['Error: ACP terminal finalization failed']);
+          expect(proxy.requestBodies[1]).not.toContain('PRIVATE_ACP_');
+          const final = inspectFinalAssistantText(events);
+          expect(final.state).not.toBe('structural_mismatch');
+          if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
+          assertNoSecrets(
+            { evidence, transcript: await readFile(transcriptPath, 'utf8') },
+            [model.apiKey]
+          );
+          console.log(
+            `[acp-cleanup-failure] ${JSON.stringify({ model: model.model, failure, toolCalls: 1, requests: proxy.forwardedRequestNumbers, failedToolVisible: true })}`
+          );
+        } finally {
+          await proxy.close();
+          await removeTestDirectory(root);
+        }
+      }
+    );
+  }
+});
+
+describeTrajectory('turn activity empty-final recovery (real API)', () => {
+  for (const model of models) {
+    for (const surface of surfaces) {
+      it(`${model.model} corrects one empty final through ${surface} without repeating Bash`, async (context) => {
+        expect(frameworkRetryBudget(context)).toBe(0);
+        if (!model.baseURL) throw new Error('Missing empty-final Provider');
+        const root = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-empty-final-'))
+        );
+        const workspace = path.join(root, 'workspace');
+        const storageRoot = path.join(root, 'storage');
+        const home = path.join(root, 'home');
+        const releaseFile = path.join(root, 'release');
+        const executionFile = path.join(root, 'executions');
+        const marker = `EMPTY_FINAL_${safeSlug(model.model)}_${surface}_${Date.now()}`
+          .toUpperCase()
+          .replaceAll(/[^A-Z0-9_]+/g, '_');
+        const prompt = createTurnActivityPrompt('node hold.cjs', marker);
+        const proxy = await startRecordingProviderProxy(model.baseURL, {
+          stopSequenceOnce: {
+            requestNumber: 2,
+            stop: 'HELLO',
+            prompt: 'Reply exactly HELLO',
+          },
+        });
+        let sessionId = `empty-final-${surface}-${Date.now()}`;
+        try {
+          await mkdir(workspace, { recursive: true });
+          await writeRuntimeConfig(home, model, proxy.baseUrl);
+          await writeFile(
+            path.join(workspace, 'hold.cjs'),
+            `const fs=require('fs');fs.appendFileSync(${JSON.stringify(executionFile)},'run\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(timer);process.stdout.write('TOOL_DONE')}},25);`
+          );
+          if (surface === 'headless' || surface === 'pty') {
+            const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+            process.env.BLADE_STORAGE_ROOT = storageRoot;
+            try {
+              await SessionService.createSessionMetadata(sessionId, workspace, {
+                reasoningEffort: 'high',
+              });
+            } finally {
+              if (originalStorageRoot === undefined)
+                delete process.env.BLADE_STORAGE_ROOT;
+              else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+            }
+          }
+          const input = {
+            workspace,
+            home,
+            storageRoot,
+            sessionId,
+            prompt,
+            marker,
+            secret: model.apiKey,
+            releaseFile,
+            reasoningEffort: 'high' as const,
+          };
+          let evidence: ActivityEvidence;
+          if (surface === 'headless') {
+            evidence = await runHeadless(input);
+          } else if (surface === 'web') {
+            evidence = await runWeb(input);
+          } else {
+            evidence = await runRunner({
+              runner: surface === 'acp' ? acpRunner : ptyRunner,
+              envName:
+                surface === 'acp'
+                  ? 'BLADE_TURN_ACTIVITY_ACP_INPUT'
+                  : 'BLADE_TURN_ACTIVITY_PTY_INPUT',
+              payload: { ...input, cliEntry },
+            });
+          }
+          if (surface === 'web' || surface === 'acp') sessionId = evidence.sessionId;
+          expect(evidence).toMatchObject({
+            generationCount: 1,
+            sawBash: true,
+            terminalClearSeen: true,
+          });
+          expect(await readFile(executionFile, 'utf8')).toBe('run\n');
+          const transcriptPath = findSessionTranscript(storageRoot, sessionId);
+          const events = readSessionEvents(transcriptPath);
+          expect(toolCallNames(events)).toEqual(['Bash']);
+          const corrections = events.filter((event) => {
+            if (event.type !== 'message_created' || event.data.role !== 'user')
+              return false;
+            const metadata = event.data.metadata;
+            return (
+              metadata &&
+              typeof metadata === 'object' &&
+              !Array.isArray(metadata) &&
+              metadata.clientVisible === false &&
+              metadata.emptyFinalCorrection === true
+            );
+          });
+          expect(corrections).toHaveLength(1);
+          expect(
+            events.filter((event) => event.type === 'turn_completed')
+          ).toMatchObject([{ data: { turnsCount: 3, toolCallsCount: 1 } }]);
+          const final = inspectFinalAssistantText(events);
+          expect(final.state).not.toBe('structural_mismatch');
+          if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
+          expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
+          expect(proxy.stopSequenceRequestNumbers).toEqual([2]);
+          expect(proxy.jsonOnlyRequestNumbers).toEqual([]);
+          expect(proxy.injectedRequestNumbers).toEqual([]);
+          const requests = summarizeTurnActivityRequests(proxy.requestBodies);
+          expect(requests.map((request) => request.duplicateOf)).toEqual([
+            null,
+            null,
+            null,
+          ]);
+          expect(
+            requests.map(
+              (request) =>
+                request.messages.filter((message) => message.emptyFinalCorrection)
+                  .length
+            )
+          ).toEqual([0, 0, 1]);
+          expect(
+            proxy.requestLifecycle.filter((entry) => entry.phase === 'headers_received')
+          ).toEqual(
+            [1, 2, 3].map((requestNumber) => ({
+              requestNumber,
+              phase: 'headers_received',
+              statusClass: 2,
+            }))
+          );
+          assertNoSecrets({ evidence, requests, events }, [model.apiKey]);
+          console.log(
+            `[empty-final-recovery] ${JSON.stringify({
+              model: model.model,
+              surface,
+              requests: proxy.forwardedRequestNumbers,
+              stopSequenceRequests: proxy.stopSequenceRequestNumbers,
+              executions: 1,
+              durableCorrections: corrections.length,
+            })}`
+          );
+        } finally {
+          await proxy.close();
+          await removeTestDirectory(root);
+        }
+      }, 240_000);
+    }
+  }
+});
+
 describeTrajectory('turn activity surface matrix (real API)', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
 
@@ -1096,8 +1474,18 @@ describeTrajectory('turn activity surface matrix (real API)', () => {
             }
             expect(final.text).toBe(marker);
           }
-          expect(proxy.requestBodies).toHaveLength(2);
-          expect(proxy.forwardedRequestNumbers).toHaveLength(2);
+          const requestEvidence = JSON.stringify({
+            requests: summarizeTurnActivityRequests(proxy.requestBodies),
+            lifecycle: proxy.requestLifecycle.map(
+              ({ requestNumber, phase, statusClass }) => ({
+                requestNumber,
+                phase,
+                statusClass,
+              })
+            ),
+          });
+          expect(proxy.requestBodies.length, requestEvidence).toBe(2);
+          expect(proxy.forwardedRequestNumbers.length, requestEvidence).toBe(2);
           assertNoSecrets({ evidence, transcript }, [model.apiKey]);
         } finally {
           await proxy.close();

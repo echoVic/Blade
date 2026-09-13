@@ -26,6 +26,7 @@ export interface RecordingProviderProxy {
   heldRequestNumbers: number[];
   injectedRequestNumbers: number[];
   jsonOnlyRequestNumbers: number[];
+  stopSequenceRequestNumbers: number[];
   forwardedRequestNumbers: number[];
   requestLifecycle: RecordingProviderRequestLifecycle[];
   maxInFlight: number;
@@ -42,6 +43,7 @@ export async function startRecordingProviderProxy(
     onHold?: (requestNumber: number) => void | Promise<void>;
     inject503Once?: { path: string; retryAfterMs?: number };
     firstRequestJsonOnly?: { prompt: string };
+    stopSequenceOnce?: { requestNumber: number; stop: string; prompt?: string };
   } = {}
 ): Promise<RecordingProviderProxy> {
   const injection = options.inject503Once;
@@ -56,6 +58,16 @@ export async function startRecordingProviderProxy(
     throw new Error('Invalid one-shot Provider failure injection');
   }
 
+  const stopSequence = options.stopSequenceOnce;
+  if (
+    stopSequence !== undefined &&
+    (!Number.isSafeInteger(stopSequence.requestNumber) ||
+      stopSequence.requestNumber < 1 ||
+      stopSequence.stop.length === 0)
+  ) {
+    throw new Error('Invalid one-shot Provider stop sequence');
+  }
+
   const requestBodies: string[] = [];
   const requestPaths: string[] = [];
   const requestStartedAt: number[] = [];
@@ -63,6 +75,7 @@ export async function startRecordingProviderProxy(
   const heldRequestNumbers: number[] = [];
   const injectedRequestNumbers: number[] = [];
   const jsonOnlyRequestNumbers: number[] = [];
+  const stopSequenceRequestNumbers: number[] = [];
   const forwardedRequestNumbers: number[] = [];
   const requestLifecycle: RecordingProviderRequestLifecycle[] = [];
   let matchingRequestHeld = false;
@@ -186,6 +199,29 @@ export async function startRecordingProviderProxy(
           );
           jsonOnlyRequestNumbers.push(requestNumber);
         }
+        if (stopSequence?.requestNumber === requestNumber) {
+          const parsed: unknown = JSON.parse(upstreamBody.toString('utf8'));
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error(
+              'Stop-sequence qualification requires a JSON request object'
+            );
+          }
+          upstreamBody = Buffer.from(
+            JSON.stringify({
+              ...Object.fromEntries(
+                Object.entries(parsed).filter(
+                  ([key]) =>
+                    !stopSequence.prompt || (key !== 'tools' && key !== 'tool_choice')
+                )
+              ),
+              ...(stopSequence.prompt
+                ? { messages: [{ role: 'user', content: stopSequence.prompt }] }
+                : {}),
+              stop: [stopSequence.stop],
+            })
+          );
+          stopSequenceRequestNumbers.push(requestNumber);
+        }
         recordLifecycle({ requestNumber, phase: 'upstream_started' });
         const upstreamResponse = await fetch(target, {
           method: request.method,
@@ -289,6 +325,7 @@ export async function startRecordingProviderProxy(
     heldRequestNumbers,
     injectedRequestNumbers,
     jsonOnlyRequestNumbers,
+    stopSequenceRequestNumbers,
     forwardedRequestNumbers,
     requestLifecycle,
     get maxInFlight() {

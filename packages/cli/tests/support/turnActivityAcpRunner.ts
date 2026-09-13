@@ -15,6 +15,8 @@ interface RunnerInput {
   marker: string;
   secret: string;
   releaseFile: string;
+  cleanupFailure?: 'kill' | 'release';
+  reasoningEffort?: 'high';
 }
 
 function loadInput(): RunnerInput {
@@ -101,7 +103,32 @@ async function run(input: RunnerInput) {
   child.stderr?.on('data', (chunk: Buffer | string) => {
     stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
   });
-  const client = new ChildBackedRecordingAcpClient();
+  class CleanupFailureClient extends ChildBackedRecordingAcpClient {
+    failureEnabled = true;
+    killAttempts = 0;
+    releaseAttempts = 0;
+    override async killTerminal(
+      params: acp.KillTerminalRequest
+    ): Promise<acp.KillTerminalResponse> {
+      this.killAttempts++;
+      if (this.failureEnabled && input.cleanupFailure === 'kill')
+        throw new Error('PRIVATE_ACP_KILL_FAILURE');
+      return super.killTerminal(params);
+    }
+    override async releaseTerminal(
+      params: acp.ReleaseTerminalRequest
+    ): Promise<acp.ReleaseTerminalResponse> {
+      this.releaseAttempts++;
+      if (this.failureEnabled && input.cleanupFailure === 'release')
+        throw new Error('PRIVATE_ACP_RELEASE_FAILURE');
+      if (this.failureEnabled && input.cleanupFailure === 'kill')
+        await super.killTerminal(params);
+      return super.releaseTerminal(params);
+    }
+  }
+  const client = input.cleanupFailure
+    ? new CleanupFailureClient()
+    : new ChildBackedRecordingAcpClient();
   const connection = new acp.ClientSideConnection(
     () => client,
     acp.ndJsonStream(
@@ -119,6 +146,13 @@ async function run(input: RunnerInput) {
       mcpServers: [],
     });
     await connection.setSessionMode({ sessionId: created.sessionId, modeId: 'yolo' });
+    if (input.reasoningEffort) {
+      await connection.setSessionConfigOption({
+        sessionId: created.sessionId,
+        configId: 'reasoning_effort',
+        value: input.reasoningEffort,
+      });
+    }
     const prompt = connection.prompt({
       sessionId: created.sessionId,
       prompt: [{ type: 'text', text: input.prompt }],
@@ -132,7 +166,9 @@ async function run(input: RunnerInput) {
         ),
       'ACP did not project active Bash before release'
     );
-    await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+    if (input.cleanupFailure !== 'kill') {
+      await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+    }
     const result = await prompt;
     if (result.stopReason !== 'end_turn') {
       throw new Error(`Unexpected turn activity ACP stop reason: ${result.stopReason}`);
@@ -169,6 +205,55 @@ async function run(input: RunnerInput) {
     if (serialized.includes(input.secret)) {
       throw new Error('ACP turn activity evidence contained credentials');
     }
+    let cleanupEvidence:
+      | {
+          failure: 'kill' | 'release';
+          killAttempts: number;
+          releaseAttempts: number;
+          failedUpdates: number;
+        }
+      | undefined;
+    if (input.cleanupFailure && client instanceof CleanupFailureClient) {
+      const failedUpdates = client.sessionUpdates.filter(
+        ({ update }) =>
+          update.sessionUpdate === 'tool_call_update' && update.status === 'failed'
+      );
+      if (
+        failedUpdates.length !== 1 ||
+        !JSON.stringify(failedUpdates).includes('ACP terminal finalization failed')
+      ) {
+        throw new Error('ACP cleanup failure was not projected as one failed tool');
+      }
+      if (serialized.includes('PRIVATE_ACP_'))
+        throw new Error('ACP cleanup leaked client diagnostics');
+      const text = client.sessionUpdates
+        .flatMap(({ update }) =>
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text'
+            ? [update.content.text]
+            : []
+        )
+        .join('');
+      if (text.trim() !== input.marker)
+        throw new Error('ACP cleanup final response mismatch');
+      if (
+        client.createRequests.length !== 1 ||
+        client.releaseAttempts !== 1 ||
+        client.killAttempts !== (input.cleanupFailure === 'kill' ? 1 : 0)
+      ) {
+        throw new Error('ACP cleanup requests were repeated');
+      }
+      cleanupEvidence = {
+        failure: input.cleanupFailure,
+        killAttempts: client.killAttempts,
+        releaseAttempts: client.releaseAttempts,
+        failedUpdates: failedUpdates.length,
+      };
+      client.failureEnabled = false;
+      await client.close();
+      if (client.activeTerminalCount() !== 0)
+        throw new Error('Fixture terminals remained after cleanup');
+    }
 
     child.kill('SIGTERM');
     const exit = await waitForChildExit(child);
@@ -189,6 +274,7 @@ async function run(input: RunnerInput) {
       phases: activeProjections.map((activity) => activity.snapshot?.phase ?? 'clear'),
       sawBash: true,
       terminalClearSeen: true,
+      ...(cleanupEvidence ? { cleanupFailure: cleanupEvidence } : {}),
       terminalReleaseCount: [...client.releaseCounts.values()].reduce(
         (sum, count) => sum + count,
         0
@@ -196,6 +282,7 @@ async function run(input: RunnerInput) {
       processes: client.releasedProcesses,
     };
   } finally {
+    if (client instanceof CleanupFailureClient) client.failureEnabled = false;
     await client.close().catch(() => undefined);
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
